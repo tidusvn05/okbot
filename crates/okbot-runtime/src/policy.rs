@@ -53,10 +53,11 @@ impl Gate {
         if p.blocked_users.contains(&user) {
             return Verdict::Ignore;
         }
+        let reply_on = p.reply_on_by_channel.get(channel).unwrap_or(&p.reply_on);
         let addressed = if event.is_direct {
-            p.reply_on.direct
+            reply_on.direct
         } else {
-            p.reply_on.all || (p.reply_on.mention && event.mentions_bot)
+            reply_on.all || (reply_on.mention && event.mentions_bot)
         };
         if !addressed {
             return Verdict::Ignore;
@@ -132,6 +133,18 @@ mod tests {
             ..AccessPolicy::default()
         });
         assert_eq!(all.check(&event("hi", false, false), now), Verdict::Answer);
+
+        let e = event("hi", true, false);
+        let mut per_channel = AccessPolicy::default();
+        per_channel.reply_on_by_channel.insert(
+            e.conversation.channel.clone(),
+            ReplyOn {
+                direct: false,
+                mention: true,
+                all: false,
+            },
+        );
+        assert_eq!(gate(per_channel).check(&e, now), Verdict::Ignore);
     }
 
     #[test]

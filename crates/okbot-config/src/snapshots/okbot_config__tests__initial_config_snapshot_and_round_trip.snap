@@ -1,0 +1,43 @@
+---
+source: crates/okbot-config/src/tests.rs
+expression: text
+---
+# okbot bot configuration. Reference: docs/design.md §6.2.
+# Secrets are never written here: they live in .env (or the environment).
+config_version = 1
+
+[bot]
+name = "Shop bot"
+kb = "kb"
+state_dir = "state"
+admins = []                        # "zalo:<instance>/<user id>"; /whoami shows ids
+timezone = "Asia/Ho_Chi_Minh"
+retention_days = 90
+
+[agent]
+chain = ["claude", "codex"]               # fallback order
+timeout_secs = 180
+max_concurrent = 2
+tool_policy = "web"                # web | mcp-only
+
+[agent.providers.claude]
+cli = "/home/u/.local/bin/claude"
+# model = "…"                      # the CLI's default when unset
+
+[agent.providers.codex]
+# model = "…"                      # the CLI's default when unset
+
+[http]
+listen = "127.0.0.1:8787"            # put a TLS reverse proxy in front
+
+[channels.zalo.shop]
+token_env = "ZALO_BOT_TOKEN"
+delivery = "webhook"
+public_url = "https://bot.example.com/zalo/shop"
+secret_env = "ZALO_WEBHOOK_SECRET"
+reply_on = ["dm", "mention"]
+
+# A room without web access:
+# [[channels.zalo.shop.rooms]]
+# room = "<chat id>"
+# tool_policy = "mcp-only"

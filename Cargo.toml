@@ -28,6 +28,7 @@ missing_panics_doc = "allow"
 must_use_candidate = "allow"
 return_self_not_must_use = "allow"
 similar_names = "allow"
+single_match_else = "allow"
 doc_markdown = "allow"
 struct_excessive_bools = "allow"   # capability flags are naturally booleans
 unwrap_used = "warn"
@@ -59,14 +60,15 @@ thiserror = "2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.9"
-toml_edit = "0.23"
+toml = "1"
+toml_edit = "0.25"   # same minor as okbase
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "io-std", "process", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 jiff = { version = "0.2", features = ["serde"] }
+inquire = { version = "0.9", default-features = false, features = ["crossterm"] }
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)

@@ -48,8 +48,10 @@ impl Default for RateLimit {
 /// Who may talk to the bot.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccessPolicy {
-    /// When to answer.
+    /// When to answer (channels without an entry in `reply_on_by_channel`).
     pub reply_on: ReplyOn,
+    /// When to answer, per channel.
+    pub reply_on_by_channel: HashMap<ChannelId, ReplyOn>,
     /// If set, only these users (per channel) are answered.
     pub allow_users: Option<HashSet<(ChannelId, UserId)>>,
     /// If set, only these rooms (per channel) are answered.
