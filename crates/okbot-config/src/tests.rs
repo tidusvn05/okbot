@@ -189,3 +189,30 @@ fn discord_and_slack_sections_round_trip() {
             .contains(&"SLACK_APP_TOKEN".to_string())
     );
 }
+
+#[test]
+fn bridge_section() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[channels.bridge.main]\nplatform = \"telegram\"\nenv = [\"TG_TOKEN\"]\ndialect = \"plain\"\nedit = true\n[channels.bridge.main.settings]\npoll = 30\n",
+    );
+    let config = Config::load(dir.path()).unwrap();
+    let b = &config.channels.bridge["main"];
+    assert_eq!(b.platform, "telegram");
+    assert_eq!(b.settings["poll"].as_integer(), Some(30));
+    assert_eq!(b.dialect, okbot_core::MarkdownDialect::Plain);
+    assert_eq!(config.channels.access()[0].0, "telegram");
+    assert!(config.secret_names().contains(&"TG_TOKEN".to_string()));
+}
+
+#[test]
+fn bridge_cannot_shadow_a_built_in_platform() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[channels.bridge.main]\nplatform = \"slack\"\n",
+    );
+    let error = Config::load(dir.path()).unwrap_err().to_string();
+    assert!(error.contains("built in"), "{error}");
+}

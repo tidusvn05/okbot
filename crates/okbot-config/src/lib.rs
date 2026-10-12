@@ -15,9 +15,9 @@ use std::path::{Path, PathBuf};
 use okbot_core::Secret;
 
 pub use schema::{
-    AgentSection, BotSection, ChannelAccess, ChannelsSection, Delivery, DiscordSection,
-    GChatDelivery, GChatSection, HttpSection, ProviderSection, ReplyOn, RoomSection, SlackSection,
-    ZaloSection,
+    AgentSection, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
+    DiscordSection, GChatDelivery, GChatSection, HttpSection, ProviderSection, ReplyOn,
+    RoomSection, SlackSection, ZaloSection,
 };
 pub use write::{GChatInit, InitOptions, ZaloInit, render_initial, upsert_env};
 
@@ -68,6 +68,9 @@ pub enum ConfigError {
         env_file: PathBuf,
     },
 }
+
+/// Platforms with a native adapter; bridge adapters must use other names.
+pub const BUILT_IN_PLATFORMS: &[&str] = &["console", "zalo", "gchat", "discord", "slack"];
 
 /// A loaded, validated bot configuration.
 #[derive(Debug, Clone)]
@@ -170,6 +173,14 @@ impl Config {
                 }
             }
         }
+        for (instance, b) in &self.channels.bridge {
+            if BUILT_IN_PLATFORMS.contains(&b.platform.as_str()) {
+                return invalid(format!(
+                    "[channels.bridge.{instance}] platform \"{}\" is built in; use [channels.{}.{instance}]",
+                    b.platform, b.platform
+                ));
+            }
+        }
         for (platform, instance, _) in self.channels.access() {
             okbot_core::ChannelId::new(platform, instance).map_err(|e| {
                 ConfigError::Invalid(format!("[channels.{platform}.{instance}]: {e}"))
@@ -227,6 +238,9 @@ impl Config {
         for s in self.channels.slack.values() {
             names.push(s.app_token_env.clone());
             names.push(s.bot_token_env.clone());
+        }
+        for b in self.channels.bridge.values() {
+            names.extend(b.env.iter().cloned());
         }
         names.sort();
         names.dedup();

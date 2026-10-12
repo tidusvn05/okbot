@@ -451,6 +451,15 @@ depth). Verified with the real Claude CLI describing an image sent through a fak
 4. Publish crates to crates.io once agent-core (renamed) and okbase are published.
 5. Candidates driven by users: Telegram (reuses most of the Zalo adapter), Zalo OA, MS Teams, direct-API agent backend, reminders.
 
+Status (2026-10-13): items 2 and 3 done. `okbot-channel-bridge` implements protocol 1
+([`docs/bridge.md`](bridge.md)): `[channels.bridge.<instance>]` in `okbot.toml`, restart with backoff,
+stderr to the log, other channels' secrets removed from the adapter's environment, `doctor` checks.
+The reference adapter is plain JavaScript (`examples/bridge/echo-channel.mjs`, no build step) rather
+than TypeScript. `okbot-testkit` has `conformance::channel`/`channel_stops` and `CollectSink`;
+`templates/channel/` is a compiled, tested workspace member; guides are in `docs/extending/`. Verified
+end to end: `okbot run` answering through the Node adapter with a fake `claude`. Items 1 and 4 wait for
+a first release (no semver baseline yet) and for agent-core and okbase on crates.io.
+
 ---
 
 ## Part 5 — Release checklist (every release)

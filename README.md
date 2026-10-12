@@ -6,7 +6,8 @@
 > Status: **pre-alpha**. Nothing here is usable yet; follow [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 - **Many platforms, one bot:** Zalo Bot, Google Chat, Discord, Slack and a terminal console, each an
-  adapter behind one `Channel` trait.
+  adapter behind one `Channel` trait; adapters in any language through the
+  [bridge protocol](docs/bridge.md).
 - **Agent CLIs as the brain:** Claude Code, Codex, OpenCode or Devin through
   [agent-core](https://github.com/tidusvn05/agent-core), with the CLI's own login: no API key needed.
 - **Knowledge and memory in markdown:** an okbase (OKF) bundle per bot, read through scoped MCP tools,
@@ -32,6 +33,8 @@ Coding agents: `okbot help-agent` prints the setup contract.
 - [Running on a VPS](docs/deploy.md): many bots per machine, services, reverse proxy
 - Platforms: [Zalo Bot](docs/platforms/zalo.md), [Google Chat](docs/platforms/google-chat.md),
   [Discord](docs/platforms/discord.md), [Slack](docs/platforms/slack.md)
+- [Extending okbot](docs/extending/README.md): new platforms ([Rust](docs/extending/channel.md) or
+  [any language](docs/bridge.md)), backends, stores
 - [Architecture decisions](docs/adr/)
 - [Releasing](docs/releasing.md)
 

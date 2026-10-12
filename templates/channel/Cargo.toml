@@ -1,0 +1,25 @@
+[package]
+# Copy this directory to crates/okbot-channel-<name>/ and rename `example` everywhere
+# (docs/extending/channel.md walks through it).
+name = "okbot-channel-example"
+description = "Template for a new okbot channel: copy, rename, replace the fake platform client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+okbot-core.workspace = true
+jiff.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+okbot-testkit.workspace = true

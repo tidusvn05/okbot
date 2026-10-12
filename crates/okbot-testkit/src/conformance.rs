@@ -151,3 +151,90 @@ async fn dedupe(store: &dyn ConversationStore, clock: &ManualClock) {
         "expired mark"
     );
 }
+
+/// Checks the outbound side of a running [`Channel`](okbot_core::Channel): call it while
+/// [`Channel::run`](okbot_core::Channel::run) is serving (against your fake platform), with a
+/// target in a conversation that channel owns.
+///
+/// It checks the capabilities are usable, that `send` returns a reference to what it sent, that a
+/// message of exactly `max_message_len` is accepted, and that `edit` and `typing` agree with the
+/// capabilities.
+///
+/// # Panics
+/// On the first behaviour that differs from the port's contract.
+pub async fn channel(channel: &dyn okbot_core::Channel, to: &okbot_core::ReplyTarget) {
+    use okbot_core::{ChannelError, RenderedMessage};
+
+    let caps = channel.caps().clone();
+    assert!(caps.max_message_len > 0, "max_message_len must be positive");
+    assert_eq!(
+        &to.conversation.channel,
+        channel.id(),
+        "the target belongs to this channel"
+    );
+
+    let sent = channel
+        .send(
+            to,
+            &RenderedMessage {
+                text: "conformance: hello".into(),
+            },
+        )
+        .await
+        .expect("send");
+    assert_eq!(&sent.target, to, "send returns the target it sent to");
+    assert!(
+        !sent.message_id.as_str().is_empty(),
+        "send returns the platform message id"
+    );
+
+    let longest = RenderedMessage {
+        text: "x".repeat(caps.max_message_len),
+    };
+    channel
+        .send(to, &longest)
+        .await
+        .expect("a message of exactly max_message_len is accepted");
+
+    let edited = channel
+        .edit(
+            &sent,
+            &RenderedMessage {
+                text: "conformance: edited".into(),
+            },
+        )
+        .await;
+    match (caps.edit, edited) {
+        (true, Ok(())) | (false, Err(ChannelError::Unsupported(_))) => {}
+        (true, Err(e)) => panic!("caps.edit is set but edit failed: {e}"),
+        (false, other) => panic!("caps.edit is unset, so edit must be Unsupported: {other:?}"),
+    }
+
+    // Typing is best effort: it never fails a turn, even where the platform has none.
+    channel
+        .typing(to)
+        .await
+        .expect("typing succeeds (a no-op when unsupported)");
+}
+
+/// Checks that [`Channel::run`](okbot_core::Channel::run) returns soon after shutdown.
+///
+/// # Panics
+/// When `run` fails or is still running 10 seconds after the token is cancelled.
+pub async fn channel_stops(
+    channel: std::sync::Arc<dyn okbot_core::Channel>,
+    sink: std::sync::Arc<dyn okbot_core::InboundSink>,
+    shutdown: okbot_core::CancellationToken,
+) {
+    let run = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move { channel.run(sink, shutdown).await }
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(10), run)
+        .await
+        .expect("run returns within 10 s of shutdown")
+        .expect("run does not panic")
+        .expect("run returns Ok on shutdown");
+}

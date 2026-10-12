@@ -306,6 +306,56 @@ fn slack_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
     }
 }
 
+#[cfg(feature = "bridge")]
+fn bridge_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    use okbot_channel_bridge::{BridgeChannel, BridgeConfig};
+    use okbot_core::{ChannelCaps, LengthUnit};
+    let mut out: Vec<Arc<dyn Channel>> = Vec::new();
+    for (instance, b) in &config.channels.bridge {
+        let mut env = Vec::new();
+        for name in &b.env {
+            let value = config.secret(name)?;
+            crate::logging::redact(&value);
+            env.push((name.clone(), value));
+        }
+        out.push(Arc::new(BridgeChannel::new(BridgeConfig {
+            id: ChannelId::new(&b.platform, instance)?,
+            // A path is relative to the bot directory; a bare name is looked up on `PATH`.
+            command: match &b.command {
+                Some(c) if c.contains('/') => config.dir.join(c).display().to_string(),
+                Some(c) => c.clone(),
+                None => format!("okbot-channel-{}", b.platform),
+            },
+            args: b.args.clone(),
+            env_remove: config
+                .secret_names()
+                .into_iter()
+                .filter(|name| !b.env.contains(name))
+                .collect(),
+            env,
+            settings: serde_json::to_value(&b.settings)?,
+            caps: ChannelCaps {
+                max_message_len: b.max_message_len,
+                length_unit: LengthUnit::Chars,
+                dialect: b.dialect,
+                threads: b.threads,
+                edit: b.edit,
+                typing: b.typing,
+            },
+        })));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "bridge"))]
+fn bridge_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    if config.channels.bridge.is_empty() {
+        Ok(Vec::new())
+    } else {
+        bail!("this okbot build has no bridge support (feature `bridge`)")
+    }
+}
+
 /// Opens the knowledge bundle and starts its MCP endpoint.
 pub(crate) async fn knowledge(
     config: &Config,
@@ -336,6 +386,7 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     channels.extend(gchat_channels(config)?);
     channels.extend(discord_channels(config)?);
     channels.extend(slack_channels(config)?);
+    channels.extend(bridge_channels(config)?);
     if channels.is_empty() {
         bail!(
             "no channel is configured in {}; add one with `okbot init` (or use `okbot chat`)",

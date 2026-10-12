@@ -294,11 +294,12 @@ involving end-user data or generated content must be reported to Zalo Platforms 
 the number of bots and some features depend on free vs. paid plans. `okbot init` shows a one-line
 notice and links the terms when a Zalo channel is added.
 
-### 3.4 Out-of-process adapters (later)
+### 3.4 Out-of-process adapters
 
 `okbot-channel-bridge` runs any child process (`okbot-channel-<name>` on PATH, like okbase plugins) and
 speaks JSON-RPC over stdio: the child sends `inbound`, okbot calls `send`/`edit`/`typing`. This allows
-adapters in Node or Python where a platform's Rust SDK is weak (Teams, Zalo).
+adapters in Node or Python where a platform's Rust SDK is weak (Teams, Zalo). Specification:
+[`bridge.md`](bridge.md).
 
 ---
 

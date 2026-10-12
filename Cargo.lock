@@ -2326,6 +2326,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "okbot-channel-bridge"
+version = "0.1.0-dev"
+dependencies = [
+ "okbot-core",
+ "okbot-testkit",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "okbot-channel-console"
 version = "0.1.0-dev"
 dependencies = [
@@ -2350,6 +2364,18 @@ dependencies = [
  "twilight-gateway",
  "twilight-http",
  "twilight-model",
+]
+
+[[package]]
+name = "okbot-channel-example"
+version = "0.1.0-dev"
+dependencies = [
+ "jiff",
+ "okbot-core",
+ "okbot-testkit",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2419,6 +2445,7 @@ dependencies = [
  "jiff",
  "okbase",
  "okbot-agent",
+ "okbot-channel-bridge",
  "okbot-channel-console",
  "okbot-channel-discord",
  "okbot-channel-gchat",

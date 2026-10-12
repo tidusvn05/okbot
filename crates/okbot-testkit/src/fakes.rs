@@ -376,3 +376,42 @@ impl okbot_core::Renderer for PlainRenderer {
         }]
     }
 }
+
+/// An [`InboundSink`](okbot_core::InboundSink) that keeps every event, for adapter tests.
+#[derive(Debug, Default)]
+pub struct CollectSink(Mutex<Vec<okbot_core::InboundEvent>>);
+
+impl CollectSink {
+    /// Events delivered so far.
+    pub fn events(&self) -> Vec<okbot_core::InboundEvent> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Waits up to 10 seconds for the first event.
+    ///
+    /// # Panics
+    /// When none arrives.
+    pub async fn first(&self) -> okbot_core::InboundEvent {
+        for _ in 0..500 {
+            if let Some(event) = self.events().into_iter().next() {
+                return event;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("no inbound event within 10 s");
+    }
+}
+
+#[okbot_core::async_trait]
+impl okbot_core::InboundSink for CollectSink {
+    async fn deliver(&self, event: okbot_core::InboundEvent) -> Result<(), okbot_core::SinkClosed> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(event);
+        Ok(())
+    }
+}

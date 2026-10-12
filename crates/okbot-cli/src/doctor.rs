@@ -350,6 +350,45 @@ async fn check_slack(config: &Config, r: &mut Report) {
 #[cfg(not(feature = "slack"))]
 async fn check_slack(_: &Config, _: &mut Report) {}
 
+/// Bridge adapters: the executable can be found and its variables are set.
+fn check_bridge(config: &Config, r: &mut Report) {
+    for (instance, b) in &config.channels.bridge {
+        let label = format!("{}:{instance}", b.platform);
+        let command = b
+            .command
+            .clone()
+            .unwrap_or_else(|| format!("okbot-channel-{}", b.platform));
+        let found = if command.contains('/') {
+            config.dir.join(&command).is_file()
+        } else {
+            std::env::var_os("PATH").is_some_and(|path| {
+                std::env::split_paths(&path).any(|d| d.join(&command).is_file())
+            })
+        };
+        let missing: Vec<&str> = b
+            .env
+            .iter()
+            .filter(|name| config.secret(name).is_err())
+            .map(String::as_str)
+            .collect();
+        if !found {
+            r.add(
+                &label,
+                Status::Fail,
+                format!("adapter `{command}` not found"),
+            );
+        } else if !missing.is_empty() {
+            r.add(
+                &label,
+                Status::Fail,
+                format!("missing variables: {}", missing.join(", ")),
+            );
+        } else {
+            r.add(&label, Status::Ok, format!("bridge adapter `{command}`"));
+        }
+    }
+}
+
 async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report) {
     let mut r = Report::default();
     let config = match Config::load(dir) {
@@ -377,6 +416,7 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     check_gchat(&config, &mut r).await;
     check_discord(&config, &mut r).await;
     check_slack(&config, &mut r).await;
+    check_bridge(&config, &mut r);
     let state = config.state_dir();
     match std::fs::create_dir_all(&state).and_then(|()| {
         okbot_store::SqliteStore::open(&state.join("okbot.db"))

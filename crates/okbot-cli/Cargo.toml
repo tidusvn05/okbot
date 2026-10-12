@@ -19,7 +19,7 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["zalo", "gchat", "discord", "slack"]
+default = ["zalo", "gchat", "discord", "slack", "bridge"]
 ## Zalo Bot Platform channel.
 zalo = ["dep:okbot-channel-zalo"]
 ## Google Chat channel.
@@ -28,6 +28,8 @@ gchat = ["dep:okbot-channel-gchat"]
 discord = ["dep:okbot-channel-discord"]
 ## Slack channel (Socket Mode).
 slack = ["dep:okbot-channel-slack"]
+## Adapters in other languages, run as child processes (`docs/bridge.md`).
+bridge = ["dep:okbot-channel-bridge"]
 
 [dependencies]
 okbot-core.workspace = true
@@ -43,6 +45,7 @@ okbot-channel-zalo = { workspace = true, optional = true }
 okbot-channel-gchat = { workspace = true, optional = true }
 okbot-channel-discord = { workspace = true, optional = true }
 okbot-channel-slack = { workspace = true, optional = true }
+okbot-channel-bridge = { workspace = true, optional = true }
 inquire.workspace = true
 jiff.workspace = true
 serde.workspace = true

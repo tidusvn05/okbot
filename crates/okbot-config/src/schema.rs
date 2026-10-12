@@ -138,7 +138,7 @@ pub struct HttpSection {
 }
 
 /// `[channels.<platform>.<instance>]`.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelsSection {
     /// Zalo bots by instance name.
@@ -153,6 +153,9 @@ pub struct ChannelsSection {
     /// Slack apps by instance name.
     #[serde(default)]
     pub slack: BTreeMap<String, SlackSection>,
+    /// Adapters in other languages (bridge protocol), by instance name.
+    #[serde(default)]
+    pub bridge: BTreeMap<String, BridgeSection>,
 }
 
 impl ChannelsSection {
@@ -162,10 +165,11 @@ impl ChannelsSection {
             && self.gchat.is_empty()
             && self.discord.is_empty()
             && self.slack.is_empty()
+            && self.bridge.is_empty()
     }
 
     /// Access settings of every channel, as `(platform, instance, settings)`.
-    pub fn access(&self) -> Vec<(&'static str, &str, ChannelAccess<'_>)> {
+    pub fn access(&self) -> Vec<(&str, &str, ChannelAccess<'_>)> {
         let mut out = Vec::new();
         for (instance, z) in &self.zalo {
             out.push((
@@ -196,6 +200,9 @@ impl ChannelsSection {
         }
         for (instance, sl) in &self.slack {
             out.push(("slack", instance.as_str(), sl.access()));
+        }
+        for (instance, b) in &self.bridge {
+            out.push((b.platform.as_str(), instance.as_str(), b.access()));
         }
         out
     }
@@ -261,6 +268,62 @@ pub struct SlackSection {
     pub rooms: Vec<RoomSection>,
 }
 
+/// `[channels.bridge.<instance>]`: an adapter process speaking the bridge protocol.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BridgeSection {
+    /// Platform name: the channel id is `<platform>:<instance>`.
+    pub platform: String,
+    /// Executable; default `okbot-channel-<platform>` on `PATH`.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Arguments.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Variables (from `.env` or the environment) passed to the adapter, by name.
+    #[serde(default)]
+    pub env: Vec<String>,
+    /// Adapter settings, sent in `initialize`.
+    #[serde(default)]
+    pub settings: toml::Table,
+    /// Longest message the platform accepts.
+    #[serde(default = "default_bridge_len")]
+    pub max_message_len: usize,
+    /// Formatting dialect (`common-mark`, `plain`, `slack-mrkdwn`, …).
+    #[serde(default = "default_bridge_dialect")]
+    pub dialect: okbot_core::MarkdownDialect,
+    /// Replies can go into threads.
+    #[serde(default)]
+    pub threads: bool,
+    /// The adapter supports `edit`.
+    #[serde(default)]
+    pub edit: bool,
+    /// The adapter supports `typing`.
+    #[serde(default)]
+    pub typing: bool,
+    /// When to answer.
+    #[serde(default = "default_reply_on")]
+    pub reply_on: Vec<ReplyOn>,
+    /// Only these user ids (all when empty).
+    #[serde(default)]
+    pub allow_users: Vec<String>,
+    /// Never answered.
+    #[serde(default)]
+    pub blocked_users: Vec<String>,
+    /// Per-room settings.
+    #[serde(default)]
+    pub rooms: Vec<RoomSection>,
+}
+
+fn default_bridge_len() -> usize {
+    2000
+}
+
+fn default_bridge_dialect() -> okbot_core::MarkdownDialect {
+    okbot_core::MarkdownDialect::CommonMark
+}
+
+access!(BridgeSection);
 access!(DiscordSection);
 access!(SlackSection);
 
