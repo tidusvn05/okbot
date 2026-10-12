@@ -79,14 +79,14 @@ pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
-rand = "0.9"
+rand = "0.10"
 twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "twilight-http", "zstd"] }
 twilight-http = { version = "0.17", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
 twilight-model = "0.17"
 tokio-websockets = { version = "0.13", default-features = false, features = ["client", "server", "rustls-webpki-roots", "ring", "rand", "sha1_smol"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 # TLS: rustls with ring only (installed as the process default, see okbot-cli main).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # Already linked through rustls; used directly for Google service-account and ID-token JWTs.
