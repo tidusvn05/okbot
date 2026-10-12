@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use okbot_core::{
-    CancellationToken, ChannelCaps, ConversationStore, MessageRole, Renderer, ToolPolicy,
+    AgentProgress, CancellationToken, ChannelCaps, ConversationStore, MessageRole, Renderer,
+    ToolPolicy,
 };
 use okbot_runtime::{Runtime, RuntimeConfig, RuntimeHandle};
 use okbot_testkit::{FakeAgent, FakeChannel, ManualClock, MemoryStore, PlainRenderer, inbound};
@@ -282,5 +283,76 @@ async fn edit_capable_channels_get_a_thinking_message() {
         [("sent-1".to_string(), "the answer".to_string())]
     );
     assert_eq!(h.channel.typing_count(), 0);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn resumes_the_native_session() {
+    let h = Harness::start(FakeAgent::echo("fake").with_session("s-1"));
+    h.say("first question").await;
+    h.settle().await;
+    h.say("second question").await;
+    h.settle().await;
+    let turns = h.agent.turns();
+    assert!(turns[0].resume.is_none());
+    let resume = turns[1].resume.as_ref().expect("second turn resumes");
+    assert_eq!(
+        (resume.backend.as_str(), resume.session.as_str()),
+        ("fake", "s-1")
+    );
+    assert!(resume.prompt.contains("second question"));
+    assert!(
+        !resume.prompt.contains("first question"),
+        "{}",
+        resume.prompt
+    );
+    assert!(
+        turns[1].prompt.contains("first question"),
+        "the full prompt stays as a fallback"
+    );
+    h.say("/reset").await;
+    h.say("third").await;
+    h.settle().await;
+    assert!(
+        h.agent.turns()[2].resume.is_none(),
+        "reset forgets the session"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn progress_updates_the_thinking_message() {
+    let caps = ChannelCaps {
+        edit: true,
+        typing: false,
+        ..ChannelCaps::basic()
+    };
+    let agent = FakeAgent::streaming(
+        "fake",
+        vec![
+            AgentProgress::ToolUse("mcp__kb__kb_grep".into()),
+            AgentProgress::TextDelta("Hel".into()),
+            AgentProgress::TextDelta("lo".into()),
+        ],
+        Duration::from_millis(120),
+        "Hello world",
+    );
+    let h = Harness::start_full(agent, caps, |c| {
+        c.progress_interval = Duration::from_millis(40);
+    });
+    h.say("hi").await;
+    h.settle().await;
+    let edits: Vec<String> = h.channel.edits().into_iter().map(|(_, t)| t).collect();
+    assert!(
+        edits.iter().any(|t| t.contains("knowledge base")),
+        "{edits:?}"
+    );
+    assert!(
+        edits
+            .iter()
+            .any(|t| t.starts_with("Hel") && t.ends_with('…')),
+        "{edits:?}"
+    );
+    assert_eq!(edits.last().map(String::as_str), Some("Hello world"));
     h.stop().await;
 }

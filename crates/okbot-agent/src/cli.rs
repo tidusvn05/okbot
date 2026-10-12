@@ -95,7 +95,31 @@ fn map_error(error: agent_core::Error) -> AgentError {
             message: "empty answer".into(),
             retryable: true,
         },
+        E::SessionNotFound(id) => AgentError::Failed {
+            message: format!("session {id} not found"),
+            retryable: true,
+        },
+        // agent-core may add variants; treat them as retryable failures.
+        #[allow(unreachable_patterns)]
+        other => AgentError::Failed {
+            message: other.to_string(),
+            retryable: true,
+        },
     }
+}
+
+/// Forwards agent-core events as okbot progress.
+fn events(progress: Option<&okbot_core::ProgressFn>) -> Option<agent_core::EventHandler> {
+    let progress = progress?.clone();
+    Some(agent_core::EventHandler::new(move |event| {
+        let mapped = match event {
+            agent_core::AgentEvent::TextDelta(t) => okbot_core::AgentProgress::TextDelta(t),
+            agent_core::AgentEvent::Text(t) => okbot_core::AgentProgress::Text(t),
+            agent_core::AgentEvent::ToolUse { name } => okbot_core::AgentProgress::ToolUse(name),
+            _ => return,
+        };
+        progress.report(mapped);
+    }))
 }
 
 fn last_line(text: &str) -> &str {
@@ -112,6 +136,7 @@ impl CliBackend {
             timeout: turn.timeout,
             env_remove: self.scrub.current(),
             env: self.env.iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            on_event: events(turn.progress.as_ref()),
             ..RunRequest::default()
         };
         if !native.enforces(turn.tools) {
@@ -121,8 +146,12 @@ impl CliBackend {
                 ..base
             };
         }
+        // Resume this backend's own session; otherwise start one (kept for the next turn).
+        let resume = turn.resume.as_ref().filter(|r| r.backend == self.name);
         RunRequest {
-            prompt: turn.prompt.clone(),
+            prompt: resume.map_or_else(|| turn.prompt.clone(), |r| r.prompt.clone()),
+            resume: resume.map(|r| r.session.clone()),
+            persist_session: native.resume,
             system_prompt: Some(turn.system.clone()).filter(|s| !s.trim().is_empty()),
             tool_policy: match turn.tools {
                 ToolPolicy::McpOnly => CoreToolPolicy::McpOnly,
@@ -163,8 +192,8 @@ impl AgentBackend for CliBackend {
                 system_prompt: true,
                 mcp: true,
                 tool_policies: vec![ToolPolicy::Web, ToolPolicy::McpOnly],
-                resume: false,
-                stream: false,
+                resume: true,
+                stream: true,
             },
             _ => AgentCaps::default(),
         }
@@ -177,7 +206,19 @@ impl AgentBackend for CliBackend {
         })?;
         let request = self.request(&turn);
         let started = Instant::now();
-        let result = self.cli.run(request).await.map_err(map_error)?;
+        let result = match self.cli.run(request).await {
+            // The session is gone (expired, CLI data cleared): start over with the full history.
+            Err(agent_core::Error::SessionNotFound(id)) => {
+                tracing::info!(backend = %self.name, session = %id, "session not found; starting a new one");
+                let fresh = AgentTurn {
+                    resume: None,
+                    ..turn.clone()
+                };
+                self.cli.run(self.request(&fresh)).await
+            }
+            other => other,
+        }
+        .map_err(map_error)?;
         Ok(AgentReply {
             text: result.text,
             backend: self.name.clone(),

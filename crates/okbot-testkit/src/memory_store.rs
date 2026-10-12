@@ -15,6 +15,7 @@ struct State {
     seen: HashMap<(ChannelId, String), Timestamp>,
     messages: Vec<(u64, NewMessage)>,
     reset_after: HashMap<ConversationKey, u64>,
+    sessions: HashMap<ConversationKey, (String, String)>,
     runs: Vec<AgentRunRecord>,
     next: u64,
 }
@@ -112,6 +113,27 @@ impl ConversationStore for MemoryStore {
         let mut state = self.lock();
         let last = state.next;
         state.reset_after.insert(conversation.clone(), last);
+        state.sessions.remove(conversation);
+        Ok(())
+    }
+
+    async fn session(
+        &self,
+        conversation: &ConversationKey,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        Ok(self.lock().sessions.get(conversation).cloned())
+    }
+
+    async fn set_session(
+        &self,
+        conversation: &ConversationKey,
+        backend: &str,
+        session: &str,
+    ) -> Result<(), StoreError> {
+        self.lock().sessions.insert(
+            conversation.clone(),
+            (backend.to_string(), session.to_string()),
+        );
         Ok(())
     }
 

@@ -22,7 +22,7 @@ dependencies = [
 [[package]]
 name = "agent-core"
 version = "0.4.0"
-source = "git+https://github.com/tidusvn05/agent-core?rev=1cfe3fbb870e45213e558b475227a57d1e12e336#1cfe3fbb870e45213e558b475227a57d1e12e336"
+source = "git+https://github.com/tidusvn05/agent-core?rev=43809767d6e469c4bea84a1ebb7e1fe1d567d4ec#43809767d6e469c4bea84a1ebb7e1fe1d567d4ec"
 dependencies = [
  "serde_json",
  "tempfile",

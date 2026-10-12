@@ -65,7 +65,10 @@ mod secret;
 mod store;
 mod webhook;
 
-pub use agent::{AgentBackend, AgentError, AgentReply, AgentTurn, McpServer, TokenUsage};
+pub use agent::{
+    AgentBackend, AgentError, AgentProgress, AgentReply, AgentTurn, McpServer, ProgressFn, Resume,
+    TokenUsage,
+};
 pub use caps::{AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ToolPolicy};
 pub use channel::{Channel, ChannelError, InboundSink, SinkClosed};
 pub use clock::{Clock, SystemClock};

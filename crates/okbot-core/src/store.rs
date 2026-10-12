@@ -117,6 +117,20 @@ pub trait ConversationStore: Send + Sync {
     /// until retention removes them.
     async fn reset(&self, conversation: &ConversationKey) -> Result<(), StoreError>;
 
+    /// The native agent session of a conversation: `(backend, session id)`.
+    async fn session(
+        &self,
+        conversation: &ConversationKey,
+    ) -> Result<Option<(String, String)>, StoreError>;
+
+    /// Remembers the native agent session of a conversation (cleared by [`ConversationStore::reset`]).
+    async fn set_session(
+        &self,
+        conversation: &ConversationKey,
+        backend: &str,
+        session: &str,
+    ) -> Result<(), StoreError>;
+
     /// Records an agent run.
     async fn record_run(&self, run: AgentRunRecord) -> Result<(), StoreError>;
 

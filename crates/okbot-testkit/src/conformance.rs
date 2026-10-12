@@ -22,35 +22,7 @@ use crate::{ManualClock, bot_message, conversation, user_message};
 pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClock) {
     let a = conversation("zalo:shop", "room-a");
     let b = conversation("zalo:shop", "room-b");
-    let channel = a.channel.clone();
-    let ttl = Duration::from_secs(60);
-
-    // Dedupe: first sighting is new, repeats are not, expiry makes it new again.
-    assert!(
-        store
-            .mark_seen(&channel, "e1", ttl)
-            .await
-            .expect("mark_seen")
-    );
-    assert!(
-        !store
-            .mark_seen(&channel, "e1", ttl)
-            .await
-            .expect("mark_seen")
-    );
-    let other: okbot_core::ChannelId = "zalo:other".parse().expect("id");
-    assert!(
-        store.mark_seen(&other, "e1", ttl).await.expect("mark_seen"),
-        "dedupe is per channel"
-    );
-    clock.advance(Duration::from_secs(61));
-    assert!(
-        store
-            .mark_seen(&channel, "e1", ttl)
-            .await
-            .expect("mark_seen"),
-        "expired mark"
-    );
+    dedupe(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -80,8 +52,29 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
         []
     );
 
+    // Sessions: stored per conversation, cleared by reset.
+    assert_eq!(store.session(&a).await.expect("session"), None);
+    store
+        .set_session(&a, "claude", "s-1")
+        .await
+        .expect("set_session");
+    store
+        .set_session(&a, "claude", "s-2")
+        .await
+        .expect("set_session");
+    assert_eq!(
+        store.session(&a).await.expect("session"),
+        Some(("claude".into(), "s-2".into()))
+    );
+    assert_eq!(store.session(&b).await.expect("session"), None);
+
     // Reset hides earlier messages of that conversation only.
     store.reset(&a).await.expect("reset");
+    assert_eq!(
+        store.session(&a).await.expect("session"),
+        None,
+        "reset forgets the session"
+    );
     assert_eq!(store.recent(&a, 10).await.expect("recent"), []);
     store
         .append(user_message(&a, "after reset", clock.now()))
@@ -126,4 +119,35 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
         .map(|m| m.text)
         .collect();
     assert_eq!(left, ["new"]);
+}
+
+/// Dedupe: first sighting is new, repeats are not, expiry makes it new again; per channel.
+async fn dedupe(store: &dyn ConversationStore, clock: &ManualClock) {
+    let channel: okbot_core::ChannelId = "zalo:shop".parse().expect("id");
+    let ttl = Duration::from_secs(60);
+    assert!(
+        store
+            .mark_seen(&channel, "e1", ttl)
+            .await
+            .expect("mark_seen")
+    );
+    assert!(
+        !store
+            .mark_seen(&channel, "e1", ttl)
+            .await
+            .expect("mark_seen")
+    );
+    let other: okbot_core::ChannelId = "zalo:other".parse().expect("id");
+    assert!(
+        store.mark_seen(&other, "e1", ttl).await.expect("mark_seen"),
+        "dedupe is per channel"
+    );
+    clock.advance(Duration::from_secs(61));
+    assert!(
+        store
+            .mark_seen(&channel, "e1", ttl)
+            .await
+            .expect("mark_seen"),
+        "expired mark"
+    );
 }

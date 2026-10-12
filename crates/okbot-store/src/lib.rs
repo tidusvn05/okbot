@@ -232,10 +232,46 @@ impl ConversationStore for SqliteStore {
                 .optional()?
                 .flatten();
             tx.execute(
-                "UPDATE conversations SET reset_after = ?2, session_id = NULL WHERE id = ?1",
+                "UPDATE conversations SET reset_after = ?2, session_id = NULL, backend = NULL WHERE id = ?1",
                 params![id, last.unwrap_or(0)],
             )?;
             tx.commit()
+        })
+        .await
+    }
+
+    async fn session(
+        &self,
+        conversation: &ConversationKey,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        let key = conversation.to_string();
+        self.with(move |conn, _| {
+            conn.query_row(
+                "SELECT backend, session_id FROM conversations
+                 WHERE key = ?1 AND backend IS NOT NULL AND session_id IS NOT NULL",
+                params![key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+        })
+        .await
+    }
+
+    async fn set_session(
+        &self,
+        conversation: &ConversationKey,
+        backend: &str,
+        session: &str,
+    ) -> Result<(), StoreError> {
+        let key = conversation.to_string();
+        let (backend, session) = (backend.to_string(), session.to_string());
+        self.with(move |conn, now| {
+            let id = conversation_id(conn, &key, now)?;
+            conn.execute(
+                "UPDATE conversations SET backend = ?2, session_id = ?3 WHERE id = ?1",
+                params![id, backend, session],
+            )?;
+            Ok(())
         })
         .await
     }

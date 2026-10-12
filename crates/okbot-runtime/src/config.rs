@@ -141,6 +141,10 @@ pub struct RuntimeConfig {
     pub replies: FixedReplies,
     /// IANA timezone for the time shown to the agent (`Asia/Ho_Chi_Minh`); UTC if unset.
     pub timezone: Option<String>,
+    /// Continue the agent's native session between turns instead of resending the history.
+    pub resume_sessions: bool,
+    /// How often a "thinking…" message is updated with progress.
+    pub progress_interval: Duration,
 }
 
 impl RuntimeConfig {
@@ -164,6 +168,8 @@ impl RuntimeConfig {
             rooms: HashMap::new(),
             replies: FixedReplies::default(),
             timezone: None,
+            resume_sessions: true,
+            progress_interval: Duration::from_millis(1500),
         }
     }
 

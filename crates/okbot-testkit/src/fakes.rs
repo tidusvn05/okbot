@@ -13,7 +13,11 @@ use okbot_core::{
 #[derive(Debug, Clone)]
 enum Behaviour {
     Echo,
-    Fail { retryable: bool },
+    /// Reports these progress events `gap` apart, then answers `text`.
+    Stream(Vec<okbot_core::AgentProgress>, Duration, String),
+    Fail {
+        retryable: bool,
+    },
     Reply(String),
     Sleep(Duration),
 }
@@ -24,6 +28,7 @@ pub struct FakeAgent {
     name: String,
     behaviour: Behaviour,
     caps: AgentCaps,
+    session: Option<String>,
     calls: AtomicUsize,
     turns: Mutex<Vec<AgentTurn>>,
 }
@@ -34,6 +39,7 @@ impl FakeAgent {
             name: name.into(),
             behaviour,
             caps: AgentCaps::default(),
+            session: None,
             calls: AtomicUsize::new(0),
             turns: Mutex::new(Vec::new()),
         }
@@ -57,6 +63,23 @@ impl FakeAgent {
     /// Sleeps for `d`, then echoes.
     pub fn sleeping(name: &str, d: Duration) -> Self {
         Self::with(name, Behaviour::Sleep(d))
+    }
+
+    /// Reports `progress` events `gap` apart, then answers `text`.
+    pub fn streaming(
+        name: &str,
+        progress: Vec<okbot_core::AgentProgress>,
+        gap: Duration,
+        text: &str,
+    ) -> Self {
+        Self::with(name, Behaviour::Stream(progress, gap, text.into()))
+    }
+
+    /// Returns `session` as the native session id and declares resume support.
+    pub fn with_session(mut self, session: &str) -> Self {
+        self.session = Some(session.into());
+        self.caps.resume = true;
+        self
     }
 
     /// Declares the tool policies it enforces.
@@ -114,12 +137,21 @@ impl AgentBackend for FakeAgent {
                 tokio::time::sleep(*d).await;
                 format!("echo: {}", turn.prompt)
             }
+            Behaviour::Stream(events, gap, text) => {
+                for event in events {
+                    if let Some(progress) = &turn.progress {
+                        progress.report(event.clone());
+                    }
+                    tokio::time::sleep(*gap).await;
+                }
+                text.clone()
+            }
         };
         Ok(AgentReply {
             text,
             backend: self.name.clone(),
             model: None,
-            session_id: None,
+            session_id: self.session.clone(),
             usage: None,
             duration: Duration::ZERO,
         })
@@ -137,6 +169,7 @@ pub fn turn(prompt: &str) -> AgentTurn {
         workdir: std::env::temp_dir().join("okbot-testkit-work"),
         timeout: Duration::from_secs(10),
         resume: None,
+        progress: None,
     }
 }
 

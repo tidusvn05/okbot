@@ -422,6 +422,14 @@ and Slack workspaces have not been tried yet.
 
 Exit criteria: time to first visible feedback < 3 s on edit-capable platforms.
 
+Status (2026-10-12): done. agent-core [#8](https://github.com/tidusvn05/agent-core/pull/8)
+(stacked on #7) adds persisted/resumed sessions and progress events; okbot stores the session per
+conversation (cleared by `/reset`), sends only the new messages when resuming, falls back to the
+full history when the session is gone, and turns progress into edits of the thinking message
+(tool status, then the answer as it is written). Platforms with a typing indicator (Zalo,
+Discord) keep typing and send the final answer. Verified on Google Chat (fake API) with the real
+Claude CLI.
+
 ### P13 — Attachments and observability → **release v0.4.0**
 
 1. Inbound images/voice as `Attachment`s passed to agents that accept files; outbound images via public file URLs (needed by Zalo `sendPhoto`).

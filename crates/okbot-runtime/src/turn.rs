@@ -153,20 +153,35 @@ async fn answer_batch(
             Vec::new()
         });
     let now = shared.clock.now();
-    let prompt = context::build(&PromptInput {
+    let new_count = batch.len().min(history.len());
+    let input = PromptInput {
         bot_name: &shared.config.bot_name,
         caps: channel.caps(),
         tools,
         knowledge: &knowledge,
         excerpts: excerpts.as_deref().filter(|e| !e.is_empty()),
-        new_count: batch.len().min(history.len()),
+        new_count,
         history: &history,
         event,
         now,
         timezone: shared.config.timezone.as_deref(),
         history_tokens: shared.config.history_tokens,
-    });
+    };
+    let prompt = context::build(&input);
+    let resume = resume_for(shared, event, &input, new_count).await;
 
+    let (progress, live) = match &typing.1 {
+        Some(placeholder) => {
+            let (progress, live) = crate::live::Live::start(
+                channel.clone(),
+                shared.renderer.clone(),
+                placeholder.clone(),
+                shared.config.progress_interval,
+            );
+            (Some(progress), Some(live))
+        }
+        None => (None, None),
+    };
     let turn = AgentTurn {
         system: prompt.system,
         prompt: prompt.prompt,
@@ -175,7 +190,8 @@ async fn answer_batch(
         env: grant.env.clone(),
         workdir: workdir(shared, event),
         timeout,
-        resume: None,
+        resume,
+        progress,
     };
     let run_id = run_id();
     let started = Instant::now();
@@ -184,6 +200,16 @@ async fn answer_batch(
         () = cancel.cancelled() => None,
     };
     drop(grant);
+    drop(live);
+    if let Some(Ok(answer)) = &outcome
+        && let Some(session) = &answer.session_id
+        && let Err(error) = shared
+            .store
+            .set_session(&event.conversation, &answer.backend, session)
+            .await
+    {
+        tracing::warn!(%error, "cannot remember the agent session");
+    }
 
     let record = AgentRunRecord {
         run_id,
@@ -197,6 +223,29 @@ async fn answer_batch(
         started_at: now,
     };
     finish(shared, event, outcome, record, typing.1.as_ref()).await;
+}
+
+/// The stored session of this conversation with a prompt holding only the new messages.
+async fn resume_for(
+    shared: &Shared,
+    event: &InboundEvent,
+    input: &PromptInput<'_>,
+    new_count: usize,
+) -> Option<okbot_core::Resume> {
+    if !shared.config.resume_sessions || !shared.agent.caps().resume {
+        return None;
+    }
+    let (backend, session) = shared.store.session(&event.conversation).await.ok()??;
+    let new = &input.history[input.history.len() - new_count..];
+    let only_new = context::build(&PromptInput {
+        history: new,
+        ..*input
+    });
+    Some(okbot_core::Resume {
+        backend,
+        session,
+        prompt: only_new.prompt,
+    })
 }
 
 /// Stores the batch's messages now, so history order matches the order turns see them in.

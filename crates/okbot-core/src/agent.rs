@@ -21,6 +21,51 @@ pub struct McpServer {
     pub bearer_token_env: String,
 }
 
+/// Progress while an agent works.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AgentProgress {
+    /// A piece of the answer.
+    TextDelta(String),
+    /// A whole message (backends that do not stream pieces).
+    Text(String),
+    /// The agent started using a tool.
+    ToolUse(String),
+}
+
+/// Receives [`AgentProgress`]; called from the backend's output reader, so keep it quick.
+#[derive(Clone)]
+pub struct ProgressFn(pub std::sync::Arc<dyn Fn(AgentProgress) + Send + Sync>);
+
+impl ProgressFn {
+    /// Wraps a callback.
+    pub fn new(f: impl Fn(AgentProgress) + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(f))
+    }
+
+    /// Reports progress.
+    pub fn report(&self, progress: AgentProgress) {
+        (self.0)(progress);
+    }
+}
+
+impl std::fmt::Debug for ProgressFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProgressFn")
+    }
+}
+
+/// A native session to continue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resume {
+    /// The backend that owns the session ([`AgentBackend::name`] of the one that answered).
+    pub backend: String,
+    /// Session id from [`AgentReply::session_id`].
+    pub session: String,
+    /// The new messages only (the session already holds the earlier ones).
+    pub prompt: String,
+}
+
 /// One agent turn.
 #[derive(Debug, Clone)]
 pub struct AgentTurn {
@@ -38,8 +83,11 @@ pub struct AgentTurn {
     pub workdir: PathBuf,
     /// Upper bound for the run.
     pub timeout: Duration,
-    /// Native session to continue, when the backend supports it.
-    pub resume: Option<String>,
+    /// A session to continue instead of sending [`AgentTurn::prompt`]. Backends that cannot
+    /// resume it (another backend's session, expired) use the full prompt instead.
+    pub resume: Option<Resume>,
+    /// Progress callback.
+    pub progress: Option<ProgressFn>,
 }
 
 /// Token accounting, when the backend reports it.
