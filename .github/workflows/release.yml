@@ -94,7 +94,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/okbot" "dist/$name/"
           cp README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md THIRD_PARTY_LICENSES.md CHANGELOG.md "dist/$name/"
           cd dist && tar -czf "$name.tar.gz" "$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: okbot-${{ matrix.target }}
           path: dist/*.tar.gz
