@@ -253,6 +253,39 @@ async fn check_zalo(config: &Config, test_webhook: bool, r: &mut Report) {
 #[cfg(not(feature = "zalo"))]
 async fn check_zalo(_: &Config, _: bool, _: &mut Report) {}
 
+#[cfg(feature = "gchat")]
+async fn check_gchat(config: &Config, r: &mut Report) {
+    use okbot_channel_gchat::{ServiceAccount, TokenSource};
+    for (instance, g) in &config.channels.gchat {
+        let label = format!("gchat:{instance}");
+        let account = match ServiceAccount::from_file(&config.path(&g.credentials)) {
+            Ok(a) => match std::env::var("OKBOT_GCHAT_API_BASE") {
+                Ok(base) => a.with_token_uri(&format!("{base}/token")),
+                Err(_) => a,
+            },
+            Err(error) => {
+                r.add(&label, Status::Fail, error.to_string());
+                continue;
+            }
+        };
+        let email = account.client_email.clone();
+        match TokenSource::new(account, reqwest::Client::new())
+            .token()
+            .await
+        {
+            Ok(_) => r.add(
+                &label,
+                Status::Ok,
+                format!("service account {email}, {:?} delivery", g.delivery),
+            ),
+            Err(error) => r.add(&label, Status::Fail, format!("{email}: {error}")),
+        }
+    }
+}
+
+#[cfg(not(feature = "gchat"))]
+async fn check_gchat(_: &Config, _: &mut Report) {}
+
 async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report) {
     let mut r = Report::default();
     let config = match Config::load(dir) {
@@ -277,6 +310,7 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     check_agents(&config, &mut r).await;
     check_knowledge(&config, &mut r).await;
     check_zalo(&config, args.test_webhook, &mut r).await;
+    check_gchat(&config, &mut r).await;
     let state = config.state_dir();
     match std::fs::create_dir_all(&state).and_then(|()| {
         okbot_store::SqliteStore::open(&state.join("okbot.db"))

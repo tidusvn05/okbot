@@ -144,13 +144,102 @@ pub struct ChannelsSection {
     /// Zalo bots by instance name.
     #[serde(default)]
     pub zalo: BTreeMap<String, ZaloSection>,
+    /// Google Chat apps by instance name.
+    #[serde(default)]
+    pub gchat: BTreeMap<String, GChatSection>,
 }
 
 impl ChannelsSection {
     /// Whether no channel is configured.
     pub fn is_empty(&self) -> bool {
-        self.zalo.is_empty()
+        self.zalo.is_empty() && self.gchat.is_empty()
     }
+
+    /// Access settings of every channel, as `(platform, instance, settings)`.
+    pub fn access(&self) -> Vec<(&'static str, &str, ChannelAccess<'_>)> {
+        let mut out = Vec::new();
+        for (instance, z) in &self.zalo {
+            out.push((
+                "zalo",
+                instance.as_str(),
+                ChannelAccess {
+                    reply_on: &z.reply_on,
+                    allow_users: &z.allow_users,
+                    blocked_users: &z.blocked_users,
+                    rooms: &z.rooms,
+                },
+            ));
+        }
+        for (instance, g) in &self.gchat {
+            out.push((
+                "gchat",
+                instance.as_str(),
+                ChannelAccess {
+                    reply_on: &g.reply_on,
+                    allow_users: &g.allow_users,
+                    blocked_users: &g.blocked_users,
+                    rooms: &g.rooms,
+                },
+            ));
+        }
+        out
+    }
+}
+
+/// The access settings every channel section has.
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelAccess<'a> {
+    /// When to answer.
+    pub reply_on: &'a [ReplyOn],
+    /// Only these users (all when empty).
+    pub allow_users: &'a [String],
+    /// Never these users.
+    pub blocked_users: &'a [String],
+    /// Per-room settings.
+    pub rooms: &'a [RoomSection],
+}
+
+/// How Google Chat delivers events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GChatDelivery {
+    /// Cloud Pub/Sub pull subscription (no public URL).
+    #[default]
+    Pubsub,
+    /// HTTPS endpoint through `[http]`.
+    Http,
+}
+
+/// `[channels.gchat.<instance>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GChatSection {
+    /// Service-account key file (relative to the bot directory), kept out of git.
+    pub credentials: PathBuf,
+    /// Receiving mode.
+    #[serde(default)]
+    pub delivery: GChatDelivery,
+    /// `projects/<p>/subscriptions/<s>` for Pub/Sub delivery.
+    #[serde(default)]
+    pub subscription: Option<String>,
+    /// The app's endpoint URL, when its authentication audience is "HTTP endpoint URL".
+    #[serde(default)]
+    pub audience_url: Option<String>,
+    /// The project number, when the authentication audience is "Project number".
+    #[serde(default)]
+    pub audience_project_number: Option<String>,
+    /// When to answer.
+    #[serde(default = "default_reply_on")]
+    pub reply_on: Vec<ReplyOn>,
+    /// Only these users (`users/<id>`) are answered (all when empty).
+    #[serde(default)]
+    pub allow_users: Vec<String>,
+    /// Never answered.
+    #[serde(default)]
+    pub blocked_users: Vec<String>,
+    /// Per-space settings (`room` is the space name, `spaces/…`).
+    #[serde(default)]
+    pub rooms: Vec<RoomSection>,
 }
 
 /// How a channel receives events.

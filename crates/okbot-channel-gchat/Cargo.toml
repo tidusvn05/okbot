@@ -15,3 +15,19 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+base64.workspace = true
+jiff.workspace = true
+rand.workspace = true
+reqwest = { workspace = true }
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+okbot-testkit.workspace = true
+axum = { workspace = true, features = ["form"] }
+tempfile.workspace = true

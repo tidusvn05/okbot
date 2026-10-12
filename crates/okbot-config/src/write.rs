@@ -15,10 +15,27 @@ pub struct InitOptions {
     pub chain: Vec<(String, Option<PathBuf>)>,
     /// A Zalo channel, if any.
     pub zalo: Option<ZaloInit>,
+    /// A Google Chat channel, if any.
+    pub gchat: Option<GChatInit>,
     /// HTTP listen address (webhooks).
     pub http_listen: Option<String>,
     /// IANA timezone.
     pub timezone: Option<String>,
+}
+
+/// The Google Chat part of [`InitOptions`].
+#[derive(Debug, Clone)]
+pub struct GChatInit {
+    /// Instance name (`gchat:<instance>`).
+    pub instance: String,
+    /// Service-account key file, relative to the bot directory.
+    pub credentials: PathBuf,
+    /// Receiving mode.
+    pub delivery: crate::GChatDelivery,
+    /// Pub/Sub subscription.
+    pub subscription: Option<String>,
+    /// Endpoint URL (HTTP delivery).
+    pub audience_url: Option<String>,
 }
 
 /// The Zalo part of [`InitOptions`].
@@ -105,32 +122,71 @@ pub fn render_initial(o: &InitOptions) -> String {
     }
 
     if let Some(z) = &o.zalo {
-        let _ = writeln!(s, "\n[channels.zalo.{}]", z.instance);
-        let _ = writeln!(s, "token_env = {}", quoted(&z.token_env));
-        match z.delivery {
-            Delivery::Polling => {
-                let _ = writeln!(
-                    s,
-                    "delivery = \"polling\"               # or \"webhook\" (recommended for production)"
-                );
-            }
-            Delivery::Webhook => {
-                let _ = writeln!(s, "delivery = \"webhook\"");
-                if let Some(url) = &z.public_url {
-                    let _ = writeln!(s, "public_url = {}", quoted(url));
-                }
-                if let Some(secret) = &z.secret_env {
-                    let _ = writeln!(s, "secret_env = {}", quoted(secret));
-                }
-            }
-        }
-        let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
-        let _ = writeln!(s, "\n# A room without web access:");
-        let _ = writeln!(s, "# [[channels.zalo.{}.rooms]]", z.instance);
-        let _ = writeln!(s, "# room = \"<chat id>\"");
-        let _ = writeln!(s, "# tool_policy = \"mcp-only\"");
+        render_zalo(&mut s, z);
+    }
+    if let Some(g) = &o.gchat {
+        render_gchat(&mut s, g);
     }
     s
+}
+
+fn render_zalo(s: &mut String, z: &ZaloInit) {
+    let _ = writeln!(s, "\n[channels.zalo.{}]", z.instance);
+    let _ = writeln!(s, "token_env = {}", quoted(&z.token_env));
+    match z.delivery {
+        Delivery::Polling => {
+            let _ = writeln!(
+                s,
+                "delivery = \"polling\"               # or \"webhook\" (recommended for production)"
+            );
+        }
+        Delivery::Webhook => {
+            let _ = writeln!(s, "delivery = \"webhook\"");
+            if let Some(url) = &z.public_url {
+                let _ = writeln!(s, "public_url = {}", quoted(url));
+            }
+            if let Some(secret) = &z.secret_env {
+                let _ = writeln!(s, "secret_env = {}", quoted(secret));
+            }
+        }
+    }
+    let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
+    let _ = writeln!(s, "\n# A room without web access:");
+    let _ = writeln!(s, "# [[channels.zalo.{}.rooms]]", z.instance);
+    let _ = writeln!(s, "# room = \"<chat id>\"");
+    let _ = writeln!(s, "# tool_policy = \"mcp-only\"");
+}
+
+fn render_gchat(s: &mut String, g: &GChatInit) {
+    let _ = writeln!(s, "\n[channels.gchat.{}]", g.instance);
+    let _ = writeln!(
+        s,
+        "credentials = {}   # service-account key, never commit it",
+        quoted(&g.credentials.to_string_lossy())
+    );
+    match g.delivery {
+        crate::GChatDelivery::Pubsub => {
+            let _ = writeln!(s, "delivery = \"pubsub\"");
+            let _ = writeln!(
+                s,
+                "subscription = {}",
+                quoted(
+                    g.subscription
+                        .as_deref()
+                        .unwrap_or("projects/<project>/subscriptions/<subscription>")
+                )
+            );
+        }
+        crate::GChatDelivery::Http => {
+            let _ = writeln!(s, "delivery = \"http\"");
+            let _ = writeln!(
+                s,
+                "audience_url = {}",
+                quoted(g.audience_url.as_deref().unwrap_or("https://…"))
+            );
+        }
+    }
+    let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
 }
 
 /// Sets `name=value` in the `.env` file at `path` (created with mode 0600), keeping other lines.

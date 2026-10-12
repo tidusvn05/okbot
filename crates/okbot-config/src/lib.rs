@@ -15,10 +15,10 @@ use std::path::{Path, PathBuf};
 use okbot_core::Secret;
 
 pub use schema::{
-    AgentSection, BotSection, ChannelsSection, Delivery, HttpSection, ProviderSection, ReplyOn,
-    RoomSection, ZaloSection,
+    AgentSection, BotSection, ChannelAccess, ChannelsSection, Delivery, GChatDelivery,
+    GChatSection, HttpSection, ProviderSection, ReplyOn, RoomSection, ZaloSection,
 };
-pub use write::{InitOptions, ZaloInit, render_initial, upsert_env};
+pub use write::{GChatInit, InitOptions, ZaloInit, render_initial, upsert_env};
 
 /// The file name of a bot's configuration.
 pub const CONFIG_FILE: &str = "okbot.toml";
@@ -167,6 +167,29 @@ impl Config {
                         "[channels.zalo.{instance}] webhook delivery needs secret_env"
                     ));
                 }
+            }
+        }
+        for (instance, g) in &self.channels.gchat {
+            okbot_core::ChannelId::new("gchat", instance)
+                .map_err(|e| ConfigError::Invalid(format!("[channels.gchat.{instance}]: {e}")))?;
+            match g.delivery {
+                GChatDelivery::Pubsub
+                    if g.subscription
+                        .as_deref()
+                        .is_none_or(|s| !s.starts_with("projects/")) =>
+                {
+                    return invalid(format!(
+                        "[channels.gchat.{instance}] pubsub delivery needs subscription = \"projects/<p>/subscriptions/<s>\""
+                    ));
+                }
+                GChatDelivery::Http
+                    if g.audience_url.is_none() == g.audience_project_number.is_none() =>
+                {
+                    return invalid(format!(
+                        "[channels.gchat.{instance}] http delivery needs exactly one of audience_url or audience_project_number"
+                    ));
+                }
+                _ => {}
             }
         }
         Ok(())

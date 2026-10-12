@@ -102,14 +102,13 @@ impl Dispatcher {
         let running = lock(&self.workers)
             .get(&event.conversation)
             .and_then(|w| lock(&w.current).clone());
-        let text = match running {
-            Some(token) => {
-                token.cancel();
-                s.config.replies.stopped.clone()
+        match running {
+            // The turn reports the stop itself (replacing its "thinking…" message if any).
+            Some(token) => token.cancel(),
+            None => {
+                turn::reply(s, event, "Nothing is running.").await;
             }
-            None => "Nothing is running.".to_string(),
-        };
-        turn::reply(s, event, &text).await;
+        }
     }
 
     /// Sends the event to its conversation's worker, starting one if needed.

@@ -25,14 +25,25 @@ impl Harness {
     }
 
     fn start_with(agent: FakeAgent, tweak: impl FnOnce(&mut RuntimeConfig)) -> Self {
+        Self::start_full(
+            agent,
+            ChannelCaps {
+                typing: true,
+                ..ChannelCaps::basic()
+            },
+            tweak,
+        )
+    }
+
+    fn start_full(
+        agent: FakeAgent,
+        caps: ChannelCaps,
+        tweak: impl FnOnce(&mut RuntimeConfig),
+    ) -> Self {
         let work = std::env::temp_dir().join("okbot-runtime-tests");
         let mut config = RuntimeConfig::new("okbot", work);
         config.typing_interval = Duration::from_millis(50);
         tweak(&mut config);
-        let caps = ChannelCaps {
-            typing: true,
-            ..ChannelCaps::basic()
-        };
         let channel = Arc::new(FakeChannel::new("fake:test", caps));
         let agent = Arc::new(agent.enforcing(&[ToolPolicy::Web, ToolPolicy::McpOnly]));
         let store = Arc::new(MemoryStore::new(Arc::new(ManualClock::default())));
@@ -252,5 +263,24 @@ async fn commands_wait_their_turn_behind_messages() {
         "answer to `one` comes before the reset reply: {sent:?}"
     );
     assert!(sent[1].contains("new conversation"), "{sent:?}");
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn edit_capable_channels_get_a_thinking_message() {
+    let caps = ChannelCaps {
+        edit: true,
+        typing: false,
+        ..ChannelCaps::basic()
+    };
+    let h = Harness::start_full(FakeAgent::replying("fake", "the answer"), caps, |_| {});
+    h.say("question").await;
+    h.settle().await;
+    assert_eq!(h.channel.sent_texts(), ["_Thinking…_"]);
+    assert_eq!(
+        h.channel.edits(),
+        [("sent-1".to_string(), "the answer".to_string())]
+    );
+    assert_eq!(h.channel.typing_count(), 0);
     h.stop().await;
 }

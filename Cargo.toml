@@ -29,6 +29,7 @@ must_use_candidate = "allow"
 return_self_not_must_use = "allow"
 similar_names = "allow"
 single_match_else = "allow"
+many_single_char_names = "allow"   # crypto code follows the specs' names (n, e, h, c, s)
 doc_markdown = "allow"
 struct_excessive_bools = "allow"   # capability flags are naturally booleans
 unwrap_used = "warn"
@@ -79,6 +80,9 @@ axum = { version = "0.8", default-features = false, features = ["tokio", "http1"
 rand = "0.9"
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.22"
+# Already linked through rustls; used directly for Google service-account and ID-token JWTs.
+ring = "0.17"
 tempfile = "3"
 insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"

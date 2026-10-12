@@ -21,6 +21,7 @@ fn options(delivery: Delivery) -> InitOptions {
                 .then(|| "https://bot.example.com/zalo/shop".into()),
             secret_env: (delivery == Delivery::Webhook).then(|| "ZALO_WEBHOOK_SECRET".into()),
         }),
+        gchat: None,
         http_listen: (delivery == Delivery::Webhook).then(|| "127.0.0.1:8787".into()),
         timezone: Some("Asia/Ho_Chi_Minh".into()),
     }
@@ -131,4 +132,26 @@ fn secrets_come_from_env_file_and_never_print() {
         .unwrap_err()
         .to_string();
     assert!(missing.contains(".env"), "{missing}");
+}
+
+#[test]
+fn gchat_section_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = options(Delivery::Polling);
+    o.zalo = None;
+    o.gchat = Some(crate::GChatInit {
+        instance: "corp".into(),
+        credentials: "gchat-service-account.json".into(),
+        delivery: GChatDelivery::Pubsub,
+        subscription: Some("projects/p/subscriptions/okbot".into()),
+        audience_url: None,
+    });
+    write(dir.path(), &render_initial(&o));
+    let config = Config::load(dir.path()).unwrap();
+    let g = &config.channels.gchat["corp"];
+    assert_eq!(
+        g.subscription.as_deref(),
+        Some("projects/p/subscriptions/okbot")
+    );
+    assert_eq!(config.channels.access()[0].0, "gchat");
 }

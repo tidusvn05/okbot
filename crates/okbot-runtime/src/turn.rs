@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use okbot_core::{
     AgentRunRecord, AgentTurn, CancellationToken, InboundEvent, KnowledgeContext, MessageRole,
-    NewMessage, Requester, RunGrant, RunId,
+    NewMessage, Requester, RunGrant, RunId, SentRef,
 };
 use sha2::{Digest, Sha256};
 use tracing::Instrument;
@@ -16,13 +16,28 @@ use crate::{Shared, Tracked};
 
 /// Renders `markdown` for the event's channel and sends it as a reply. Failures are logged.
 pub(crate) async fn reply(shared: &Shared, event: &InboundEvent, markdown: &str) -> bool {
+    reply_over(shared, event, markdown, None).await
+}
+
+/// Like [`reply`], but the first part replaces `placeholder` (a "thinking…" message) when given.
+async fn reply_over(
+    shared: &Shared,
+    event: &InboundEvent,
+    markdown: &str,
+    placeholder: Option<&SentRef>,
+) -> bool {
     let Some(channel) = shared.channels.get(&event.conversation.channel) else {
         tracing::error!(channel = %event.conversation.channel, "reply to unknown channel");
         return false;
     };
     let to = target(event);
+    let mut placeholder = placeholder;
     for part in shared.renderer.render(markdown, channel.caps()) {
-        if let Err(error) = channel.send(&to, &part).await {
+        let result = match placeholder.take() {
+            Some(sent) => channel.edit(sent, &part).await,
+            None => channel.send(&to, &part).await.map(drop),
+        };
+        if let Err(error) = result {
             tracing::error!(channel = %channel.id(), %error, "sending a reply failed");
             return false;
         }
@@ -40,31 +55,47 @@ fn workdir(shared: &Shared, event: &InboundEvent) -> PathBuf {
     shared.config.work_dir.join(&hex::encode(digest)[..16])
 }
 
-/// Keeps the typing indicator up until dropped.
-struct Typing(Option<tokio::task::JoinHandle<()>>);
+/// Shows that the bot is working: a repeated typing indicator, or, on platforms that can edit
+/// but not type (Google Chat), a "thinking…" message that the answer later replaces.
+struct Typing(Option<tokio::task::JoinHandle<()>>, Option<SentRef>);
 
 impl Typing {
     /// Shows the indicator once right away, then repeats it in the background.
     async fn start(shared: &Shared, event: &InboundEvent) -> Self {
         let Some(channel) = shared.channels.get(&event.conversation.channel).cloned() else {
-            return Self(None);
+            return Self(None, None);
         };
         if !channel.caps().typing {
-            return Self(None);
+            if !channel.caps().edit {
+                return Self(None, None);
+            }
+            let thinking = shared
+                .renderer
+                .render(&shared.config.replies.thinking, channel.caps())
+                .into_iter()
+                .next();
+            let sent = match thinking {
+                Some(part) => channel.send(&target(event), &part).await.ok(),
+                None => None,
+            };
+            return Self(None, sent);
         }
         let to = target(event);
         let every = shared.config.typing_interval;
         if let Err(error) = channel.typing(&to).await {
             tracing::debug!(%error, "typing indicator failed");
         }
-        Self(Some(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(every).await;
-                if let Err(error) = channel.typing(&to).await {
-                    tracing::debug!(%error, "typing indicator failed");
+        Self(
+            Some(tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(every).await;
+                    if let Err(error) = channel.typing(&to).await {
+                        tracing::debug!(%error, "typing indicator failed");
+                    }
                 }
-            }
-        })))
+            })),
+            None,
+        )
     }
 }
 
@@ -97,7 +128,7 @@ async fn answer_batch(
     let Some(channel) = shared.channels.get(&event.conversation.channel) else {
         return;
     };
-    let _typing = Typing::start(shared, event).await;
+    let typing = Typing::start(shared, event).await;
     store_user_messages(shared, batch).await;
 
     let room = shared
@@ -165,7 +196,7 @@ async fn answer_batch(
         error: None,
         started_at: now,
     };
-    finish(shared, event, outcome, record).await;
+    finish(shared, event, outcome, record, typing.1.as_ref()).await;
 }
 
 /// Stores the batch's messages now, so history order matches the order turns see them in.
@@ -228,18 +259,20 @@ async fn finish(
     event: &InboundEvent,
     outcome: Option<Result<okbot_core::AgentReply, okbot_core::AgentError>>,
     mut record: AgentRunRecord,
+    placeholder: Option<&SentRef>,
 ) {
     match outcome {
         None => {
             tracing::info!(run = %record.run_id, "turn cancelled");
             record.error = Some("cancelled".into());
+            reply_over(shared, event, &shared.config.replies.stopped, placeholder).await;
         }
         Some(Ok(answer)) => {
             tracing::info!(run = %record.run_id, backend = %answer.backend, ms = record.duration.as_millis(), "answered");
             record.backend = answer.backend;
             record.model = answer.model;
             record.usage = answer.usage;
-            if reply(shared, event, &answer.text).await {
+            if reply_over(shared, event, &answer.text, placeholder).await {
                 let message = NewMessage {
                     conversation: event.conversation.clone(),
                     role: MessageRole::Bot,
@@ -257,7 +290,7 @@ async fn finish(
         Some(Err(error)) => {
             tracing::error!(run = %record.run_id, %error, "agent turn failed");
             record.error = Some(error.to_string());
-            reply(shared, event, &shared.config.replies.error).await;
+            reply_over(shared, event, &shared.config.replies.error, placeholder).await;
         }
     }
     if let Err(error) = shared.store.record_run(record).await {

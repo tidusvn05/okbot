@@ -134,20 +134,20 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
         rc.access.admins.insert(parse_admin(admin)?);
     }
     let mut allow_users = HashSet::new();
-    for (instance, zalo) in &config.channels.zalo {
-        let channel = ChannelId::new("zalo", instance)?;
+    for (platform, instance, access) in config.channels.access() {
+        let channel = ChannelId::new(platform, instance)?;
         rc.access
             .reply_on_by_channel
-            .insert(channel.clone(), reply_on(&zalo.reply_on));
-        for user in &zalo.allow_users {
+            .insert(channel.clone(), reply_on(access.reply_on));
+        for user in access.allow_users {
             allow_users.insert((channel.clone(), UserId::new(user.as_str())));
         }
-        for user in &zalo.blocked_users {
+        for user in access.blocked_users {
             rc.access
                 .blocked_users
                 .insert((channel.clone(), UserId::new(user.as_str())));
         }
-        for room in &zalo.rooms {
+        for room in access.rooms {
             rc.rooms.insert(
                 (channel.clone(), room.room.clone()),
                 RoomRule {
@@ -204,6 +204,54 @@ fn zalo_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
     }
 }
 
+#[cfg(feature = "gchat")]
+fn gchat_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    use okbot_channel_gchat::{
+        Audience, Delivery, Endpoints, GChatChannel, GChatConfig, ServiceAccount,
+    };
+    let mut out: Vec<Arc<dyn Channel>> = Vec::new();
+    for (instance, g) in &config.channels.gchat {
+        let path = config.path(&g.credentials);
+        let account = ServiceAccount::from_file(&path)
+            .with_context(|| format!("[channels.gchat.{instance}] credentials"))?;
+        let delivery = match g.delivery {
+            okbot_config::GChatDelivery::Pubsub => Delivery::PubSub {
+                subscription: g.subscription.clone().unwrap_or_default(),
+            },
+            okbot_config::GChatDelivery::Http => Delivery::Http {
+                audience: match (&g.audience_url, &g.audience_project_number) {
+                    (Some(url), _) => Audience::EndpointUrl(url.clone()),
+                    (None, Some(number)) => Audience::ProjectNumber(number.clone()),
+                    (None, None) => bail!("[channels.gchat.{instance}] needs an audience"),
+                },
+            },
+        };
+        let mut endpoints = Endpoints::default();
+        if let Ok(base) = std::env::var("OKBOT_GCHAT_API_BASE") {
+            endpoints.chat.clone_from(&base);
+            endpoints.pubsub.clone_from(&base);
+            endpoints.token = Some(format!("{base}/token"));
+            endpoints.jwks = Some(format!("{base}/jwks"));
+        }
+        out.push(Arc::new(GChatChannel::new(GChatConfig {
+            id: ChannelId::new("gchat", instance)?,
+            account,
+            delivery,
+            endpoints,
+        })));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "gchat"))]
+fn gchat_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    if config.channels.gchat.is_empty() {
+        Ok(Vec::new())
+    } else {
+        bail!("this okbot build has no Google Chat support (feature `gchat`)")
+    }
+}
+
 /// Opens the knowledge bundle and starts its MCP endpoint.
 pub(crate) async fn knowledge(
     config: &Config,
@@ -230,7 +278,8 @@ pub(crate) async fn knowledge(
 
 /// Builds the bot described by `config`.
 pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::Result<Bot> {
-    let channels = zalo_channels(config)?;
+    let mut channels = zalo_channels(config)?;
+    channels.extend(gchat_channels(config)?);
     if channels.is_empty() {
         bail!(
             "no channel is configured in {}; add one with `okbot init` (or use `okbot chat`)",
@@ -256,7 +305,12 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
         .channels
         .zalo
         .values()
-        .any(|z| z.delivery == okbot_config::Delivery::Webhook);
+        .any(|z| z.delivery == okbot_config::Delivery::Webhook)
+        || config
+            .channels
+            .gchat
+            .values()
+            .any(|g| g.delivery == okbot_config::GChatDelivery::Http);
     match (&config.http.listen, needs_http) {
         (Some(listen), _) => {
             let addr: SocketAddr = listen

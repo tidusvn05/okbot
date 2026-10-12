@@ -90,6 +90,9 @@ pub struct FixedReplies {
     pub too_long: String,
     /// After `/stop` cancelled a turn.
     pub stopped: String,
+    /// Shown while an answer is written, on platforms that edit messages but have no typing
+    /// indicator (Google Chat).
+    pub thinking: String,
 }
 
 impl Default for FixedReplies {
@@ -102,6 +105,7 @@ impl Default for FixedReplies {
                 .into(),
             too_long: "That message is too long for me. Please shorten it.".into(),
             stopped: "Stopped.".into(),
+            thinking: "_Thinking…_".into(),
         }
     }
 }

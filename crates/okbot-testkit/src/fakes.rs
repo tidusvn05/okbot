@@ -166,6 +166,7 @@ pub struct FakeChannel {
     caps: okbot_core::ChannelCaps,
     sink: Mutex<Option<std::sync::Arc<dyn okbot_core::InboundSink>>>,
     sent: Mutex<Vec<(okbot_core::ReplyTarget, String)>>,
+    edits: Mutex<Vec<(String, String)>>,
     typing: AtomicUsize,
     ready: tokio::sync::Notify,
 }
@@ -186,6 +187,7 @@ impl FakeChannel {
             caps,
             sink: Mutex::new(None),
             sent: Mutex::new(Vec::new()),
+            edits: Mutex::new(Vec::new()),
             typing: AtomicUsize::new(0),
             ready: tokio::sync::Notify::new(),
         }
@@ -221,6 +223,14 @@ impl FakeChannel {
     /// Messages sent so far with their targets.
     pub fn sent(&self) -> Vec<(okbot_core::ReplyTarget, String)> {
         self.sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Edits so far: `(message id, new text)`.
+    pub fn edits(&self) -> Vec<(String, String)> {
+        self.edits
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
@@ -274,6 +284,21 @@ impl okbot_core::Channel for FakeChannel {
 
     async fn typing(&self, _to: &okbot_core::ReplyTarget) -> Result<(), okbot_core::ChannelError> {
         self.typing.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn edit(
+        &self,
+        sent: &okbot_core::SentRef,
+        message: &okbot_core::RenderedMessage,
+    ) -> Result<(), okbot_core::ChannelError> {
+        if !self.caps.edit {
+            return Err(okbot_core::ChannelError::Unsupported("edit"));
+        }
+        self.edits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((sent.message_id.to_string(), message.text.clone()));
         Ok(())
     }
 }

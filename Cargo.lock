@@ -214,6 +214,7 @@ checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
@@ -229,6 +230,7 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tower",
@@ -2295,6 +2297,22 @@ version = "0.1.0-dev"
 [[package]]
 name = "okbot-channel-gchat"
 version = "0.1.0-dev"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "jiff",
+ "okbot-core",
+ "okbot-testkit",
+ "rand 0.9.5",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "okbot-channel-slack"
@@ -2330,6 +2348,7 @@ dependencies = [
  "okbase",
  "okbot-agent",
  "okbot-channel-console",
+ "okbot-channel-gchat",
  "okbot-channel-zalo",
  "okbot-config",
  "okbot-core",

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use okbot_agent::detect::{self, DetectedCli, Login};
-use okbot_config::{CONFIG_FILE, Delivery, ENV_FILE, InitOptions, ZaloInit, upsert_env};
+use okbot_config::{
+    CONFIG_FILE, Delivery, ENV_FILE, GChatDelivery, GChatInit, InitOptions, ZaloInit, upsert_env,
+};
 
 use crate::exit::CliError;
 
@@ -18,6 +20,8 @@ use crate::exit::CliError;
 pub(crate) enum Platform {
     /// Zalo Bot Platform.
     Zalo,
+    /// Google Chat app.
+    Gchat,
     /// No platform yet (use `okbot chat` to try the bot).
     None,
 }
@@ -29,6 +33,15 @@ pub(crate) enum DeliveryArg {
     Polling,
     /// Zalo calls a public HTTPS URL (recommended for production).
     Webhook,
+}
+
+/// How Google Chat delivers events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum GChatDeliveryArg {
+    /// Cloud Pub/Sub pull subscription: no public URL needed.
+    Pubsub,
+    /// Google calls a public HTTPS URL.
+    Http,
 }
 
 /// Arguments shared by `okbot init` and `okbot new`.
@@ -53,6 +66,15 @@ pub(crate) struct InitArgs {
     /// Public HTTPS URL for webhook delivery (`https://bot.example.com/zalo/<instance>`).
     #[arg(long)]
     public_url: Option<String>,
+    /// Google Chat: the app's service-account key file (copied into the bot directory).
+    #[arg(long)]
+    gchat_credentials: Option<PathBuf>,
+    /// Google Chat: how events arrive.
+    #[arg(long, value_enum)]
+    gchat_delivery: Option<GChatDeliveryArg>,
+    /// Google Chat: Pub/Sub subscription (`projects/<p>/subscriptions/<s>`).
+    #[arg(long)]
+    gchat_subscription: Option<String>,
     /// HTTP listen address for webhooks (default: the first free port from 127.0.0.1:8787).
     #[arg(long)]
     listen: Option<String>,
@@ -280,6 +302,132 @@ async fn zalo(
     ))
 }
 
+/// File name of the copied Google service-account key.
+const GCHAT_KEY_FILE: &str = "gchat-service-account.json";
+
+/// Step 3: Google Chat.
+async fn gchat(
+    w: &Wizard<'_>,
+    dir: &Path,
+    instance: &str,
+) -> anyhow::Result<(GChatInit, Option<String>)> {
+    let source = match &w.args.gchat_credentials {
+        Some(path) => path.clone(),
+        None => PathBuf::from(w.ask_or_fail(
+            "--gchat-credentials",
+            "Path to the Chat app's service-account key file (JSON)",
+            || inquire::Text::new("Service-account key file (JSON):").prompt(),
+        )?),
+    };
+    let text = std::fs::read_to_string(&source)
+        .with_context(|| format!("cannot read {}", source.display()))?;
+    if !w.args.no_verify {
+        verify_gchat(&text).await?;
+    }
+    let target = dir.join(GCHAT_KEY_FILE);
+    write_private(&target, &text)?;
+    let delivery = match w.args.gchat_delivery {
+        Some(GChatDeliveryArg::Pubsub) => GChatDelivery::Pubsub,
+        Some(GChatDeliveryArg::Http) => GChatDelivery::Http,
+        None => {
+            let choice = w.ask_or_fail(
+                "--gchat-delivery",
+                "How should Google Chat deliver events: pubsub (no public URL) or http (public HTTPS URL)",
+                || {
+                    inquire::Select::new(
+                        "How should Google Chat deliver events?",
+                        vec![
+                            "Pub/Sub — no public URL needed",
+                            "HTTP endpoint — Google calls your HTTPS URL",
+                        ],
+                    )
+                    .raw_prompt()
+                },
+            )?;
+            if choice.index == 0 {
+                GChatDelivery::Pubsub
+            } else {
+                GChatDelivery::Http
+            }
+        }
+    };
+    let mut init = GChatInit {
+        instance: instance.into(),
+        credentials: GCHAT_KEY_FILE.into(),
+        delivery,
+        subscription: None,
+        audience_url: None,
+    };
+    match delivery {
+        GChatDelivery::Pubsub => {
+            let sub = match &w.args.gchat_subscription {
+                Some(s) => s.clone(),
+                None => w.ask_or_fail(
+                    "--gchat-subscription",
+                    "Pub/Sub subscription (projects/<project>/subscriptions/<name>)",
+                    || inquire::Text::new("Pub/Sub subscription:").prompt(),
+                )?,
+            };
+            if !sub.starts_with("projects/") {
+                bail!("the subscription must look like projects/<project>/subscriptions/<name>");
+            }
+            init.subscription = Some(sub);
+            Ok((init, None))
+        }
+        GChatDelivery::Http => {
+            let url = match &w.args.public_url {
+                Some(url) => url.clone(),
+                None => w.ask_or_fail(
+                    "--public-url",
+                    &format!("Public HTTPS URL of the app's endpoint (for example https://bot.example.com/gchat/{instance})"),
+                    || inquire::Text::new("Public HTTPS URL for Google Chat:").prompt(),
+                )?,
+            };
+            if !url.starts_with("https://") {
+                bail!("the endpoint URL must start with https://");
+            }
+            init.audience_url = Some(url);
+            Ok((
+                init,
+                Some(w.args.listen.clone().unwrap_or_else(free_listen)),
+            ))
+        }
+    }
+}
+
+#[cfg(feature = "gchat")]
+async fn verify_gchat(key: &str) -> anyhow::Result<()> {
+    let mut account = okbot_channel_gchat::ServiceAccount::from_json(key)?;
+    if let Ok(base) = std::env::var("OKBOT_GCHAT_API_BASE") {
+        account = account.with_token_uri(&format!("{base}/token"));
+    }
+    let email = account.client_email.clone();
+    okbot_channel_gchat::TokenSource::new(account, reqwest::Client::new())
+        .token()
+        .await
+        .context(
+            "Google did not accept the service account (use --no-verify to skip this check)",
+        )?;
+    eprintln!("✓ Google service account {email}");
+    Ok(())
+}
+
+#[cfg(not(feature = "gchat"))]
+async fn verify_gchat(_: &str) -> anyhow::Result<()> {
+    bail!("this okbot build has no Google Chat support")
+}
+
+/// Writes a secret file readable by its owner only.
+fn write_private(path: &Path, text: &str) -> anyhow::Result<()> {
+    std::fs::write(path, text)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "zalo")]
 async fn verify_zalo_token(dir: &Path, token_env: &str) -> anyhow::Result<()> {
     let token = std::env::var(token_env).ok().or_else(|| {
@@ -360,7 +508,13 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
             }
         }
     };
+    let mut gchat_init = None;
     let (zalo, http_listen) = match platform {
+        Platform::Gchat => {
+            let (g, listen) = gchat(&w, dir, &instance).await?;
+            gchat_init = Some(g);
+            (None, listen)
+        }
         Platform::Zalo => {
             let (z, listen) = zalo(&w, dir, &instance).await?;
             eprintln!(
@@ -376,6 +530,7 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
         name: name.clone(),
         chain,
         zalo,
+        gchat: gchat_init,
         http_listen,
         timezone: args.timezone.clone(),
     };
@@ -399,7 +554,7 @@ fn write_bot(
         git_init(&kb);
     }
     let mut ignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap_or_default();
-    for line in ["/state", ".env"] {
+    for line in ["/state", ".env", GCHAT_KEY_FILE] {
         if !ignore.lines().any(|l| l == line) {
             ignore.push_str(line);
             ignore.push('\n');
