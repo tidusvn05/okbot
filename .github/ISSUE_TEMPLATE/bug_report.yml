@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in okbot does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not paste tokens, `.env` contents or private chat messages.**
+        Security issues go to a private advisory instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: okbot version
+      description: Output of `okbot --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options: [Zalo, Google Chat, Discord, Slack, Bridge adapter, Console, Not platform-specific]
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent CLI
+      multiple: true
+      options: [Claude Code, Codex, OpenCode, Devin, Not agent-specific]
+  - type: textarea
+    id: doctor
+    attributes:
+      label: okbot doctor output
+      description: Output of `okbot doctor` (secrets are redacted, but check before posting).
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: text

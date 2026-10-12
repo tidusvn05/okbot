@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Must match the version okbase links (libsqlite3-sys can be linked only once).
+      - dependency-name: rusqlite
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+    groups:
+      cargo:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
