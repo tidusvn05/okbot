@@ -23,6 +23,7 @@ okbot-core.workspace = true
 okbot-agent.workspace = true
 okbot-render.workspace = true
 okbot-runtime.workspace = true
+okbot-knowledge.workspace = true
 okbot-store.workspace = true
 okbot-channel-console.workspace = true
 anyhow.workspace = true

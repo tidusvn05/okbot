@@ -15,3 +15,19 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+axum.workspace = true
+hex.workspace = true
+include_dir.workspace = true
+okbase.workspace = true
+okbase-mcp.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+okbot-testkit.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+reqwest = { workspace = true }

@@ -1,4 +1,5 @@
 //! End-to-end pipeline tests with a fake channel, fake agents and an in-memory store.
+#![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
 use std::sync::Arc;
 use std::time::Duration;

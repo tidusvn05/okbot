@@ -5,7 +5,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # `ttf-parser` (font tables inside PDFs) arrives through okbase's import feature (pdf-inspector),
+    # which okbase-mcp enables by default. Unmaintained, no known vulnerability; okbase ignores it
+    # for the same reason. Drop this when okbase does.
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained font parser via okbase import; no known vulnerability" },
+]
 
 [licenses]
 version = 2

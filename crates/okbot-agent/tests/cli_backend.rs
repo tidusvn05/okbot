@@ -1,5 +1,6 @@
 //! `CliBackend` against fake agent CLIs (no quota, no network) and, opt-in, the real ones.
 #![cfg(unix)]
+#![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ fn backend(dir: &std::path::Path, body: &str) -> CliBackend {
         model: None,
         scrub: EnvScrub::default(),
     })
-    .expect("fake CLI starts")
+    .unwrap()
 }
 
 #[tokio::test]

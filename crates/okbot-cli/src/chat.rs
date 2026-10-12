@@ -6,7 +6,8 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use okbot_agent::{AgentChain, CliBackend, CliBackendConfig, EnvScrub, detect};
 use okbot_channel_console::ConsoleChannel;
-use okbot_core::{AgentBackend, CancellationToken};
+use okbot_core::{AgentBackend, CancellationToken, KnowledgeProvider};
+use okbot_knowledge::{Knowledge, KnowledgeOptions};
 use okbot_render::MarkdownRenderer;
 use okbot_runtime::{Runtime, RuntimeConfig};
 use okbot_store::SqliteStore;
@@ -26,6 +27,9 @@ pub(crate) struct ChatArgs {
     /// Name the bot uses for itself.
     #[arg(long, default_value = "okbot")]
     name: String,
+    /// The okbase knowledge bundle (skipped when the directory does not exist).
+    #[arg(long, default_value = "kb")]
+    kb: PathBuf,
     /// Your name in the conversation.
     #[arg(long, default_value = "you")]
     user: String,
@@ -80,18 +84,34 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let store = SqliteStore::open(&args.state_dir.join("okbot.db"))
         .with_context(|| format!("cannot open the database in {}", args.state_dir.display()))?;
 
+    let stop = CancellationToken::new();
+    let knowledge = if args.kb.is_dir() {
+        let mut options = KnowledgeOptions::new(&args.kb);
+        options.index_dir = Some(args.state_dir.join("index"));
+        let knowledge = tokio::task::spawn_blocking(move || Knowledge::open(options))
+            .await?
+            .with_context(|| format!("cannot open the knowledge bundle {}", args.kb.display()))?;
+        knowledge.start_mcp(stop.clone()).await?;
+        Some(Arc::new(knowledge))
+    } else {
+        tracing::warn!(kb = %args.kb.display(), "no knowledge bundle; answering without one");
+        None
+    };
+
     let console = Arc::new(ConsoleChannel::stdio(&args.user));
     let closed = console.closed();
     let mut config = RuntimeConfig::new(&args.name, args.state_dir.join("work"));
     config.access.rate_limit.messages = 0;
-    let runtime = Runtime::builder(config)
+    let mut builder = Runtime::builder(config)
         .store(Arc::new(store))
         .agent(Arc::new(chain))
         .renderer(Arc::new(MarkdownRenderer))
-        .channel(console)
-        .build()?;
+        .channel(console);
+    if let Some(knowledge) = knowledge {
+        builder = builder.knowledge(knowledge as Arc<dyn KnowledgeProvider>);
+    }
+    let runtime = builder.build()?;
     let handle = runtime.handle();
-    let stop = CancellationToken::new();
     let task = tokio::spawn(runtime.run(stop.clone()));
 
     eprintln!(

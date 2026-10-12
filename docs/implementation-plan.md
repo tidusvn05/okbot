@@ -305,7 +305,7 @@ Exit criteria (**M0**): multi-turn conversation in `okbot chat` with Claude, his
 **Goal:** answers grounded in the bot's okbase bundle, with per-user visibility.
 
 Tasks:
-1. Default bundle template (`templates/default-bundle/`, embedded): `okbase.toml`, `index.md`, `_meta/vocabulary.md`, `_meta/types/{Persona,Memory,UserProfile}.md`, `persona/`, `system/` (how to use the bot, commands, policies). Lints at L2 with `okbase lint`.
+1. Default bundle template (`crates/okbot-knowledge/template/`, embedded with `include_dir` so the crate stays self-contained): `okbase.toml`, `index.md`, `_meta/vocabulary.md`, `_meta/types/{Persona,Memory,UserProfile}.md`, `persona/`, `system/` (how to use the bot, commands, policies). Lints at L2 with `okbase lint`.
 2. `Knowledge::open`: `Bundle::open`, `sync`, catalog cache, file watcher → `sync` + catalog refresh.
 3. `ScopeBuilder` (design §5.3) and the **RunToken registry** (issue, look up, revoke, expire).
 4. Mount `okbase_mcp::router` at `/mcp/kb` on a loopback listener with okbot's auth layer and a `ScopeProvider` backed by the registry.
@@ -377,7 +377,7 @@ Exit criteria: the bot runs in a real Google Chat space in both modes.
 
 ### P10 — Memory (write path) → **release v0.2.0**
 
-1. Memory writer: OKF frontmatter, round-trip edits via okbase's frontmatter API, atomic writes, per-file locks, `bundle.sync()`.
+1. Memory writer: OKF frontmatter complete to L2 (`tags`, `lang`, `status`, `updated`) and an `index.md` in every new folder, so the bundle keeps linting clean; round-trip edits via okbase's frontmatter API, atomic writes, per-file locks, `bundle.sync()`.
 2. `/mcp/bot` tools: `memory_save`, `memory_forget`, `memory_list`, scoped by RunToken (design §5.4).
 3. Chat commands `/remember`, `/forget`; `okbot memory list|log|forget`.
 4. Optional git commit per write; `source: web` tagging for runs that used the web.

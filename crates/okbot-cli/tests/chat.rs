@@ -1,5 +1,6 @@
 //! `okbot chat` end to end with a fake `claude` on PATH.
 #![cfg(unix)]
+#![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
 use assert_cmd::Command;
 

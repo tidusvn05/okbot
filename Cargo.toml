@@ -49,6 +49,9 @@ okbot-testkit = { path = "crates/okbot-testkit", version = "0.1.0-dev" }
 
 # External crates (ADR 0005 covers the git dependencies).
 agent-core = { git = "https://github.com/tidusvn05/agent-core", tag = "v0.3.1", version = "0.3.1" }
+okbase = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.2", version = "0.2.2" }
+okbase-mcp = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.2", version = "0.2.2" }
+include_dir = "0.7"
 async-trait = "0.1"
 thiserror = "2"
 anyhow = "1"

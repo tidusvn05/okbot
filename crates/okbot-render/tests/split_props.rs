@@ -1,4 +1,5 @@
 //! Property tests for splitting.
+#![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
 use okbot_core::{ChannelCaps, LengthUnit, MarkdownDialect, Renderer};
 use okbot_render::MarkdownRenderer;
