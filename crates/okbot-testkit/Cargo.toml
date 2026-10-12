@@ -17,3 +17,4 @@ workspace = true
 [dependencies]
 okbot-core.workspace = true
 jiff.workspace = true
+tokio = { workspace = true }

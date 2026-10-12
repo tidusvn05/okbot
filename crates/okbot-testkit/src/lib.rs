@@ -78,3 +78,6 @@ pub fn bot_message(key: &ConversationKey, text: &str, at: Timestamp) -> NewMessa
         at,
     }
 }
+
+mod fakes;
+pub use fakes::{FakeAgent, fake_cli, turn};

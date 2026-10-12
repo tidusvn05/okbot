@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "agent-core"
+version = "0.3.1"
+source = "git+https://github.com/tidusvn05/agent-core?tag=v0.3.1#ec6544763347c74d5be62c8fbb1e9d6e08adff12"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -466,6 +477,16 @@ dependencies = [
 [[package]]
 name = "okbot-agent"
 version = "0.1.0-dev"
+dependencies = [
+ "agent-core",
+ "okbot-core",
+ "okbot-testkit",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "okbot-channel-console"
@@ -547,6 +568,7 @@ version = "0.1.0-dev"
 dependencies = [
  "jiff",
  "okbot-core",
+ "tokio",
 ]
 
 [[package]]
