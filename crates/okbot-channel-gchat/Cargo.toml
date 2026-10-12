@@ -1,0 +1,17 @@
+[package]
+name = "okbot-channel-gchat"
+description = "Google Chat channel for okbot (HTTP endpoint and Pub/Sub)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

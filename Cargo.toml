@@ -1,0 +1,78 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0-dev"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+authors = ["The okbot contributors"]
+repository = "https://github.com/tidusvn05/okbot"
+homepage = "https://github.com/tidusvn05/okbot"
+keywords = ["chatbot", "agent", "zalo", "okbase", "llm"]
+categories = ["command-line-utilities"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Pedantic lints that cost more than they give in this code base (see AGENTS.md).
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+unwrap_used = "warn"
+
+[workspace.dependencies]
+# Internal crates.
+okbot-core = { path = "crates/okbot-core", version = "0.1.0-dev" }
+okbot-config = { path = "crates/okbot-config", version = "0.1.0-dev" }
+okbot-render = { path = "crates/okbot-render", version = "0.1.0-dev" }
+okbot-store = { path = "crates/okbot-store", version = "0.1.0-dev" }
+okbot-agent = { path = "crates/okbot-agent", version = "0.1.0-dev" }
+okbot-knowledge = { path = "crates/okbot-knowledge", version = "0.1.0-dev" }
+okbot-runtime = { path = "crates/okbot-runtime", version = "0.1.0-dev" }
+okbot-channel-console = { path = "crates/okbot-channel-console", version = "0.1.0-dev" }
+okbot-channel-zalo = { path = "crates/okbot-channel-zalo", version = "0.1.0-dev" }
+okbot-channel-gchat = { path = "crates/okbot-channel-gchat", version = "0.1.0-dev" }
+okbot-channel-discord = { path = "crates/okbot-channel-discord", version = "0.1.0-dev" }
+okbot-channel-slack = { path = "crates/okbot-channel-slack", version = "0.1.0-dev" }
+okbot-testkit = { path = "crates/okbot-testkit", version = "0.1.0-dev" }
+
+# External crates (ADR 0005 covers the git dependencies).
+async-trait = "0.1"
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+toml_edit = "0.23"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "io-std", "process", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+jiff = { version = "0.2", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+rusqlite = { version = "0.37", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
+rand = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
+insta = { version = "1", features = ["json", "yaml"] }
+proptest = "1"
+assert_cmd = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

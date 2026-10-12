@@ -1,0 +1,17 @@
+[package]
+name = "okbot-core"
+description = "Domain model and ports (traits) of okbot; the SDK for third-party adapters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

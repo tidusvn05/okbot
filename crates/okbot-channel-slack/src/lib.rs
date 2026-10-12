@@ -1,0 +1,1 @@
+//! Slack channel for okbot.
