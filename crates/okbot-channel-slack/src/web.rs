@@ -40,6 +40,8 @@ impl std::fmt::Debug for SlackWeb {
 impl SlackWeb {
     /// A client against `base`.
     pub fn new(base: &str, app_token: Secret<String>, bot_token: Secret<String>) -> Self {
+        // reqwest is built without a crypto provider: okbot uses ring only (no-op when installed).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         Self {
             http: reqwest::Client::new(),
             base: base.trim_end_matches('/').to_string(),

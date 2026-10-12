@@ -4,6 +4,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 10
     ignore:
       # Must match the version okbase links (libsqlite3-sys can be linked only once).
       - dependency-name: rusqlite
@@ -15,3 +16,10 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 10
+    ignore:
+      # Its tags are toolchain versions: `@1.89` is the MSRV job and must stay at the MSRV.
+      - dependency-name: dtolnay/rust-toolchain
+    groups:
+      actions:
+        patterns: ["*"]
