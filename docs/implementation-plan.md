@@ -261,10 +261,10 @@ Exit criteria: corpus snapshots reviewed; property tests pass 10k cases.
 
 Tasks:
 1. Schema v1 (design §6.1): `conversations`, `messages`, `inbound_dedupe`, `agent_runs`, `users`, `schema_meta`.
-2. `ConversationStore` implementation over `rusqlite` in WAL mode, behind `spawn_blocking`, with a small connection pool.
-3. History query by token budget (approximate token counter shared with the prompt builder).
+2. `ConversationStore` implementation over `rusqlite` in WAL mode, behind `spawn_blocking`, with one serialized connection (ample for chat traffic; revisit with measurements). rusqlite's version must match okbase's, because `libsqlite3-sys` can be linked only once.
+3. History query by message count; the runtime trims it to the prompt's token budget (P5).
 4. Retention job (`retention_days`), dedupe TTL cleanup.
-5. Migration framework and "newer schema" refusal.
+5. Migrations tracked with `PRAGMA user_version` (no extra crate) and "newer schema" refusal.
 
 Tests: migrations from empty and from every previous version; concurrent writers; retention.
 Exit criteria: all `ConversationStore` conformance tests in `okbot-testkit` pass.

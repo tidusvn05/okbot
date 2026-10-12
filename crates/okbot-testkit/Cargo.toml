@@ -15,3 +15,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+jiff.workspace = true
