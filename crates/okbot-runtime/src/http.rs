@@ -1,0 +1,262 @@
+//! The shared HTTP server: health and channel webhooks.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Bytes;
+use axum::extract::Request;
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{any, get};
+use okbot_core::{CancellationToken, WebhookHandler, WebhookRequest};
+
+use crate::Shared;
+
+/// Where the HTTP server listens.
+#[derive(Debug, Clone)]
+pub struct HttpOptions {
+    /// Listen address (keep it on loopback behind a TLS reverse proxy).
+    pub listen: SocketAddr,
+    /// Largest accepted webhook body.
+    pub max_body: usize,
+}
+
+impl HttpOptions {
+    /// Options for `listen` with a 1 MiB body limit.
+    pub fn new(listen: SocketAddr) -> Self {
+        Self {
+            listen,
+            max_body: 1 << 20,
+        }
+    }
+}
+
+fn health(shared: &Shared) -> Response {
+    let channels: Vec<String> = shared.channels.keys().map(ToString::to_string).collect();
+    let body = serde_json::json!({
+        "status": "ok",
+        "bot": shared.config.bot_name,
+        "channels": channels,
+        "in_flight": shared.in_flight.current(),
+    });
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+async fn webhook(
+    handler: Arc<dyn WebhookHandler>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request = WebhookRequest {
+        method: method.as_str().to_string(),
+        path: String::new(),
+        headers: headers
+            .iter()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.as_str().to_ascii_lowercase(),
+                    v.to_str().ok()?.to_string(),
+                ))
+            })
+            .collect(),
+        body: body.to_vec(),
+    };
+    let response = handler.handle(request).await;
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (
+        status,
+        [(header::CONTENT_TYPE, response.content_type)],
+        response.body,
+    )
+        .into_response()
+}
+
+/// The router: `GET /healthz` and one route per channel webhook.
+pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
+    let health_state = shared.clone();
+    let mut router = Router::new().route(
+        "/healthz",
+        get(move || {
+            let state = health_state.clone();
+            async move { health(&state) }
+        }),
+    );
+    for channel in shared.channels.values() {
+        if let Some(handler) = channel.webhook() {
+            let path = format!("/{}", handler.path().trim_start_matches('/'));
+            tracing::info!(channel = %channel.id(), %path, "webhook mounted");
+            router = router.route(
+                &path,
+                any(move |req: Request| {
+                    let handler = handler.clone();
+                    async move {
+                        let (parts, body) = req.into_parts();
+                        match axum::body::to_bytes(body, max_body).await {
+                            Ok(bytes) => webhook(handler, parts.method, parts.headers, bytes).await,
+                            Err(_) => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+                        }
+                    }
+                }),
+            );
+        }
+    }
+    router
+}
+
+/// Binds and returns the server future, which ends when `stop` is cancelled.
+pub(crate) async fn serve(
+    options: HttpOptions,
+    shared: Arc<Shared>,
+    stop: CancellationToken,
+) -> Result<impl std::future::Future<Output = ()> + Send + 'static, (SocketAddr, std::io::Error)> {
+    let listener = tokio::net::TcpListener::bind(options.listen)
+        .await
+        .map_err(|e| (options.listen, e))?;
+    let addr = listener.local_addr().unwrap_or(options.listen);
+    tracing::info!(%addr, "HTTP server listening");
+    let app = router(&shared, options.max_body);
+    Ok(async move {
+        if let Err(error) = axum::serve(listener, app)
+            .with_graceful_shutdown(async move { stop.cancelled().await })
+            .await
+        {
+            tracing::error!(%error, "HTTP server failed");
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::Request;
+    use okbot_core::{
+        Channel, ChannelCaps, ChannelError, ChannelId, InboundSink, RenderedMessage, ReplyTarget,
+        SentRef, SystemClock, WebhookResponse, async_trait,
+    };
+    use okbot_testkit::{FakeAgent, ManualClock, MemoryStore, PlainRenderer};
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::{InFlight, RuntimeConfig, policy::Gate};
+
+    struct Echo;
+
+    #[async_trait]
+    impl WebhookHandler for Echo {
+        fn path(&self) -> String {
+            "hook/test".into()
+        }
+        async fn handle(&self, request: WebhookRequest) -> WebhookResponse {
+            let secret = request.header("x-secret").unwrap_or("none").to_string();
+            WebhookResponse::json(&serde_json::json!({
+                "method": request.method,
+                "secret": secret,
+                "body": String::from_utf8_lossy(&request.body),
+            }))
+        }
+    }
+
+    struct HookChannel(ChannelId, ChannelCaps);
+
+    #[async_trait]
+    impl Channel for HookChannel {
+        fn id(&self) -> &ChannelId {
+            &self.0
+        }
+        fn caps(&self) -> &ChannelCaps {
+            &self.1
+        }
+        async fn run(
+            &self,
+            _: Arc<dyn InboundSink>,
+            stop: CancellationToken,
+        ) -> Result<(), ChannelError> {
+            stop.cancelled().await;
+            Ok(())
+        }
+        async fn send(
+            &self,
+            _: &ReplyTarget,
+            _: &RenderedMessage,
+        ) -> Result<SentRef, ChannelError> {
+            Err(ChannelError::Unsupported("send"))
+        }
+        fn webhook(&self) -> Option<Arc<dyn WebhookHandler>> {
+            Some(Arc::new(Echo))
+        }
+    }
+
+    fn shared() -> Arc<Shared> {
+        let channel: Arc<dyn Channel> = Arc::new(HookChannel(
+            "hook:test".parse().unwrap(),
+            ChannelCaps::basic(),
+        ));
+        let config = RuntimeConfig::new("okbot", std::env::temp_dir());
+        Arc::new(Shared {
+            gate: Gate::new(config.access.clone()),
+            config,
+            store: Arc::new(MemoryStore::new(Arc::new(ManualClock::default()))),
+            agent: Arc::new(FakeAgent::echo("fake")),
+            knowledge: None,
+            renderer: Arc::new(PlainRenderer),
+            clock: Arc::new(SystemClock),
+            channels: HashMap::from([(channel.id().clone(), channel)]),
+            in_flight: Arc::new(InFlight::default()),
+        })
+    }
+
+    async fn body(response: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_and_webhooks() {
+        let app = router(&shared(), 16);
+        let health = app
+            .clone()
+            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(health.status(), 200);
+        assert_eq!(body(health).await["channels"][0], "hook:test");
+
+        let hook = app
+            .clone()
+            .oneshot(
+                Request::post("/hook/test")
+                    .header("X-Secret", "s3")
+                    .body(Body::from("payload"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body(hook).await;
+        assert_eq!(
+            (json["method"].as_str(), json["secret"].as_str()),
+            (Some("POST"), Some("s3"))
+        );
+        assert_eq!(json["body"], "payload");
+
+        let too_big = app
+            .oneshot(
+                Request::post("/hook/test")
+                    .body(Body::from("x".repeat(100)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(too_big.status(), 413);
+    }
+}

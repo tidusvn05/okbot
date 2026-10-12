@@ -80,4 +80,6 @@ pub fn bot_message(key: &ConversationKey, text: &str, at: Timestamp) -> NewMessa
 }
 
 mod fakes;
-pub use fakes::{FakeAgent, fake_cli, turn};
+mod memory_store;
+pub use fakes::{FakeAgent, FakeChannel, PlainRenderer, fake_cli, inbound, turn};
+pub use memory_store::MemoryStore;

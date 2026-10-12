@@ -19,3 +19,19 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+okbot-agent.workspace = true
+okbot-render.workspace = true
+okbot-runtime.workspace = true
+okbot-store.workspace = true
+okbot-channel-console.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+okbot-testkit.workspace = true
+tempfile.workspace = true

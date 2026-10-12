@@ -1,0 +1,188 @@
+//! Access policy and rate limiting: should the bot answer this event?
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+
+use jiff::{SignedDuration, Timestamp};
+use okbot_core::{ChannelId, InboundEvent, UserId};
+
+use crate::config::AccessPolicy;
+
+/// The policy's verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// Process the event.
+    Answer,
+    /// Drop it silently (not addressed to the bot, bot author, not allowed).
+    Ignore,
+    /// Tell the user they are over the rate limit.
+    RateLimited,
+    /// Tell the user the message is too long.
+    TooLong,
+}
+
+/// Applies an [`AccessPolicy`]. Rate-limit state lives in memory.
+#[derive(Debug)]
+pub(crate) struct Gate {
+    policy: AccessPolicy,
+    recent: Mutex<HashMap<(ChannelId, UserId), VecDeque<Timestamp>>>,
+}
+
+impl Gate {
+    pub(crate) fn new(policy: AccessPolicy) -> Self {
+        Self {
+            policy,
+            recent: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub(crate) fn is_admin(&self, event: &InboundEvent) -> bool {
+        self.policy
+            .admins
+            .contains(&(event.conversation.channel.clone(), event.author.id.clone()))
+    }
+
+    /// Decides what to do with `event` at time `now`.
+    pub(crate) fn check(&self, event: &InboundEvent, now: Timestamp) -> Verdict {
+        let p = &self.policy;
+        let channel = &event.conversation.channel;
+        let user = (channel.clone(), event.author.id.clone());
+        if event.author.is_bot && !p.answer_bots {
+            return Verdict::Ignore;
+        }
+        if p.blocked_users.contains(&user) {
+            return Verdict::Ignore;
+        }
+        let addressed = if event.is_direct {
+            p.reply_on.direct
+        } else {
+            p.reply_on.all || (p.reply_on.mention && event.mentions_bot)
+        };
+        if !addressed {
+            return Verdict::Ignore;
+        }
+        if let Some(users) = &p.allow_users
+            && !users.contains(&user)
+        {
+            return Verdict::Ignore;
+        }
+        if let Some(rooms) = &p.allow_rooms
+            && !rooms.contains(&(channel.clone(), event.conversation.room.clone()))
+        {
+            return Verdict::Ignore;
+        }
+        if p.max_input_chars > 0 && event.text.chars().count() > p.max_input_chars {
+            return Verdict::TooLong;
+        }
+        if self.over_rate_limit(user, now) {
+            return Verdict::RateLimited;
+        }
+        Verdict::Answer
+    }
+
+    fn over_rate_limit(&self, user: (ChannelId, UserId), now: Timestamp) -> bool {
+        let limit = self.policy.rate_limit;
+        if limit.messages == 0 {
+            return false;
+        }
+        let window = SignedDuration::try_from(limit.window).unwrap_or(SignedDuration::MAX);
+        let mut recent = self
+            .recent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let times = recent.entry(user).or_default();
+        while times
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= window)
+        {
+            times.pop_front();
+        }
+        if times.len() >= limit.messages as usize {
+            return true;
+        }
+        times.push_back(now);
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::config::{RateLimit, ReplyOn};
+    use crate::test_support::event;
+
+    fn gate(policy: AccessPolicy) -> Gate {
+        Gate::new(policy)
+    }
+
+    #[test]
+    fn answers_direct_and_mentions_only() {
+        let g = gate(AccessPolicy::default());
+        let now = Timestamp::UNIX_EPOCH;
+        assert_eq!(g.check(&event("hi", true, false), now), Verdict::Answer);
+        assert_eq!(g.check(&event("hi", false, true), now), Verdict::Answer);
+        assert_eq!(g.check(&event("hi", false, false), now), Verdict::Ignore);
+        let all = gate(AccessPolicy {
+            reply_on: ReplyOn {
+                all: true,
+                ..ReplyOn::default()
+            },
+            ..AccessPolicy::default()
+        });
+        assert_eq!(all.check(&event("hi", false, false), now), Verdict::Answer);
+    }
+
+    #[test]
+    fn ignores_bots_and_blocked_users() {
+        let g = gate(AccessPolicy::default());
+        let mut e = event("hi", true, false);
+        e.author.is_bot = true;
+        assert_eq!(g.check(&e, Timestamp::UNIX_EPOCH), Verdict::Ignore);
+
+        let e = event("hi", true, false);
+        let mut policy = AccessPolicy::default();
+        policy
+            .blocked_users
+            .insert((e.conversation.channel.clone(), e.author.id.clone()));
+        assert_eq!(
+            gate(policy).check(&e, Timestamp::UNIX_EPOCH),
+            Verdict::Ignore
+        );
+    }
+
+    #[test]
+    fn allow_lists() {
+        let e = event("hi", true, false);
+        let policy = AccessPolicy {
+            allow_users: Some(
+                std::iter::once((e.conversation.channel.clone(), "other".into())).collect(),
+            ),
+            ..AccessPolicy::default()
+        };
+        assert_eq!(
+            gate(policy).check(&e, Timestamp::UNIX_EPOCH),
+            Verdict::Ignore
+        );
+    }
+
+    #[test]
+    fn too_long_and_rate_limit() {
+        let g = gate(AccessPolicy {
+            max_input_chars: 5,
+            rate_limit: RateLimit {
+                messages: 2,
+                window: Duration::from_secs(60),
+            },
+            ..AccessPolicy::default()
+        });
+        let t0 = Timestamp::UNIX_EPOCH;
+        assert_eq!(g.check(&event("123456", true, false), t0), Verdict::TooLong);
+        assert_eq!(g.check(&event("a", true, false), t0), Verdict::Answer);
+        assert_eq!(g.check(&event("b", true, false), t0), Verdict::Answer);
+        assert_eq!(g.check(&event("c", true, false), t0), Verdict::RateLimited);
+        let later = t0 + SignedDuration::from_secs(61);
+        assert_eq!(g.check(&event("d", true, false), later), Verdict::Answer);
+    }
+}

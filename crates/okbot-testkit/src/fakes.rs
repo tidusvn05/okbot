@@ -158,3 +158,163 @@ pub fn fake_cli(dir: &Path, name: &str, body: &str) -> PathBuf {
     std::thread::sleep(Duration::from_millis(10));
     path
 }
+
+/// A [`Channel`](okbot_core::Channel) for tests: events are injected by the test, sent messages
+/// are recorded.
+pub struct FakeChannel {
+    id: okbot_core::ChannelId,
+    caps: okbot_core::ChannelCaps,
+    sink: Mutex<Option<std::sync::Arc<dyn okbot_core::InboundSink>>>,
+    sent: Mutex<Vec<(okbot_core::ReplyTarget, String)>>,
+    typing: AtomicUsize,
+    ready: tokio::sync::Notify,
+}
+
+impl std::fmt::Debug for FakeChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeChannel")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FakeChannel {
+    /// A channel `id` (`fake:test`) with `caps`.
+    pub fn new(id: &str, caps: okbot_core::ChannelCaps) -> Self {
+        Self {
+            id: id.parse().expect("valid channel id"),
+            caps,
+            sink: Mutex::new(None),
+            sent: Mutex::new(Vec::new()),
+            typing: AtomicUsize::new(0),
+            ready: tokio::sync::Notify::new(),
+        }
+    }
+
+    /// Waits until the runtime started this channel, then delivers `event`.
+    pub async fn inject(&self, event: okbot_core::InboundEvent) {
+        loop {
+            let notified = self.ready.notified();
+            let sink = self
+                .sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(sink) = sink {
+                sink.deliver(event).await.expect("runtime accepts events");
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Texts sent so far, oldest first.
+    pub fn sent_texts(&self) -> Vec<String> {
+        self.sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect()
+    }
+
+    /// Messages sent so far with their targets.
+    pub fn sent(&self) -> Vec<(okbot_core::ReplyTarget, String)> {
+        self.sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Typing indicators shown so far.
+    pub fn typing_count(&self) -> usize {
+        self.typing.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl okbot_core::Channel for FakeChannel {
+    fn id(&self) -> &okbot_core::ChannelId {
+        &self.id
+    }
+
+    fn caps(&self) -> &okbot_core::ChannelCaps {
+        &self.caps
+    }
+
+    async fn run(
+        &self,
+        sink: std::sync::Arc<dyn okbot_core::InboundSink>,
+        shutdown: okbot_core::CancellationToken,
+    ) -> Result<(), okbot_core::ChannelError> {
+        *self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
+        self.ready.notify_waiters();
+        shutdown.cancelled().await;
+        Ok(())
+    }
+
+    async fn send(
+        &self,
+        to: &okbot_core::ReplyTarget,
+        message: &okbot_core::RenderedMessage,
+    ) -> Result<okbot_core::SentRef, okbot_core::ChannelError> {
+        let mut sent = self
+            .sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        sent.push((to.clone(), message.text.clone()));
+        Ok(okbot_core::SentRef {
+            target: to.clone(),
+            message_id: okbot_core::MessageId::new(format!("sent-{}", sent.len())),
+        })
+    }
+
+    async fn typing(&self, _to: &okbot_core::ReplyTarget) -> Result<(), okbot_core::ChannelError> {
+        self.typing.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// An inbound text event from user `user` in `room` of `channel`, with a unique event id.
+pub fn inbound(channel: &str, room: &str, user: &str, text: &str) -> okbot_core::InboundEvent {
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    let n = NEXT.fetch_add(1, Ordering::SeqCst);
+    okbot_core::InboundEvent {
+        event_id: format!("ev-{n}"),
+        conversation: okbot_core::ConversationKey::room(
+            channel.parse().expect("valid channel id"),
+            room,
+        ),
+        author: okbot_core::UserRef {
+            id: okbot_core::UserId::new(user),
+            display_name: user.to_string(),
+            is_bot: false,
+        },
+        text: text.into(),
+        attachments: Vec::new(),
+        mentions_bot: false,
+        is_direct: true,
+        restricted: false,
+        message_id: Some(okbot_core::MessageId::new(format!("m-{n}"))),
+        sent_at: "2026-01-01T00:00:00Z".parse().expect("timestamp"),
+    }
+}
+
+/// A [`Renderer`](okbot_core::Renderer) that sends the Markdown unchanged as one message.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlainRenderer;
+
+impl okbot_core::Renderer for PlainRenderer {
+    fn render(
+        &self,
+        markdown: &str,
+        _caps: &okbot_core::ChannelCaps,
+    ) -> Vec<okbot_core::RenderedMessage> {
+        vec![okbot_core::RenderedMessage {
+            text: markdown.to_string(),
+        }]
+    }
+}

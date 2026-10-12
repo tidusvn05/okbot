@@ -15,3 +15,20 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+axum.workspace = true
+hex.workspace = true
+jiff.workspace = true
+rand.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+okbot-testkit.workspace = true
+insta.workspace = true
+tempfile.workspace = true
+tower.workspace = true

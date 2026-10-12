@@ -74,6 +74,7 @@ tempfile = "3"
 insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"
 assert_cmd = "2"
+tower = { version = "0.5", default-features = false, features = ["util"] }
 
 [profile.release]
 lto = "thin"
