@@ -250,7 +250,7 @@ Exit criteria: public API reviewed against design §3–§5; `cargo doc` clean; 
 Tasks:
 1. Parse with pulldown-cmark into a small intermediate representation.
 2. Dialects: `CommonMark` (console), `ZaloMd` (design §3.3.2: no links/code blocks/tables, escaping, 2000 chars), `GChatText`, `DiscordMd`, `SlackMrkdwn` (the last two can be stubs until P11).
-3. Splitter: respects `max_message_len` in characters as the platform counts them (UTF-16 for Zalo), prefers paragraph → line → sentence boundaries, never splits inside a code span or a converted code block, numbers parts only when there are several.
+3. Splitter: respects `max_message_len` in characters as the platform counts them (UTF-16 for Zalo), prefers paragraph → line → sentence boundaries, never splits inside a code span, and re-opens the fence when a code block spans several messages.
 
 Tests: snapshot tests per dialect over a shared corpus (Vietnamese text, code, tables, nested lists, long URLs); proptest: concatenating split parts preserves visible text; no part exceeds the limit.
 Exit criteria: corpus snapshots reviewed; property tests pass 10k cases.

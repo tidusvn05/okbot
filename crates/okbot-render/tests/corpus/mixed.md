@@ -1,0 +1,29 @@
+# Chính sách đổi trả
+
+Khách hàng được **đổi trả trong 7 ngày** nếu sản phẩm _còn nguyên tem_. Xem chi tiết tại
+[trang chính sách](https://shop.example.com/doi-tra) hoặc https://shop.example.com.
+
+## Các bước
+
+1. Mang hóa đơn đến cửa hàng.
+2. Nhân viên kiểm tra:
+   - tem bảo hành
+   - phụ kiện đi kèm
+3. Nhận phiếu đổi trả.
+
+> Lưu ý: hàng giảm giá ~~không~~ vẫn được đổi.
+
+| Gói | Giá | Ghi chú |
+|---|---|---|
+| Cơ bản | 100k | *phổ biến* |
+| Nâng cao | 250k | `PRO` |
+
+```rust
+fn main() {
+    println!("x * y_z");
+}
+```
+
+Ký tự đặc biệt: a*b_c~d `inline * code` <tag> & more.
+
+---

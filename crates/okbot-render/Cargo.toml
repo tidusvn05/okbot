@@ -15,3 +15,9 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+pulldown-cmark.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
