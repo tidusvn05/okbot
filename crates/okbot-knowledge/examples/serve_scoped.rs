@@ -17,7 +17,7 @@ async fn main() {
     let root = args.next().unwrap_or_else(|| "kb".into());
     let channel = args.next().unwrap_or_else(|| "console:local".into());
     let user = args.next().unwrap_or_else(|| "you".into());
-    let knowledge = Knowledge::open(KnowledgeOptions::new(root)).unwrap();
+    let knowledge = std::sync::Arc::new(Knowledge::open(KnowledgeOptions::new(root)).unwrap());
     let stop = CancellationToken::new();
     knowledge.start_mcp(stop.clone()).await.unwrap();
     let who = Requester {
@@ -30,7 +30,7 @@ async fn main() {
         internal: false,
     };
     let grant = knowledge
-        .grant(&who, Duration::from_secs(3600))
+        .grant(&who, okbot_core::ToolPolicy::Web, Duration::from_secs(3600))
         .await
         .unwrap();
     println!("url={}", grant.mcp[0].url);

@@ -90,11 +90,15 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let knowledge = if args.kb.is_dir() {
         let mut options = KnowledgeOptions::new(&args.kb);
         options.index_dir = Some(args.state_dir.join("index"));
-        let knowledge = tokio::task::spawn_blocking(move || Knowledge::open(options))
-            .await?
-            .with_context(|| format!("cannot open the knowledge bundle {}", args.kb.display()))?;
+        let knowledge = Arc::new(
+            tokio::task::spawn_blocking(move || Knowledge::open(options))
+                .await?
+                .with_context(|| {
+                    format!("cannot open the knowledge bundle {}", args.kb.display())
+                })?,
+        );
         knowledge.start_mcp(stop.clone()).await?;
-        Some(Arc::new(knowledge))
+        Some(knowledge)
     } else {
         tracing::warn!(kb = %args.kb.display(), "no knowledge bundle; answering without one");
         None
@@ -110,7 +114,9 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
         .renderer(Arc::new(MarkdownRenderer))
         .channel(console);
     if let Some(knowledge) = knowledge {
-        builder = builder.knowledge(knowledge as Arc<dyn KnowledgeProvider>);
+        builder = builder
+            .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
+            .memory(knowledge as Arc<dyn okbot_core::MemoryStore>);
     }
     let runtime = builder.build()?;
     let handle = runtime.handle();

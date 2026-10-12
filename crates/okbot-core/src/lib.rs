@@ -10,6 +10,7 @@
 //! | [`AgentBackend`] | agent CLIs, fallback chains | the runtime |
 //! | [`ConversationStore`] | SQLite store | the runtime |
 //! | [`KnowledgeProvider`] | okbase integration | the runtime |
+//! | [`MemoryStore`] | okbase integration | the runtime (chat commands) |
 //! | [`Renderer`] | Markdown dialect renderer | the runtime |
 //! | [`Clock`] | [`SystemClock`], test clocks | everything that reads time |
 //!
@@ -57,6 +58,7 @@ mod channel;
 mod clock;
 mod id;
 mod knowledge;
+mod memory;
 mod message;
 mod render;
 mod secret;
@@ -69,6 +71,7 @@ pub use channel::{Channel, ChannelError, InboundSink, SinkClosed};
 pub use clock::{Clock, SystemClock};
 pub use id::{ChannelId, ConversationKey, IdError, MessageId, RunId, UserId, UserRef};
 pub use knowledge::{KnowledgeContext, KnowledgeError, KnowledgeProvider, Requester, RunGrant};
+pub use memory::{MemoryEntry, MemoryError, MemoryNote, MemoryScope, MemoryStore};
 pub use message::{
     Attachment, InboundEvent, OutboundMessage, RenderedMessage, ReplyTarget, SentRef,
 };

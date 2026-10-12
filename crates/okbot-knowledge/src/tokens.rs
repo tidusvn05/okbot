@@ -11,7 +11,17 @@ use crate::scope;
 
 struct Entry {
     scope: Scope,
+    context: RunContext,
     expires: Instant,
+}
+
+/// Who a run token belongs to.
+#[derive(Debug, Clone)]
+pub(crate) struct RunContext {
+    /// The requester.
+    pub(crate) who: okbot_core::Requester,
+    /// The run's tool policy (`web` or `mcp-only`), recorded on notes it writes.
+    pub(crate) policy: &'static str,
 }
 
 /// Issued tokens. Tokens are 256-bit random values, valid until revoked or expired.
@@ -28,7 +38,12 @@ impl RunTokens {
     }
 
     /// Issues a token for `scope`, valid for `ttl`. Dropping the guard revokes it.
-    pub(crate) fn issue(self: &Arc<Self>, scope: Scope, ttl: Duration) -> (String, TokenGuard) {
+    pub(crate) fn issue(
+        self: &Arc<Self>,
+        scope: Scope,
+        context: RunContext,
+        ttl: Duration,
+    ) -> (String, TokenGuard) {
         let token = hex::encode(rand::random::<[u8; 32]>());
         let mut entries = self.lock();
         let now = Instant::now();
@@ -37,6 +52,7 @@ impl RunTokens {
             token.clone(),
             Entry {
                 scope,
+                context,
                 expires: now + ttl,
             },
         );
@@ -54,6 +70,13 @@ impl RunTokens {
         let entries = self.lock();
         let entry = entries.get(token)?;
         (entry.expires > Instant::now()).then(|| entry.scope.clone())
+    }
+
+    /// The requester of a valid token.
+    pub(crate) fn context(&self, token: &str) -> Option<RunContext> {
+        let entries = self.lock();
+        let entry = entries.get(token)?;
+        (entry.expires > Instant::now()).then(|| entry.context.clone())
     }
 
     pub(crate) fn is_valid(&self, token: &str) -> bool {
@@ -95,16 +118,32 @@ impl ScopeProvider for TokenScopes {
 mod tests {
     use super::*;
 
+    fn context() -> RunContext {
+        RunContext {
+            who: okbot_core::Requester {
+                conversation: okbot_core::ConversationKey::room("x:y".parse().unwrap(), "r"),
+                user: okbot_core::UserRef {
+                    id: "u".into(),
+                    display_name: "u".into(),
+                    is_bot: false,
+                },
+                internal: false,
+            },
+            policy: "web",
+        }
+    }
+
     #[test]
     fn issue_lookup_revoke_expire() {
         let tokens = Arc::new(RunTokens::default());
-        let (t, guard) = tokens.issue(scope::shared(), Duration::from_secs(60));
+        let (t, guard) = tokens.issue(scope::shared(), context(), Duration::from_secs(60));
+        assert_eq!(tokens.context(&t).unwrap().who.user.id.as_str(), "u");
         assert_eq!(t.len(), 64);
         assert!(tokens.is_valid(&t));
         drop(guard);
         assert!(!tokens.is_valid(&t));
 
-        let (short, _guard) = tokens.issue(scope::shared(), Duration::ZERO);
+        let (short, _guard) = tokens.issue(scope::shared(), context(), Duration::ZERO);
         assert!(!tokens.is_valid(&short), "expired");
         assert!(!tokens.is_valid("forged"));
     }

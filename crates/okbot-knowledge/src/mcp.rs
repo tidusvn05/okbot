@@ -14,6 +14,8 @@ use crate::tokens::{RunTokens, TokenScopes};
 
 /// Path of the knowledge MCP endpoint (okbase tools).
 pub(crate) const KB_PATH: &str = "/kb/mcp";
+/// Path of the memory MCP endpoint (okbot tools).
+pub(crate) const BOT_PATH: &str = "/bot/mcp";
 
 async fn require_run_token(
     tokens: Arc<RunTokens>,
@@ -32,8 +34,9 @@ async fn require_run_token(
     }
 }
 
-/// The router: okbase's MCP server under `/kb`, every request authenticated by a run token.
-pub(crate) fn router(bundle: okbase::Bundle, tokens: &Arc<RunTokens>) -> Router {
+/// The router: okbase's MCP server under `/kb`, okbot's memory server under `/bot`, every
+/// request authenticated by a run token.
+pub(crate) fn router(bundle: okbase::Bundle, tokens: &Arc<RunTokens>, bot: Router) -> Router {
     let kb = okbase_mcp::router(
         bundle,
         Arc::new(TokenScopes(tokens.clone())),
@@ -43,6 +46,7 @@ pub(crate) fn router(bundle: okbase::Bundle, tokens: &Arc<RunTokens>) -> Router 
     let auth = tokens.clone();
     Router::new()
         .nest("/kb", kb)
+        .nest("/bot", bot)
         .layer(middleware::from_fn(move |req: Request, next: Next| {
             let tokens = auth.clone();
             async move { require_run_token(tokens, req, next).await }

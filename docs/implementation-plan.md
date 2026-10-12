@@ -393,6 +393,11 @@ Exit criteria: the bot runs in a real Google Chat space in both modes.
 Tests: path traversal attempts, scope violations, concurrent writes, git history.
 Exit criteria: "remember that…" works in the next turn; other users cannot read it; a bad global memory is reverted with one command.
 
+Status (2026-10-12): done. Verified with the real Claude CLI: a note saved through `memory_save`
+is used after `/reset`, another user is refused, the write is a git commit in `kb/`, and the
+bundle still lints clean at L2. Building it showed that chat commands must run in order with the
+conversation's messages (only `/stop` acts at once); the worker now queues them.
+
 ### P11 — Discord and Slack → **release v0.3.0**
 
 1. Discord: twilight gateway, intents, threads, typing, 2000-char splitting, `DiscordMd`.

@@ -7,6 +7,7 @@ mod exit;
 mod init;
 mod kb;
 mod logging;
+mod memory;
 mod registry;
 mod run;
 mod service;
@@ -59,6 +60,9 @@ enum Command {
     Status(service::ServiceArgs),
     /// Show the bot's service logs.
     Logs(service::LogsArgs),
+    /// Review and undo what a bot remembers.
+    #[command(subcommand)]
+    Memory(memory::MemoryCommand),
     /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
@@ -135,6 +139,7 @@ async fn main() -> ExitCode {
         Command::List => list(),
         Command::Doctor(args) => doctor::run(args).await,
         Command::Kb(command) => kb::run(command),
+        Command::Memory(command) => memory::run(command).await,
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),

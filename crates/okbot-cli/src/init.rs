@@ -392,7 +392,12 @@ fn write_bot(
 ) -> anyhow::Result<()> {
     let name = &options.name;
     std::fs::write(dir.join(CONFIG_FILE), okbot_config::render_initial(options))?;
-    let written = okbot_knowledge::write_default_bundle(&dir.join("kb"))?;
+    let kb = dir.join("kb");
+    let fresh = !kb.exists();
+    let written = okbot_knowledge::write_default_bundle(&kb)?;
+    if fresh {
+        git_init(&kb);
+    }
     let mut ignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap_or_default();
     for line in ["/state", ".env"] {
         if !ignore.lines().any(|l| l == line) {
@@ -428,4 +433,27 @@ fn write_bot(
         );
     }
     Ok(())
+}
+
+/// Makes a new `kb/` a git repository, so memory changes have history (`okbot memory log`).
+/// Skipped silently when git is missing or `kb/` is already inside a repository.
+fn git_init(kb: &Path) {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(kb)
+            .args(["-c", "user.name=okbot", "-c", "user.email=okbot@localhost"])
+            .args(args)
+            .output()
+    };
+    let inside = git(&["rev-parse", "--is-inside-work-tree"]).is_ok_and(|o| o.status.success());
+    if inside {
+        return;
+    }
+    let ok = git(&["init", "-q"]).is_ok_and(|o| o.status.success())
+        && git(&["add", "-A"]).is_ok_and(|o| o.status.success())
+        && git(&["commit", "-qm", "default knowledge"]).is_ok_and(|o| o.status.success());
+    if !ok {
+        tracing::debug!("git is not available; memory changes will have no history");
+    }
 }

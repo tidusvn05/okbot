@@ -223,3 +223,34 @@ async fn shutdown_lets_running_turns_finish() {
         "answer sent before shutdown completed"
     );
 }
+
+#[tokio::test]
+async fn commands_wait_their_turn_behind_messages() {
+    let h = Harness::start(FakeAgent::sleeping("fake", Duration::from_millis(300)));
+    h.say("one").await;
+    h.say("/reset").await;
+    h.say("two").await;
+    h.settle().await;
+    let turns = h.agent.turns();
+    assert_eq!(turns.len(), 2);
+    assert!(
+        turns[0].prompt.contains("one"),
+        "the first turn still sees its message"
+    );
+    assert!(
+        !turns[1].prompt.contains("Earlier messages"),
+        "{}",
+        turns[1].prompt
+    );
+    assert!(
+        !turns[1].prompt.contains("one"),
+        "reset happened between the turns"
+    );
+    let sent = h.channel.sent_texts();
+    assert!(
+        sent[0].starts_with("echo:"),
+        "answer to `one` comes before the reset reply: {sent:?}"
+    );
+    assert!(sent[1].contains("new conversation"), "{sent:?}");
+    h.stop().await;
+}

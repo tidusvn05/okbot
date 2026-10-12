@@ -4,6 +4,7 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::agent::McpServer;
+use crate::caps::ToolPolicy;
 use crate::id::{ConversationKey, UserRef};
 use crate::secret::Secret;
 use crate::{BoxError, async_trait};
@@ -86,8 +87,14 @@ pub trait KnowledgeProvider: Send + Sync {
     /// Persona, catalog and profile for the system prompt.
     async fn context(&self, who: &Requester) -> Result<KnowledgeContext, KnowledgeError>;
 
-    /// Issues tool access for one run, scoped to `who`, valid for at most `ttl`.
-    async fn grant(&self, who: &Requester, ttl: Duration) -> Result<RunGrant, KnowledgeError>;
+    /// Issues tool access for one run with tool policy `tools`, scoped to `who`, valid for at
+    /// most `ttl`.
+    async fn grant(
+        &self,
+        who: &Requester,
+        tools: ToolPolicy,
+        ttl: Duration,
+    ) -> Result<RunGrant, KnowledgeError>;
 
     /// Text search for backends without MCP: the most relevant excerpts for `query`, or an empty
     /// string when nothing matches.

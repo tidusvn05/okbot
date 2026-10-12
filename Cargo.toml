@@ -55,6 +55,8 @@ agent-core = { git = "https://github.com/tidusvn05/agent-core", rev = "1cfe3fbb8
 okbase = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.2", version = "0.2.2" }
 okbase-mcp = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.2", version = "0.2.2" }
 include_dir = "0.7"
+# Same minor as okbase-mcp, so one rmcp is linked.
+rmcp = { version = "~3.5", default-features = false, features = ["server", "transport-streamable-http-server"] }
 async-trait = "0.1"
 thiserror = "2"
 anyhow = "1"

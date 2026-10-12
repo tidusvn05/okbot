@@ -219,11 +219,13 @@ pub(crate) async fn knowledge(
     }
     let mut options = KnowledgeOptions::new(&kb);
     options.index_dir = Some(config.state_dir().join("index"));
-    let knowledge = tokio::task::spawn_blocking(move || Knowledge::open(options))
-        .await?
-        .with_context(|| format!("cannot open the knowledge bundle {}", kb.display()))?;
+    let knowledge = Arc::new(
+        tokio::task::spawn_blocking(move || Knowledge::open(options))
+            .await?
+            .with_context(|| format!("cannot open the knowledge bundle {}", kb.display()))?,
+    );
     knowledge.start_mcp(stop).await?;
-    Ok(Arc::new(knowledge))
+    Ok(knowledge)
 }
 
 /// Builds the bot described by `config`.
@@ -248,7 +250,8 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
         .store(store.clone())
         .agent(Arc::new(chain))
         .renderer(Arc::new(MarkdownRenderer))
-        .knowledge(knowledge as Arc<dyn KnowledgeProvider>);
+        .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
+        .memory(knowledge as Arc<dyn okbot_core::MemoryStore>);
     let needs_http = config
         .channels
         .zalo

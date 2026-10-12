@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use okbot_core::{
     AgentBackend, CancellationToken, Channel, ChannelId, Clock, ConversationStore, InboundEvent,
-    InboundSink, KnowledgeProvider, Renderer, SinkClosed, SystemClock, async_trait,
+    InboundSink, KnowledgeProvider, MemoryStore, Renderer, SinkClosed, SystemClock, async_trait,
 };
 use tokio::sync::{Notify, mpsc};
 
@@ -98,6 +98,7 @@ pub(crate) struct Shared {
     pub(crate) store: Arc<dyn ConversationStore>,
     pub(crate) agent: Arc<dyn AgentBackend>,
     pub(crate) knowledge: Option<Arc<dyn KnowledgeProvider>>,
+    pub(crate) memory: Option<Arc<dyn MemoryStore>>,
     pub(crate) renderer: Arc<dyn Renderer>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) channels: HashMap<ChannelId, Arc<dyn Channel>>,
@@ -111,6 +112,7 @@ pub struct RuntimeBuilder {
     store: Option<Arc<dyn ConversationStore>>,
     agent: Option<Arc<dyn AgentBackend>>,
     knowledge: Option<Arc<dyn KnowledgeProvider>>,
+    memory: Option<Arc<dyn MemoryStore>>,
     renderer: Option<Arc<dyn Renderer>>,
     clock: Arc<dyn Clock>,
     channels: Vec<Arc<dyn Channel>>,
@@ -133,6 +135,12 @@ impl RuntimeBuilder {
     /// Sets the knowledge provider (optional; without it the bot answers from history only).
     pub fn knowledge(mut self, knowledge: Arc<dyn KnowledgeProvider>) -> Self {
         self.knowledge = Some(knowledge);
+        self
+    }
+
+    /// Sets the memory store (optional; enables `/remember`, `/forget`, `/memories`).
+    pub fn memory(mut self, memory: Arc<dyn MemoryStore>) -> Self {
+        self.memory = Some(memory);
         self
     }
 
@@ -179,6 +187,7 @@ impl RuntimeBuilder {
                 .ok_or(BuildError::Missing("conversation store"))?,
             agent: self.agent.ok_or(BuildError::Missing("agent backend"))?,
             knowledge: self.knowledge,
+            memory: self.memory,
             renderer: self.renderer.ok_or(BuildError::Missing("renderer"))?,
             clock: self.clock,
             channels,
@@ -247,6 +256,7 @@ impl Runtime {
             store: None,
             agent: None,
             knowledge: None,
+            memory: None,
             renderer: None,
             clock: Arc::new(SystemClock),
             channels: Vec::new(),

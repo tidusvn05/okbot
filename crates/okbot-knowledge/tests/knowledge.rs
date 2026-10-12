@@ -35,7 +35,7 @@ fn profile(name: &str, likes: &str) -> String {
 }
 
 /// A bundle with the default template, two user profiles and a refund policy.
-fn bundle() -> (tempfile::TempDir, Knowledge) {
+fn bundle() -> (tempfile::TempDir, std::sync::Arc<Knowledge>) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("kb");
     write_default_bundle(&root).unwrap();
@@ -57,7 +57,7 @@ fn bundle() -> (tempfile::TempDir, Knowledge) {
     let mut options = KnowledgeOptions::new(&root);
     options.index_dir = Some(dir.path().join("index"));
     let knowledge = Knowledge::open(options).unwrap();
-    (dir, knowledge)
+    (dir, std::sync::Arc::new(knowledge))
 }
 
 #[tokio::test]
@@ -185,7 +185,11 @@ async fn mcp_tools_respect_the_requester_scope() {
     k.start_mcp(stop.clone()).await.unwrap();
 
     let grant = k
-        .grant(&who("u1", "r1"), Duration::from_secs(60))
+        .grant(
+            &who("u1", "r1"),
+            okbot_core::ToolPolicy::Web,
+            Duration::from_secs(60),
+        )
         .await
         .unwrap();
     assert_eq!(grant.mcp[0].bearer_token_env, "KB_MCP_TOKEN");

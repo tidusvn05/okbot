@@ -111,7 +111,7 @@ async fn answer_batch(
     };
     let timeout = shared.config.agent_timeout;
 
-    let (knowledge, grant, excerpts) = gather_knowledge(shared, batch, &requester).await;
+    let (knowledge, grant, excerpts) = gather_knowledge(shared, batch, &requester, tools).await;
 
     let history = shared
         .store
@@ -191,6 +191,7 @@ async fn gather_knowledge(
     shared: &Shared,
     batch: &[Tracked],
     requester: &Requester,
+    tools: okbot_core::ToolPolicy,
 ) -> (KnowledgeContext, RunGrant, Option<String>) {
     let Some(k) = &shared.knowledge else {
         return (KnowledgeContext::default(), RunGrant::none(), None);
@@ -201,10 +202,13 @@ async fn gather_knowledge(
     });
     if shared.agent.caps().mcp {
         let ttl = shared.config.agent_timeout + Duration::from_secs(30);
-        let grant = k.grant(requester, ttl).await.unwrap_or_else(|error| {
-            tracing::warn!(%error, "knowledge tools unavailable");
-            RunGrant::none()
-        });
+        let grant = k
+            .grant(requester, tools, ttl)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "knowledge tools unavailable");
+                RunGrant::none()
+            });
         return (context, grant, None);
     }
     let query: Vec<&str> = batch.iter().map(|(e, _)| e.text.as_str()).collect();
