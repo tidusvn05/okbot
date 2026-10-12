@@ -14,6 +14,15 @@ fn redactor() -> &'static Arc<RwLock<Redactor>> {
 }
 
 /// Adds a secret that must never appear in logs.
+#[cfg_attr(
+    not(any(
+        feature = "zalo",
+        feature = "discord",
+        feature = "slack",
+        feature = "bridge"
+    )),
+    expect(dead_code, reason = "only platform channels hold secrets")
+)]
 pub(crate) fn redact(secret: &Secret<String>) {
     redactor()
         .write()

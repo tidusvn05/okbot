@@ -9,6 +9,10 @@ step fmt;          cargo fmt --all -- --check
 step clippy;       cargo clippy --workspace --all-targets --all-features -- -D warnings
 step test;         cargo test --workspace --all-features --quiet
 step docs;         RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --quiet
+step features
+for f in "" zalo gchat discord slack bridge; do
+  RUSTFLAGS="-D warnings" cargo check --quiet -p okbot-cli --no-default-features ${f:+--features "$f"}
+done
 step architecture; python3 scripts/check-deps.py
 step deny;         cargo deny check
 if [[ "${OKBOT_VERIFY_MSRV:-0}" == 1 ]]; then
