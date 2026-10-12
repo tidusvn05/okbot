@@ -19,6 +19,7 @@ chain = ["claude", "codex"]               # fallback order
 timeout_secs = 180
 max_concurrent = 2
 tool_policy = "web"                # web | mcp-only
+# home = "agent-home"              # separate CLI login/quota for this bot
 
 [agent.providers.claude]
 cli = "/home/u/.local/bin/claude"

@@ -88,3 +88,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  installer:
+    # install.sh against a local copy of a release (checksums, layout, options).
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: shellcheck install.sh
+        if: runner.os == 'Linux'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p okbot-cli
+      - name: Install from a local release
+        shell: bash
+        run: |
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          name="okbot-v0.0.0-$target"
+          mkdir -p "rel/v0.0.0/$name" home
+          cp target/release/okbot "rel/v0.0.0/$name/"
+          (cd rel/v0.0.0 && tar -czf "$name.tar.gz" "$name" && rm -r "$name" && shasum -a 256 "$name.tar.gz" > SHA256SUMS)
+          HOME="$PWD/home" OKBOT_DOWNLOAD_URL="file://$PWD/rel" sh install.sh --version v0.0.0
+          "$PWD/home/.local/bin/okbot" --version
+          echo tampered >> "rel/v0.0.0/$name.tar.gz"
+          if HOME="$PWD/home" OKBOT_DOWNLOAD_URL="file://$PWD/rel" sh install.sh --version v0.0.0; then
+            echo "::error::a tampered archive was installed"; exit 1
+          fi

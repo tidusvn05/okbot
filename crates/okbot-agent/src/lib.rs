@@ -9,12 +9,14 @@ mod cli;
 pub mod detect;
 mod env;
 mod prompt;
+mod slots;
 
 pub use agent_core::Provider;
 pub use chain::AgentChain;
 pub use cli::{CliBackend, CliBackendConfig};
 pub use env::EnvScrub;
 pub use prompt::inline_system_prompt;
+pub use slots::{MachineSlots, Slot};
 
 /// Parses a provider name as used in configuration (`claude`, `codex`, `opencode`, `devin`).
 pub fn parse_provider(name: &str) -> Option<Provider> {

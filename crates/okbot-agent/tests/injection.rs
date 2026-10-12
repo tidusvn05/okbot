@@ -31,6 +31,7 @@ async fn check(provider: Provider, policy: ToolPolicy) {
         binary: None,
         model: None,
         scrub: EnvScrub::default(),
+        env: Vec::new(),
     })
     .unwrap();
     for fixture in FIXTURES {

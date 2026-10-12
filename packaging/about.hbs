@@ -1,0 +1,18 @@
+# Third-party licenses
+
+This okbot binary contains the Rust crates listed below. Each license text is given once,
+followed by the crates it covers. See also THIRD_PARTY.md.
+
+{{#each licenses}}
+## {{name}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+```
+{{text}}
+```
+
+{{/each}}

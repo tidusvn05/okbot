@@ -55,6 +55,7 @@ impl Report {
 
 async fn check_agents(config: &Config, r: &mut Report) {
     let paths = okbot_agent::detect::SearchPaths::from_env();
+    let env = crate::bot::agent_env(config);
     for name in &config.agent.chain {
         let Some(provider) = okbot_agent::parse_provider(name) else {
             continue;
@@ -68,9 +69,9 @@ async fn check_agents(config: &Config, r: &mut Report) {
                         .map(|p| vec![p.to_path_buf()])
                         .unwrap_or_default(),
                 };
-                okbot_agent::detect::detect_one(provider, &dirs).await
+                okbot_agent::detect::detect_one_with_env(provider, &dirs, &env).await
             }
-            None => okbot_agent::detect::detect_one(provider, &paths).await,
+            None => okbot_agent::detect::detect_one_with_env(provider, &paths, &env).await,
         };
         match found {
             None => r.add(
@@ -86,7 +87,13 @@ async fn check_agents(config: &Config, r: &mut Report) {
             Some(cli) => {
                 let (status, login) = match cli.login {
                     okbot_agent::detect::Login::LoggedIn => (Status::Ok, "logged in"),
-                    okbot_agent::detect::Login::LoggedOut => (Status::Fail, "not logged in"),
+                    okbot_agent::detect::Login::LoggedOut if env.is_empty() => {
+                        (Status::Fail, "not logged in")
+                    }
+                    okbot_agent::detect::Login::LoggedOut => (
+                        Status::Fail,
+                        "not logged in in [agent] home (log in with HOME=<home> <cli>)",
+                    ),
                     okbot_agent::detect::Login::Unknown => (Status::Warn, "login unknown"),
                 };
                 r.add(

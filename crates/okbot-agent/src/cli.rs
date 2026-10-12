@@ -23,6 +23,8 @@ pub struct CliBackendConfig {
     pub model: Option<String>,
     /// Environment variables kept away from the agent.
     pub scrub: EnvScrub,
+    /// Extra environment for the CLI (for example a separate `HOME` with its own login).
+    pub env: Vec<(String, String)>,
 }
 
 /// An agent CLI run through agent-core. Each turn starts a fresh process.
@@ -32,6 +34,7 @@ pub struct CliBackend {
     name: String,
     model: Option<String>,
     scrub: EnvScrub,
+    env: Vec<(String, String)>,
 }
 
 impl CliBackend {
@@ -48,6 +51,7 @@ impl CliBackend {
             name: provider_name(provider).to_string(),
             model: config.model,
             scrub: config.scrub,
+            env: config.env,
         })
     }
 
@@ -107,6 +111,7 @@ impl CliBackend {
             model: self.model.clone(),
             timeout: turn.timeout,
             env_remove: self.scrub.current(),
+            env: self.env.iter().map(|(k, v)| (k.into(), v.into())).collect(),
             ..RunRequest::default()
         };
         if !native.enforces(turn.tools) {
@@ -132,10 +137,11 @@ impl CliBackend {
                     bearer_token_env: Some(s.bearer_token_env.clone()),
                 })
                 .collect(),
-            env: turn
+            env: base
                 .env
                 .iter()
-                .map(|(k, v)| (k.into(), v.expose().into()))
+                .cloned()
+                .chain(turn.env.iter().map(|(k, v)| (k.into(), v.expose().into())))
                 .collect(),
             ..base
         }

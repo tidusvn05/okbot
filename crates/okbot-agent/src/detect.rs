@@ -110,10 +110,15 @@ fn is_executable(path: &Path) -> bool {
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
-async fn output(path: &Path, args: &[&str]) -> Option<std::process::Output> {
+async fn output(
+    path: &Path,
+    args: &[&str],
+    env: &[(String, String)],
+) -> Option<std::process::Output> {
     let mut command = Command::new(path);
     command
         .args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -124,13 +129,13 @@ async fn output(path: &Path, args: &[&str]) -> Option<std::process::Output> {
         .ok()
 }
 
-async fn login(provider: Provider, path: &Path) -> Login {
+async fn login(provider: Provider, path: &Path, env: &[(String, String)]) -> Login {
     let args: &[&str] = match provider {
         Provider::Claude | Provider::Devin => &["auth", "status"],
         Provider::Codex => &["login", "status"],
         Provider::OpenCodeV2 => return Login::Unknown,
     };
-    let Some(out) = output(path, args).await else {
+    let Some(out) = output(path, args, env).await else {
         return Login::Unknown;
     };
     if provider == Provider::Claude {
@@ -153,8 +158,17 @@ async fn login(provider: Provider, path: &Path) -> Login {
 
 /// Detects one CLI.
 pub async fn detect_one(provider: Provider, paths: &SearchPaths) -> Option<DetectedCli> {
+    detect_one_with_env(provider, paths, &[]).await
+}
+
+/// Detects one CLI, checking its login with extra environment (a bot's separate agent home).
+pub async fn detect_one_with_env(
+    provider: Provider,
+    paths: &SearchPaths,
+    env: &[(String, String)],
+) -> Option<DetectedCli> {
     let path = paths.find(provider.executable())?;
-    let out = output(&path, &["--version"]).await?;
+    let out = output(&path, &["--version"], env).await?;
     if !out.status.success() {
         return None;
     }
@@ -164,7 +178,7 @@ pub async fn detect_one(provider: Provider, paths: &SearchPaths) -> Option<Detec
         .unwrap_or("")
         .trim()
         .to_string();
-    let login = login(provider, &path).await;
+    let login = login(provider, &path, env).await;
     Some(DetectedCli {
         provider,
         path,

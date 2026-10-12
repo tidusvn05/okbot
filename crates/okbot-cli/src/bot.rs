@@ -43,8 +43,48 @@ fn parse_admin(value: &str) -> anyhow::Result<(ChannelId, UserId)> {
     Ok((channel.parse()?, UserId::new(user)))
 }
 
+/// Environment for the agent CLIs when `[agent] home` is set: a separate login and quota.
+pub(crate) fn agent_env(config: &Config) -> Vec<(String, String)> {
+    let Some(home) = &config.agent.home else {
+        return Vec::new();
+    };
+    let home = config.path(home);
+    let home = home.to_string_lossy();
+    vec![
+        ("HOME".into(), home.to_string()),
+        ("CLAUDE_CONFIG_DIR".into(), format!("{home}/.claude")),
+        ("CODEX_HOME".into(), format!("{home}/.codex")),
+    ]
+}
+
+/// The machine-wide agent limit from `~/.config/okbot/config.toml` (`[limits] max_agents`).
+fn machine_slots() -> anyhow::Result<Option<okbot_agent::MachineSlots>> {
+    #[derive(serde::Deserialize, Default)]
+    struct Machine {
+        #[serde(default)]
+        limits: Limits,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct Limits {
+        max_agents: Option<usize>,
+    }
+    let home = crate::registry::home()?;
+    let path = home.join("config.toml");
+    let machine: Machine = match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            toml::from_str(&text).with_context(|| format!("{} is invalid", path.display()))?
+        }
+        Err(_) => Machine::default(),
+    };
+    Ok(machine
+        .limits
+        .max_agents
+        .map(|max| okbot_agent::MachineSlots::new(home.join("slots"), max)))
+}
+
 /// The agent chain from `[agent]`.
 pub(crate) fn agent_chain(config: &Config) -> anyhow::Result<AgentChain> {
+    let env = agent_env(config);
     let mut scrub = EnvScrub::default();
     for name in config.secret_names() {
         scrub = scrub.with_name(name);
@@ -64,12 +104,16 @@ pub(crate) fn agent_chain(config: &Config) -> anyhow::Result<AgentChain> {
             binary: settings.cli,
             model: settings.model,
             scrub: scrub.clone(),
+            env: env.clone(),
         })
         .with_context(|| format!("agent `{name}`"))?;
         backends.push(Arc::new(backend));
     }
-    let chain = AgentChain::new(backends, config.agent.max_concurrent)
+    let mut chain = AgentChain::new(backends, config.agent.max_concurrent)
         .allow_unenforced_tools(config.agent.allow_unrestricted_agents);
+    if let Some(slots) = machine_slots()? {
+        chain = chain.machine_slots(slots);
+    }
     if chain.caps().tool_policies.is_empty() && !config.agent.allow_unrestricted_agents {
         bail!(
             "none of the agents in [agent] chain can restrict their tools (only claude and codex \

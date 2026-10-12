@@ -76,6 +76,10 @@ pub struct AgentSection {
     /// Allow agents that cannot restrict their tools (Devin, OpenCode). Never for public bots.
     #[serde(default)]
     pub allow_unrestricted_agents: bool,
+    /// A separate home for the agent CLIs (their own login and quota). Log in once with
+    /// `HOME=<home> claude` (or `codex login`). Unset: the user's own login, shared by all bots.
+    #[serde(default)]
+    pub home: Option<PathBuf>,
     /// Per-CLI settings.
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderSection>,
@@ -90,6 +94,7 @@ impl Default for AgentSection {
             tool_policy: ToolPolicy::default(),
             history_tokens: default_history_tokens(),
             allow_unrestricted_agents: false,
+            home: None,
             providers: BTreeMap::new(),
         }
     }

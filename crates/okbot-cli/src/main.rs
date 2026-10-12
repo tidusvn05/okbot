@@ -9,6 +9,7 @@ mod kb;
 mod logging;
 mod registry;
 mod run;
+mod service;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -48,7 +49,17 @@ enum Command {
     /// Maintain the knowledge bundle.
     #[command(subcommand)]
     Kb(kb::KbCommand),
-    /// Forget a bot (its directory is kept).
+    /// Install and start the bot as a service (systemd); it restarts on failure and at boot.
+    Start(service::ServiceArgs),
+    /// Stop the bot's service.
+    Stop(service::ServiceArgs),
+    /// Restart the bot's service (after editing okbot.toml or kb/persona).
+    Restart(service::ServiceArgs),
+    /// Show whether the bot's service is running.
+    Status(service::ServiceArgs),
+    /// Show the bot's service logs.
+    Logs(service::LogsArgs),
+    /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
         name: String,
@@ -89,6 +100,18 @@ fn list() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn remove(name: &str) -> anyhow::Result<()> {
+    if service::uninstall(name)? {
+        println!("stopped and removed the service of `{name}`");
+    }
+    if registry::unregister(name)? {
+        println!("forgot `{name}` (its directory is kept)");
+    } else {
+        println!("no bot named `{name}`");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -112,13 +135,12 @@ async fn main() -> ExitCode {
         Command::List => list(),
         Command::Doctor(args) => doctor::run(args).await,
         Command::Kb(command) => kb::run(command),
-        Command::Remove { name } => registry::unregister(&name).map(|removed| {
-            if removed {
-                println!("forgot `{name}` (its directory is kept)");
-            } else {
-                println!("no bot named `{name}`");
-            }
-        }),
+        Command::Start(args) => service::run(service::Action::Start, &args),
+        Command::Stop(args) => service::run(service::Action::Stop, &args),
+        Command::Restart(args) => service::run(service::Action::Restart, &args),
+        Command::Status(args) => service::run(service::Action::Status, &args),
+        Command::Logs(args) => service::logs(&args),
+        Command::Remove { name } => remove(&name),
         Command::HelpAgent => {
             print!("{}", include_str!("agent_contract.md"));
             Ok(())

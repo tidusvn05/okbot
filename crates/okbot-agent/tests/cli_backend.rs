@@ -15,6 +15,7 @@ fn backend(dir: &std::path::Path, body: &str) -> CliBackend {
         binary: Some(binary),
         model: None,
         scrub: EnvScrub::default(),
+        env: Vec::new(),
     })
     .unwrap()
 }
@@ -119,6 +120,7 @@ fn missing_cli_is_unavailable() {
         binary: Some("/nonexistent/codex".into()),
         model: None,
         scrub: EnvScrub::default(),
+        env: Vec::new(),
     })
     .unwrap_err();
     assert!(matches!(err, AgentError::Unavailable(_)), "{err}");
@@ -135,6 +137,7 @@ async fn real_cli_smoke() {
         binary: None,
         model: std::env::var("OKBOT_SMOKE_MODEL").ok(),
         scrub: EnvScrub::default(),
+        env: Vec::new(),
     })
     .expect("CLI installed");
     let dir = tempfile::tempdir().unwrap();

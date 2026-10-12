@@ -14,11 +14,25 @@
 - **Safe by default:** the agent gets web tools and okbot's tools, never a shell or your files.
 - **Many bots per machine:** one directory per bot, managed by the `okbot` command.
 
+## Quick start
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tidusvn05/okbot/main/install.sh | sh
+okbot new shop          # wizard: agent CLI, Zalo token, default knowledge
+okbot doctor shop
+okbot start shop        # runs as a service; `okbot logs shop -f`
+```
+
+Coding agents: `okbot help-agent` prints the setup contract.
+
 ## Documentation
 
 - [Design](docs/design.md): architecture and the reasons behind it
 - [Implementation plan](docs/implementation-plan.md): phases, releases and engineering standards
+- [Running on a VPS](docs/deploy.md): many bots per machine, services, reverse proxy
+- Platforms: [Zalo Bot](docs/platforms/zalo.md)
 - [Architecture decisions](docs/adr/)
+- [Releasing](docs/releasing.md)
 
 ## License
 

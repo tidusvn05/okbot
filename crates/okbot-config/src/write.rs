@@ -80,6 +80,10 @@ pub fn render_initial(o: &InitOptions) -> String {
     let _ = writeln!(s, "timeout_secs = 180");
     let _ = writeln!(s, "max_concurrent = 2");
     let _ = writeln!(s, "tool_policy = \"web\"                # web | mcp-only");
+    let _ = writeln!(
+        s,
+        "# home = \"agent-home\"              # separate CLI login/quota for this bot"
+    );
     for (name, cli) in &o.chain {
         let _ = writeln!(s, "\n[agent.providers.{name}]");
         if let Some(cli) = cli {

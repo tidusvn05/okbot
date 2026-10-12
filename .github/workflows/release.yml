@@ -1,0 +1,176 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (or vX.Y.Z-rc.N) builds okbot for Linux and macOS, attaches the archives
+# with SHA256SUMS to a GitHub release, writes the notes from the commits since the previous tag,
+# and pushes a container image. The procedure is in docs/releasing.md.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.1.0 (the release is created as a draft)"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - id: tag
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+      - name: The tag matches the workspace version
+        shell: bash
+        run: |
+          want="${{ steps.tag.outputs.version }}"
+          have="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [ "$want" != "$have" ]; then
+            echo "::error::tag ${{ steps.tag.outputs.tag }} but Cargo.toml says version $have (see docs/releasing.md)"
+            exit 1
+          fi
+      - name: CHANGELOG.md has this version
+        shell: bash
+        run: grep -q "^## \[${{ steps.tag.outputs.version }}\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for ${{ steps.tag.outputs.version }}"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Older Ubuntu images keep the glibc requirement low.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-14 }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked -p okbot-cli --target ${{ matrix.target }}
+      - name: Third-party licenses
+        run: |
+          cargo install --locked cargo-about --features cli
+          cargo about generate --manifest-path crates/okbot-cli/Cargo.toml \
+            --target ${{ matrix.target }} packaging/about.hbs -o THIRD_PARTY_LICENSES.md
+      - name: Package
+        shell: bash
+        run: |
+          name="okbot-$TAG-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/okbot" "dist/$name/"
+          cp README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md THIRD_PARTY_LICENSES.md CHANGELOG.md "dist/$name/"
+          cd dist && tar -czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: okbot-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish the GitHub release
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes (git-cliff)
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: NOTES.md
+      - name: Install instructions
+        run: |
+          cat >> NOTES.md <<NOTES
+
+          ## Install
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- --version ${{ needs.check.outputs.tag }}
+          \`\`\`
+
+          Every archive is listed in \`SHA256SUMS\`. Container image:
+          \`ghcr.io/${{ github.repository }}:${{ needs.check.outputs.version }}\`.
+          NOTES
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check.outputs.tag }}
+          name: okbot ${{ needs.check.outputs.tag }}
+          body_path: NOTES.md
+          prerelease: ${{ needs.check.outputs.prerelease }}
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+
+  image:
+    name: Container image
+    needs: [check, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ needs.check.outputs.version }}
+            ${{ needs.check.outputs.prerelease == 'false' && format('ghcr.io/{0}:latest', github.repository) || '' }}

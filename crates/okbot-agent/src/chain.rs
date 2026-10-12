@@ -16,6 +16,7 @@ pub struct AgentChain {
     backends: Vec<Arc<dyn AgentBackend>>,
     name: String,
     permits: Arc<Semaphore>,
+    machine: Option<crate::MachineSlots>,
     allow_unenforced: bool,
 }
 
@@ -36,6 +37,7 @@ impl AgentChain {
             name: names.join(","),
             backends,
             permits: Arc::new(Semaphore::new(max_concurrent.max(1))),
+            machine: None,
             allow_unenforced: false,
         }
     }
@@ -50,6 +52,12 @@ impl AgentChain {
             );
         }
         self.allow_unenforced = allow;
+        self
+    }
+
+    /// Also waits for a machine-wide slot before each turn (shared with other bots).
+    pub fn machine_slots(mut self, slots: crate::MachineSlots) -> Self {
+        self.machine = Some(slots);
         self
     }
 
@@ -92,6 +100,13 @@ impl AgentBackend for AgentChain {
             .acquire()
             .await
             .map_err(|_| AgentError::Unavailable("agent chain is shutting down".into()))?;
+        let _slot =
+            match &self.machine {
+                Some(slots) => Some(slots.acquire().await.map_err(|e| {
+                    AgentError::Unavailable(format!("machine-wide agent limit: {e}"))
+                })?),
+                None => None,
+            };
         let mut last_error = AgentError::Unavailable("no agent backend configured".into());
         for backend in &self.backends {
             if !self.allow_unenforced && !backend.caps().enforces(turn.tools) {

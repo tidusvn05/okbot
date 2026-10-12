@@ -160,3 +160,81 @@ fn help_agent_prints_the_contract() {
     let out = env.okbot().arg("help-agent").output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("Exit codes"));
 }
+
+#[test]
+fn service_commands_drive_systemd() {
+    let env = Env::new();
+    let bin = env.root().join("bin");
+    let calls = env.root().join("systemctl.log");
+    for tool in ["systemctl", "loginctl"] {
+        okbot_testkit::fake_cli(
+            &bin,
+            tool,
+            &format!(
+                r#"echo "{tool} $*" >> "{log}"
+case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
+                log = calls.display()
+            ),
+        );
+    }
+    let okbot = |args: &[&str]| {
+        let mut cmd = env.okbot();
+        cmd.env("ZTOKEN", "1:x")
+            .env("OKBOT_SYSTEMD_DIR", env.root().join("units"))
+            .env("OKBOT_SYSTEMCTL", bin.join("systemctl"))
+            .env("OKBOT_LOGINCTL", bin.join("loginctl"))
+            .args(args)
+            .write_stdin("");
+        cmd.output().unwrap()
+    };
+    let out = okbot(&[
+        "new",
+        "shop",
+        "--agent",
+        "claude",
+        "--platform",
+        "zalo",
+        "--zalo-token-env",
+        "ZTOKEN",
+        "--delivery",
+        "polling",
+        "--no-verify",
+        "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let out = okbot(&["start", "shop"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let unit = std::fs::read_to_string(env.root().join("units/okbot-shop.service")).unwrap();
+    assert!(unit.contains("ExecStart="), "{unit}");
+    assert!(unit.contains(&format!(
+        "WorkingDirectory={}",
+        env.root().join("shop").canonicalize().unwrap().display()
+    )));
+    assert!(unit.contains(&format!("Environment=PATH={}", env.path)));
+
+    let status = okbot(&["status", "shop"]);
+    assert!(String::from_utf8_lossy(&status.stdout).contains("shop: active (enabled)"));
+    assert!(okbot(&["stop", "shop"]).status.success());
+    assert!(okbot(&["remove", "shop"]).status.success());
+    assert!(!env.root().join("units/okbot-shop.service").exists());
+
+    let log = std::fs::read_to_string(&calls).unwrap();
+    for expected in [
+        "systemctl --user daemon-reload",
+        "systemctl --user enable --now okbot-shop.service",
+        "loginctl enable-linger",
+        "systemctl --user stop okbot-shop.service",
+        "systemctl --user disable --now okbot-shop.service",
+    ] {
+        assert!(log.contains(expected), "missing {expected:?} in\n{log}");
+    }
+}

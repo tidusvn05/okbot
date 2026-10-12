@@ -63,6 +63,7 @@ async fn agents(args: &ChatArgs) -> anyhow::Result<Vec<Arc<dyn AgentBackend>>> {
             binary: None,
             model: if i == 0 { args.model.clone() } else { None },
             scrub: EnvScrub::default(),
+            env: Vec::new(),
         })?;
         backends.push(Arc::new(backend));
     }
