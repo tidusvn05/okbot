@@ -1,5 +1,6 @@
 //! One agent turn: context, agent run, rendering, sending, audit.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -250,13 +251,32 @@ async fn resume_for(
 
 /// Stores the batch's messages now, so history order matches the order turns see them in.
 async fn store_user_messages(shared: &Shared, batch: &[Tracked]) {
+    // Attachments are numbered across the batch, in the order the viewing tool uses.
+    let mut number = 0;
     for (event, _) in batch {
+        let mut text = event.text.clone();
+        let images = event
+            .attachments
+            .iter()
+            .filter(|a| matches!(a, okbot_core::Attachment::Image { .. }))
+            .count();
+        if images > 0 {
+            let ids: Vec<String> = (number + 1..=number + images)
+                .map(|i| format!("#{i}"))
+                .collect();
+            number += images;
+            let _ = write!(
+                text,
+                "\n[The user attached image {} — view it with the attachment_view tool.]",
+                ids.join(", ")
+            );
+        }
         let message = NewMessage {
             conversation: event.conversation.clone(),
             role: MessageRole::User,
             author_id: Some(event.author.id.clone()),
             author_name: event.author.display_name.clone(),
-            text: event.text.clone(),
+            text,
             message_id: event.message_id.clone(),
             at: event.sent_at,
         };
@@ -281,14 +301,20 @@ async fn gather_knowledge(
         KnowledgeContext::default()
     });
     if shared.agent.caps().mcp {
-        let ttl = shared.config.agent_timeout + Duration::from_secs(30);
-        let grant = k
-            .grant(requester, tools, ttl)
-            .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "knowledge tools unavailable");
-                RunGrant::none()
-            });
+        let attachments: Vec<okbot_core::Attachment> = batch
+            .iter()
+            .flat_map(|(e, _)| e.attachments.iter().cloned())
+            .filter(|a| matches!(a, okbot_core::Attachment::Image { .. }))
+            .collect();
+        let run = okbot_core::RunInfo {
+            tools,
+            ttl: shared.config.agent_timeout + Duration::from_secs(30),
+            attachments: &attachments,
+        };
+        let grant = k.grant(requester, &run).await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "knowledge tools unavailable");
+            RunGrant::none()
+        });
         return (context, grant, None);
     }
     let query: Vec<&str> = batch.iter().map(|(e, _)| e.text.as_str()).collect();
@@ -310,6 +336,16 @@ async fn finish(
     mut record: AgentRunRecord,
     placeholder: Option<&SentRef>,
 ) {
+    let kind = match &outcome {
+        None => crate::metrics::Outcome::Cancelled,
+        Some(Ok(_)) => crate::metrics::Outcome::Answered,
+        Some(Err(_)) => crate::metrics::Outcome::Failed,
+    };
+    let backend = match &outcome {
+        Some(Ok(answer)) => answer.backend.clone(),
+        _ => record.backend.clone(),
+    };
+    shared.metrics.turn(&backend, kind, record.duration);
     match outcome {
         None => {
             tracing::info!(run = %record.run_id, "turn cancelled");

@@ -2475,6 +2475,7 @@ name = "okbot-knowledge"
 version = "0.1.0-dev"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "hex",
  "include_dir",
  "jiff",

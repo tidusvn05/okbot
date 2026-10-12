@@ -59,6 +59,7 @@ impl Dispatcher {
 
     async fn dispatch(&self, (event, guard): Tracked) {
         let s = &self.shared;
+        s.metrics.event();
         let channel = &event.conversation.channel;
         match s
             .store
@@ -66,6 +67,7 @@ impl Dispatcher {
             .await
         {
             Ok(false) => {
+                s.metrics.duplicate();
                 tracing::debug!(event = %event.event_id, "duplicate event dropped");
                 return;
             }
@@ -74,7 +76,10 @@ impl Dispatcher {
             Err(error) => tracing::warn!(%error, "dedupe check failed"),
         }
         match s.gate.check(&event, s.clock.now()) {
-            Verdict::Ignore => return,
+            Verdict::Ignore => {
+                s.metrics.ignored();
+                return;
+            }
             Verdict::RateLimited => {
                 turn::reply(s, &event, &s.config.replies.rate_limited).await;
                 return;

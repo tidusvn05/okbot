@@ -187,8 +187,11 @@ async fn mcp_tools_respect_the_requester_scope() {
     let grant = k
         .grant(
             &who("u1", "r1"),
-            okbot_core::ToolPolicy::Web,
-            Duration::from_secs(60),
+            &okbot_core::RunInfo {
+                tools: okbot_core::ToolPolicy::Web,
+                ttl: Duration::from_secs(60),
+                attachments: &[],
+            },
         )
         .await
         .unwrap();

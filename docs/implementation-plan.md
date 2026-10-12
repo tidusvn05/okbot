@@ -434,7 +434,14 @@ Claude CLI.
 
 1. Inbound images/voice as `Attachment`s passed to agents that accept files; outbound images via public file URLs (needed by Zalo `sendPhoto`).
 2. Metrics endpoint (Prometheus text format): turns, latency, errors and fallbacks per provider, queue depth.
-3. `okbot doctor --watch` style health summary across all bots.
+3. Health across all bots: `okbot status --all` (services) and `okbot doctor --all` (checks).
+
+Status (2026-10-12): done for inbound images (Zalo, Discord): the agent views them through the
+`attachment_view` MCP tool, which only fetches the run's own attachment URLs over HTTPS (redirects
+to HTTPS only, images only, 8 MiB). Google Chat and Slack attachments need authenticated
+downloads and are not offered yet; outbound files are not implemented. `/metrics` serves
+Prometheus counters (events, duplicates, ignored, turns and time by backend and outcome, queue
+depth). Verified with the real Claude CLI describing an image sent through a fake Zalo API.
 
 ### P14 — Stable SDK and ecosystem → **release v1.0.0**
 

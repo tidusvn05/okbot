@@ -96,6 +96,10 @@ proptest = "1"
 assert_cmd = "2"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 
+# Line tables keep backtraces useful while cutting target/ to a fraction of full debug info.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

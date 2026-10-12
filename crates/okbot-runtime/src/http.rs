@@ -80,13 +80,27 @@ async fn webhook(
 /// The router: `GET /healthz` and one route per channel webhook.
 pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
     let health_state = shared.clone();
-    let mut router = Router::new().route(
-        "/healthz",
-        get(move || {
-            let state = health_state.clone();
-            async move { health(&state) }
-        }),
-    );
+    let metrics_state = shared.clone();
+    let mut router = Router::new()
+        .route(
+            "/healthz",
+            get(move || {
+                let state = health_state.clone();
+                async move { health(&state) }
+            }),
+        )
+        .route(
+            "/metrics",
+            get(move || {
+                let s = metrics_state.clone();
+                async move {
+                    (
+                        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+                        s.metrics.render(&s.config.bot_name, s.in_flight.current()),
+                    )
+                }
+            }),
+        );
     for channel in shared.channels.values() {
         if let Some(handler) = channel.webhook() {
             let path = format!("/{}", handler.path().trim_start_matches('/'));
@@ -212,6 +226,7 @@ mod tests {
             clock: Arc::new(SystemClock),
             channels: HashMap::from([(channel.id().clone(), channel)]),
             in_flight: Arc::new(InFlight::default()),
+            metrics: crate::metrics::Metrics::default(),
         })
     }
 
@@ -232,6 +247,15 @@ mod tests {
             .unwrap();
         assert_eq!(health.status(), 200);
         assert_eq!(body(health).await["channels"][0], "hook:test");
+        let metrics = app
+            .clone()
+            .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let text = axum::body::to_bytes(metrics.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&text).contains("okbot_events_total{bot=\"okbot\"} 0"));
 
         let hook = app
             .clone()

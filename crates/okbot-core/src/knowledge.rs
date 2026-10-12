@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::agent::McpServer;
 use crate::caps::ToolPolicy;
 use crate::id::{ConversationKey, UserRef};
+use crate::message::Attachment;
 use crate::secret::Secret;
 use crate::{BoxError, async_trait};
 
@@ -30,6 +31,17 @@ pub struct Requester {
     pub user: UserRef,
     /// The room may see documents marked `audience: private`.
     pub internal: bool,
+}
+
+/// What a run needs from the knowledge tools.
+#[derive(Debug, Clone, Copy)]
+pub struct RunInfo<'a> {
+    /// The run's tool policy.
+    pub tools: ToolPolicy,
+    /// How long the access stays valid.
+    pub ttl: Duration,
+    /// Media the user sent with the messages being answered (offered through a viewing tool).
+    pub attachments: &'a [Attachment],
 }
 
 /// Knowledge placed in the system prompt.
@@ -87,14 +99,8 @@ pub trait KnowledgeProvider: Send + Sync {
     /// Persona, catalog and profile for the system prompt.
     async fn context(&self, who: &Requester) -> Result<KnowledgeContext, KnowledgeError>;
 
-    /// Issues tool access for one run with tool policy `tools`, scoped to `who`, valid for at
-    /// most `ttl`.
-    async fn grant(
-        &self,
-        who: &Requester,
-        tools: ToolPolicy,
-        ttl: Duration,
-    ) -> Result<RunGrant, KnowledgeError>;
+    /// Issues tool access for one run, scoped to `who`.
+    async fn grant(&self, who: &Requester, run: &RunInfo<'_>) -> Result<RunGrant, KnowledgeError>;
 
     /// Text search for backends without MCP: the most relevant excerpts for `query`, or an empty
     /// string when nothing matches.

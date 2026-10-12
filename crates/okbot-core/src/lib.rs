@@ -73,7 +73,9 @@ pub use caps::{AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ToolPolicy};
 pub use channel::{Channel, ChannelError, InboundSink, SinkClosed};
 pub use clock::{Clock, SystemClock};
 pub use id::{ChannelId, ConversationKey, IdError, MessageId, RunId, UserId, UserRef};
-pub use knowledge::{KnowledgeContext, KnowledgeError, KnowledgeProvider, Requester, RunGrant};
+pub use knowledge::{
+    KnowledgeContext, KnowledgeError, KnowledgeProvider, Requester, RunGrant, RunInfo,
+};
 pub use memory::{MemoryEntry, MemoryError, MemoryNote, MemoryScope, MemoryStore};
 pub use message::{
     Attachment, InboundEvent, OutboundMessage, RenderedMessage, ReplyTarget, SentRef,

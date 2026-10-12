@@ -223,6 +223,8 @@ case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
 
     let status = okbot(&["status", "shop"]);
     assert!(String::from_utf8_lossy(&status.stdout).contains("shop: active (enabled)"));
+    let all = okbot(&["status", "--all"]);
+    assert!(String::from_utf8_lossy(&all.stdout).contains("shop: active (enabled)"));
     assert!(okbot(&["stop", "shop"]).status.success());
     assert!(okbot(&["remove", "shop"]).status.success());
     assert!(!env.root().join("units/okbot-shop.service").exists());

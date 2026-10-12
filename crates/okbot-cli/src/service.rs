@@ -27,6 +27,9 @@ pub(crate) enum Action {
 pub(crate) struct ServiceArgs {
     /// Bot name; default: the bot in the current directory.
     name: Option<String>,
+    /// Every registered bot (`okbot status --all`).
+    #[arg(long, conflicts_with = "name")]
+    all: bool,
 }
 
 /// Arguments of `okbot logs`.
@@ -179,6 +182,18 @@ fn enable_linger() {
 }
 
 pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
+    if args.all {
+        for (name, _) in crate::registry::all()? {
+            let one = ServiceArgs {
+                name: Some(name.clone()),
+                all: false,
+            };
+            if let Err(error) = run(action, &one) {
+                eprintln!("{name}: {error:#}");
+            }
+        }
+        return Ok(());
+    }
     let dir = crate::registry::resolve(args.name.as_deref())?;
     let config = okbot_config::Config::load(&dir)?;
     let bot = crate::registry::name_of(&dir);

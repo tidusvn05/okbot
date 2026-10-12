@@ -331,9 +331,9 @@ impl KnowledgeProvider for Knowledge {
     async fn grant(
         &self,
         who: &Requester,
-        tools: ToolPolicy,
-        ttl: Duration,
+        run: &okbot_core::RunInfo<'_>,
     ) -> Result<RunGrant, KnowledgeError> {
+        let (tools, ttl) = (run.tools, run.ttl);
         let Some(addr) = *lock(&self.mcp_addr) else {
             return Ok(RunGrant::none());
         };
@@ -344,6 +344,7 @@ impl KnowledgeProvider for Knowledge {
             } else {
                 "web"
             },
+            attachments: run.attachments.to_vec(),
         };
         let (token, guard) = self.tokens.issue(scope::for_requester(who), context, ttl);
         Ok(RunGrant::new(

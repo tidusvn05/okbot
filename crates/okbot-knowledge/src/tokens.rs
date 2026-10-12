@@ -22,6 +22,8 @@ pub(crate) struct RunContext {
     pub(crate) who: okbot_core::Requester,
     /// The run's tool policy (`web` or `mcp-only`), recorded on notes it writes.
     pub(crate) policy: &'static str,
+    /// Media sent with the messages being answered, viewable through `attachment_view`.
+    pub(crate) attachments: Vec<okbot_core::Attachment>,
 }
 
 /// Issued tokens. Tokens are 256-bit random values, valid until revoked or expired.
@@ -130,6 +132,7 @@ mod tests {
                 internal: false,
             },
             policy: "web",
+            attachments: Vec::new(),
         }
     }
 

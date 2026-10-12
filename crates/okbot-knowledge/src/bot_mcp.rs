@@ -21,7 +21,11 @@ preference about themselves. scope `user` for facts about the person you are tal
 for facts about this chat, `global` only for facts useful to everyone. Write one short fact per \
 note, in the user's language. Never save passwords, payment data or other secrets.\n\
 - memory_list: what you remember here (use it before saving to avoid duplicates).\n\
-- memory_forget: when the user asks you to forget something; pass the note id from memory_list.";
+- memory_forget: when the user asks you to forget something; pass the note id from memory_list.\n\
+- attachment_view: see an image the user sent with the current message (index from the message).";
+
+/// Largest attachment fetched for the agent.
+const MAX_ATTACHMENT_BYTES: usize = 8 << 20;
 
 /// The memory MCP server; one instance serves every run, the token tells who is asking.
 #[derive(Clone)]
@@ -59,6 +63,16 @@ fn tools() -> Vec<Tool> {
             json!({"type": "object", "properties": {}}),
         ),
         tool(
+            "attachment_view",
+            "See an image the user attached to the current message.",
+            json!({
+                "type": "object",
+                "properties": {"index": {"type": "integer", "minimum": 1,
+                                         "description": "1 for the first attachment."}},
+                "required": ["index"]
+            }),
+        ),
+        tool(
             "memory_forget",
             "Forget a note by its id (from memory_list).",
             json!({
@@ -77,6 +91,76 @@ fn scope(value: &str) -> Option<MemoryScope> {
         "global" => Some(MemoryScope::Global),
         _ => None,
     }
+}
+
+/// Fetches attachment `index` (1-based) of the run: only URLs the platform delivered, over
+/// HTTPS, images only, size-limited.
+async fn fetch_image(
+    attachments: &[okbot_core::Attachment],
+    index: usize,
+    allow_http: bool,
+) -> Result<(String, String), String> {
+    use base64::Engine as _;
+    let attachment = index
+        .checked_sub(1)
+        .and_then(|i| attachments.get(i))
+        .ok_or_else(|| format!("there is no attachment {index} in this message"))?;
+    let okbot_core::Attachment::Image { url, .. } = attachment else {
+        return Err(format!("attachment {index} is not an image"));
+    };
+    if !(url.starts_with("https://") || allow_http && url.starts_with("http://")) {
+        return Err("attachment URL is not HTTPS".into());
+    }
+    // Follow redirects only to HTTPS (never to plain HTTP, which could reach internal hosts).
+    let policy = reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= 5 {
+            attempt.error("too many redirects")
+        } else if attempt.url().scheme() == "https" || allow_http {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    let client = reqwest::Client::builder()
+        .redirect(policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("cannot download the image: {}", e.without_url()))?;
+    let mime = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !mime.starts_with("image/") {
+        return Err(format!("attachment {index} is not an image ({mime})"));
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| usize::try_from(n).map_or(true, |n| n > MAX_ATTACHMENT_BYTES))
+    {
+        return Err("the image is too large".into());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("cannot download the image: {}", e.without_url()))?;
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err("the image is too large".into());
+    }
+    Ok((
+        base64::engine::general_purpose::STANDARD.encode(&bytes),
+        mime,
+    ))
 }
 
 impl BotServer {
@@ -171,6 +255,22 @@ impl ServerHandler for BotServer {
             .and_then(|v| v.strip_prefix("Bearer ").map(|t| t.trim().to_string()));
         async move {
             let args = request.arguments.unwrap_or_default();
+            if request.name == "attachment_view" {
+                let index = args.get("index").and_then(Value::as_u64).unwrap_or(0);
+                let attachments = token
+                    .as_deref()
+                    .and_then(|t| self.tokens.context(t))
+                    .map(|c| c.attachments)
+                    .unwrap_or_default();
+                let index = usize::try_from(index).unwrap_or(0);
+                let result = match fetch_image(&attachments, index, false).await {
+                    Ok((data, mime)) => {
+                        CallToolResult::success(vec![ContentBlock::image(data, mime)])
+                    }
+                    Err(message) => CallToolResult::error(vec![ContentBlock::text(message)]),
+                };
+                return Ok(result.into());
+            }
             let result = match self.call(&request.name, &args, token.as_deref()).await {
                 Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
                 Err(message) => CallToolResult::error(vec![ContentBlock::text(message)]),
@@ -192,4 +292,77 @@ pub(crate) fn router(server: BotServer) -> axum::Router {
         StreamableHttpServerConfig::default(),
     );
     axum::Router::new().nest_service("/mcp", service)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use okbot_core::Attachment;
+
+    async fn serve() -> String {
+        let app = axum::Router::new()
+            .route(
+                "/cat.png",
+                axum::routing::get(|| async {
+                    (
+                        [(axum::http::header::CONTENT_TYPE, "image/png")],
+                        vec![137u8, 80, 78, 71],
+                    )
+                }),
+            )
+            .route(
+                "/page",
+                axum::routing::get(|| async {
+                    ([(axum::http::header::CONTENT_TYPE, "text/html")], "<html>")
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        base
+    }
+
+    fn image(url: String) -> Attachment {
+        Attachment::Image { url, caption: None }
+    }
+
+    #[tokio::test]
+    async fn fetches_only_listed_https_images() {
+        let base = serve().await;
+        let list = vec![
+            image(format!("{base}/cat.png")),
+            image(format!("{base}/page")),
+        ];
+        let (data, mime) = fetch_image(&list, 1, true).await.unwrap();
+        assert_eq!((data.as_str(), mime.as_str()), ("iVBORw==", "image/png"));
+        assert!(
+            fetch_image(&list, 2, true)
+                .await
+                .unwrap_err()
+                .contains("not an image")
+        );
+        assert!(
+            fetch_image(&list, 3, true)
+                .await
+                .unwrap_err()
+                .contains("no attachment 3")
+        );
+        assert!(fetch_image(&list, 0, true).await.is_err());
+        assert!(
+            fetch_image(&list, 1, false)
+                .await
+                .unwrap_err()
+                .contains("HTTPS"),
+            "http refused in production"
+        );
+        let audio = vec![Attachment::Audio {
+            url: format!("{base}/cat.png"),
+        }];
+        assert!(
+            fetch_image(&audio, 1, true)
+                .await
+                .unwrap_err()
+                .contains("not an image")
+        );
+    }
 }

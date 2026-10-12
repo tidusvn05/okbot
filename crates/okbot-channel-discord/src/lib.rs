@@ -115,7 +115,19 @@ pub(crate) fn to_inbound(
             is_bot: message.author.bot,
         },
         text: strip_mention(&message.content, me.get()),
-        attachments: Vec::new(),
+        attachments: message
+            .attachments
+            .iter()
+            .filter(|a| {
+                a.content_type
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("image/"))
+            })
+            .map(|a| okbot_core::Attachment::Image {
+                url: a.url.clone(),
+                caption: None,
+            })
+            .collect(),
         mentions_bot: mentioned,
         is_direct: direct,
         restricted: false,

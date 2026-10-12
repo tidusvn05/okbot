@@ -156,7 +156,7 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
     };
     let result = async {
         let grant = knowledge
-            .grant(&who, okbot_core::ToolPolicy::Web, Duration::from_secs(30))
+            .grant(&who, &okbot_core::RunInfo { tools: okbot_core::ToolPolicy::Web, ttl: Duration::from_secs(30), attachments: &[] })
             .await?;
         let server = grant.mcp.first().ok_or_else(|| anyhow::anyhow!("no MCP endpoint"))?;
         let status = reqwest::Client::new()

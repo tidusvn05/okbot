@@ -14,6 +14,7 @@ mod context;
 mod dispatch;
 mod http;
 mod live;
+mod metrics;
 mod policy;
 #[cfg(test)]
 mod test_support;
@@ -105,6 +106,7 @@ pub(crate) struct Shared {
     pub(crate) channels: HashMap<ChannelId, Arc<dyn Channel>>,
     pub(crate) gate: policy::Gate,
     pub(crate) in_flight: Arc<InFlight>,
+    pub(crate) metrics: metrics::Metrics,
 }
 
 /// Builds a [`Runtime`].
@@ -193,6 +195,7 @@ impl RuntimeBuilder {
             clock: self.clock,
             channels,
             in_flight: in_flight.clone(),
+            metrics: metrics::Metrics::default(),
         });
         Ok(Runtime {
             shared,

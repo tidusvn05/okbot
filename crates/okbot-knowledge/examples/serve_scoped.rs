@@ -30,7 +30,14 @@ async fn main() {
         internal: false,
     };
     let grant = knowledge
-        .grant(&who, okbot_core::ToolPolicy::Web, Duration::from_secs(3600))
+        .grant(
+            &who,
+            &okbot_core::RunInfo {
+                tools: okbot_core::ToolPolicy::Web,
+                ttl: Duration::from_secs(3600),
+                attachments: &[],
+            },
+        )
         .await
         .unwrap();
     println!("url={}", grant.mcp[0].url);

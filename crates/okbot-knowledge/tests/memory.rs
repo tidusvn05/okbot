@@ -243,8 +243,11 @@ async fn grants_include_the_memory_server() {
     let grant = k
         .grant(
             &who("u1", "r1"),
-            okbot_core::ToolPolicy::McpOnly,
-            Duration::from_secs(60),
+            &okbot_core::RunInfo {
+                tools: okbot_core::ToolPolicy::McpOnly,
+                ttl: Duration::from_secs(60),
+                attachments: &[],
+            },
         )
         .await
         .unwrap();
