@@ -364,7 +364,7 @@ Split into three tracks that can run in parallel once P5–P7 are done.
 3. Optional per-bot `[agent].home` (separate CLI login/quota); default shared.
 4. Packaging: release workflow, `install.sh`, Dockerfile (agent CLIs installed by the user, documented).
 
-Tests: fake Zalo API server (`okbot-testkit`) for polling and webhook; wizard step engine tests (JSON contract snapshots); systemd unit snapshots; `assert_cmd` tests for every command.
+Tests: fake Zalo API server (in the Zalo crate's tests: platform fakes live with their platform) for polling and webhook; wizard step engine tests (JSON contract snapshots); systemd unit snapshots; `assert_cmd` tests for every command.
 Exit criteria (**v0.1.0**): on a clean VPS, `install.sh` → `okbot new shop` → answer the wizard →
 `okbot start shop` → the bot answers in a Zalo private chat from the default bundle, using the web
 when needed; a second bot in another directory runs at the same time; both survive a reboot.
