@@ -27,6 +27,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 doc_markdown = "allow"
+struct_excessive_bools = "allow"   # capability flags are naturally booleans
 unwrap_used = "warn"
 
 [workspace.dependencies]
