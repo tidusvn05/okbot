@@ -18,12 +18,12 @@ Requirements: stable Rust (MSRV 1.89), Python 3 (for `scripts/check-deps.py`) an
 Run these before opening a pull request (CI runs the same checks, plus macOS and an MSRV build):
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-python3 scripts/check-deps.py
-cargo deny check
+scripts/verify.sh                      # fmt, clippy, tests, docs, crate rules, cargo-deny
+OKBOT_VERIFY_MSRV=1 scripts/verify.sh  # also the MSRV build (needs the 1.89 toolchain)
 ```
+
+Do not pipe these commands into `tail`/`grep` when deciding whether to commit: a pipe hides the
+exit status. `scripts/verify.sh` runs with `set -euo pipefail`.
 
 Tests never need the network, real tokens or real agent CLIs. Tests against real CLIs or platforms are
 marked `#[ignore]` and documented next to the test.
