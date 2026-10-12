@@ -17,6 +17,10 @@ pub struct InitOptions {
     pub zalo: Option<ZaloInit>,
     /// A Google Chat channel, if any.
     pub gchat: Option<GChatInit>,
+    /// A Discord bot: `(instance, token variable)`.
+    pub discord: Option<(String, String)>,
+    /// A Slack app: `(instance, app-token variable, bot-token variable)`.
+    pub slack: Option<(String, String, String)>,
     /// HTTP listen address (webhooks).
     pub http_listen: Option<String>,
     /// IANA timezone.
@@ -126,6 +130,21 @@ pub fn render_initial(o: &InitOptions) -> String {
     }
     if let Some(g) = &o.gchat {
         render_gchat(&mut s, g);
+    }
+    if let Some((instance, token)) = &o.discord {
+        let _ = writeln!(s, "\n[channels.discord.{instance}]");
+        let _ = writeln!(s, "token_env = {}", quoted(token));
+        let _ = writeln!(
+            s,
+            "message_content = false             # true to answer group messages without a mention"
+        );
+        let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
+    }
+    if let Some((instance, app, bot)) = &o.slack {
+        let _ = writeln!(s, "\n[channels.slack.{instance}]");
+        let _ = writeln!(s, "app_token_env = {}", quoted(app));
+        let _ = writeln!(s, "bot_token_env = {}", quoted(bot));
+        let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
     }
     s
 }

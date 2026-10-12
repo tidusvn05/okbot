@@ -30,7 +30,8 @@ Coding agents: `okbot help-agent` prints the setup contract.
 - [Design](docs/design.md): architecture and the reasons behind it
 - [Implementation plan](docs/implementation-plan.md): phases, releases and engineering standards
 - [Running on a VPS](docs/deploy.md): many bots per machine, services, reverse proxy
-- Platforms: [Zalo Bot](docs/platforms/zalo.md), [Google Chat](docs/platforms/google-chat.md)
+- Platforms: [Zalo Bot](docs/platforms/zalo.md), [Google Chat](docs/platforms/google-chat.md),
+  [Discord](docs/platforms/discord.md), [Slack](docs/platforms/slack.md)
 - [Architecture decisions](docs/adr/)
 - [Releasing](docs/releasing.md)
 

@@ -403,9 +403,15 @@ conversation's messages (only `/stop` acts at once); the worker now queues them.
 1. Discord: twilight gateway, intents, threads, typing, 2000-char splitting, `DiscordMd`.
 2. Slack: Socket Mode, 3 s ack, `thread_ts`, `SlackMrkdwn`, Events API retry dedupe.
 3. Wizard steps, doctor checks, `docs/platforms/{discord,slack}.md`.
-4. Discord tests against fauxcord; Slack against recorded events.
+4. Discord REST tests against a fake API (twilight's proxy setting); Slack against a fake Web API and Socket Mode server.
 
 Exit criteria: one bot directory serving Zalo, Google Chat, Discord and Slack from the same bundle.
+
+Status (2026-10-12): Discord (twilight gateway + REST, no pings, no privileged intent by default)
+and Slack (Socket Mode on tokio-websockets, written directly instead of slack-morphism) are done
+and tested against fake APIs; one bot process answered Zalo and Google Chat together end to end.
+rustls uses ring only and okbot installs it as the process-wide provider at start. Real Discord
+and Slack workspaces have not been tried yet.
 
 ### P12 — Conversation UX
 

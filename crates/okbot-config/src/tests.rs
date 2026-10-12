@@ -22,6 +22,8 @@ fn options(delivery: Delivery) -> InitOptions {
             secret_env: (delivery == Delivery::Webhook).then(|| "ZALO_WEBHOOK_SECRET".into()),
         }),
         gchat: None,
+        discord: None,
+        slack: None,
         http_listen: (delivery == Delivery::Webhook).then(|| "127.0.0.1:8787".into()),
         timezone: Some("Asia/Ho_Chi_Minh".into()),
     }
@@ -154,4 +156,36 @@ fn gchat_section_round_trips() {
         Some("projects/p/subscriptions/okbot")
     );
     assert_eq!(config.channels.access()[0].0, "gchat");
+}
+
+#[test]
+fn discord_and_slack_sections_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = options(Delivery::Polling);
+    o.zalo = None;
+    o.discord = Some(("main".into(), "DISCORD_TOKEN".into()));
+    o.slack = Some((
+        "acme".into(),
+        "SLACK_APP_TOKEN".into(),
+        "SLACK_BOT_TOKEN".into(),
+    ));
+    write(dir.path(), &render_initial(&o));
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.channels.discord["main"].token_env, "DISCORD_TOKEN");
+    assert_eq!(
+        config.channels.slack["acme"].bot_token_env,
+        "SLACK_BOT_TOKEN"
+    );
+    let names: Vec<&str> = config
+        .channels
+        .access()
+        .iter()
+        .map(|(p, _, _)| *p)
+        .collect();
+    assert_eq!(names, ["discord", "slack"]);
+    assert!(
+        config
+            .secret_names()
+            .contains(&"SLACK_APP_TOKEN".to_string())
+    );
 }

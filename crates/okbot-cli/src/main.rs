@@ -83,9 +83,9 @@ fn list() -> anyhow::Result<()> {
             Ok(c) => {
                 let channels: Vec<String> = c
                     .channels
-                    .zalo
-                    .keys()
-                    .map(|i| format!("zalo:{i}"))
+                    .access()
+                    .iter()
+                    .map(|(platform, instance, _)| format!("{platform}:{instance}"))
                     .collect();
                 format!(
                     "agents {}; channels {}",
@@ -118,6 +118,8 @@ fn remove(name: &str) -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // One TLS crypto provider for every client (reqwest, twilight, websockets): ring.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     let json = match &cli.command {
         Command::New { args, .. } | Command::Init(args) => args.json,

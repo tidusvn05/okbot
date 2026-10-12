@@ -15,3 +15,16 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+okbot-core.workspace = true
+rustls.workspace = true
+jiff.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+twilight-gateway.workspace = true
+twilight-http.workspace = true
+twilight-model.workspace = true
+
+[dev-dependencies]
+axum.workspace = true

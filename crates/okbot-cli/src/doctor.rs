@@ -286,6 +286,70 @@ async fn check_gchat(config: &Config, r: &mut Report) {
 #[cfg(not(feature = "gchat"))]
 async fn check_gchat(_: &Config, _: &mut Report) {}
 
+#[cfg(feature = "discord")]
+async fn check_discord(config: &Config, r: &mut Report) {
+    use okbot_channel_discord::{DiscordChannel, DiscordConfig};
+    for (instance, d) in &config.channels.discord {
+        let label = format!("discord:{instance}");
+        let token = match config.secret(&d.token_env) {
+            Ok(t) => t,
+            Err(error) => {
+                r.add(&label, Status::Fail, error.to_string());
+                continue;
+            }
+        };
+        let channel = DiscordChannel::new(DiscordConfig {
+            id: okbot_core::ChannelId::new("discord", instance).expect("validated id"),
+            token,
+            message_content: d.message_content,
+            http_proxy: std::env::var("OKBOT_DISCORD_HTTP_PROXY").ok(),
+        });
+        match channel.current_user().await {
+            Ok((_, name)) => r.add(&label, Status::Ok, format!("bot `{name}`")),
+            Err(error) => r.add(&label, Status::Fail, error.to_string()),
+        }
+    }
+}
+
+#[cfg(not(feature = "discord"))]
+async fn check_discord(_: &Config, _: &mut Report) {}
+
+#[cfg(feature = "slack")]
+async fn check_slack(config: &Config, r: &mut Report) {
+    use okbot_channel_slack::{SLACK_API, SlackWeb};
+    for (instance, sl) in &config.channels.slack {
+        let label = format!("slack:{instance}");
+        let (app, bot) = match (
+            config.secret(&sl.app_token_env),
+            config.secret(&sl.bot_token_env),
+        ) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => {
+                r.add(&label, Status::Fail, e.to_string());
+                continue;
+            }
+        };
+        let base = std::env::var("OKBOT_SLACK_API_BASE").unwrap_or_else(|_| SLACK_API.into());
+        let web = SlackWeb::new(&base, app, bot);
+        match (web.auth_test().await, web.connections_open().await) {
+            (Ok(user), Ok(_)) => r.add(
+                &label,
+                Status::Ok,
+                format!("bot user {user}, Socket Mode reachable"),
+            ),
+            (Err(e), _) => r.add(&label, Status::Fail, format!("bot token: {e}")),
+            (_, Err(e)) => r.add(
+                &label,
+                Status::Fail,
+                format!("app token (Socket Mode): {e}"),
+            ),
+        }
+    }
+}
+
+#[cfg(not(feature = "slack"))]
+async fn check_slack(_: &Config, _: &mut Report) {}
+
 async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report) {
     let mut r = Report::default();
     let config = match Config::load(dir) {
@@ -311,6 +375,8 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     check_knowledge(&config, &mut r).await;
     check_zalo(&config, args.test_webhook, &mut r).await;
     check_gchat(&config, &mut r).await;
+    check_discord(&config, &mut r).await;
+    check_slack(&config, &mut r).await;
     let state = config.state_dir();
     match std::fs::create_dir_all(&state).and_then(|()| {
         okbot_store::SqliteStore::open(&state.join("okbot.db"))

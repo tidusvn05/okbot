@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 use okbot_core::Secret;
 
 pub use schema::{
-    AgentSection, BotSection, ChannelAccess, ChannelsSection, Delivery, GChatDelivery,
-    GChatSection, HttpSection, ProviderSection, ReplyOn, RoomSection, ZaloSection,
+    AgentSection, BotSection, ChannelAccess, ChannelsSection, Delivery, DiscordSection,
+    GChatDelivery, GChatSection, HttpSection, ProviderSection, ReplyOn, RoomSection, SlackSection,
+    ZaloSection,
 };
 pub use write::{GChatInit, InitOptions, ZaloInit, render_initial, upsert_env};
 
@@ -169,6 +170,11 @@ impl Config {
                 }
             }
         }
+        for (platform, instance, _) in self.channels.access() {
+            okbot_core::ChannelId::new(platform, instance).map_err(|e| {
+                ConfigError::Invalid(format!("[channels.{platform}.{instance}]: {e}"))
+            })?;
+        }
         for (instance, g) in &self.channels.gchat {
             okbot_core::ChannelId::new("gchat", instance)
                 .map_err(|e| ConfigError::Invalid(format!("[channels.gchat.{instance}]: {e}")))?;
@@ -214,6 +220,13 @@ impl Config {
         for zalo in self.channels.zalo.values() {
             names.push(zalo.token_env.clone());
             names.extend(zalo.secret_env.clone());
+        }
+        for d in self.channels.discord.values() {
+            names.push(d.token_env.clone());
+        }
+        for s in self.channels.slack.values() {
+            names.push(s.app_token_env.clone());
+            names.push(s.bot_token_env.clone());
         }
         names.sort();
         names.dedup();

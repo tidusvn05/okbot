@@ -252,6 +252,60 @@ fn gchat_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
     }
 }
 
+#[cfg(feature = "discord")]
+fn discord_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    use okbot_channel_discord::{DiscordChannel, DiscordConfig};
+    let mut out: Vec<Arc<dyn Channel>> = Vec::new();
+    for (instance, d) in &config.channels.discord {
+        let token = config.secret(&d.token_env)?;
+        crate::logging::redact(&token);
+        out.push(Arc::new(DiscordChannel::new(DiscordConfig {
+            id: ChannelId::new("discord", instance)?,
+            token,
+            message_content: d.message_content,
+            http_proxy: std::env::var("OKBOT_DISCORD_HTTP_PROXY").ok(),
+        })));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "discord"))]
+fn discord_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    if config.channels.discord.is_empty() {
+        Ok(Vec::new())
+    } else {
+        bail!("this okbot build has no Discord support (feature `discord`)")
+    }
+}
+
+#[cfg(feature = "slack")]
+fn slack_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    use okbot_channel_slack::{SLACK_API, SlackChannel, SlackConfig};
+    let mut out: Vec<Arc<dyn Channel>> = Vec::new();
+    for (instance, sl) in &config.channels.slack {
+        let app_token = config.secret(&sl.app_token_env)?;
+        let bot_token = config.secret(&sl.bot_token_env)?;
+        crate::logging::redact(&app_token);
+        crate::logging::redact(&bot_token);
+        out.push(Arc::new(SlackChannel::new(SlackConfig {
+            id: ChannelId::new("slack", instance)?,
+            app_token,
+            bot_token,
+            api_base: std::env::var("OKBOT_SLACK_API_BASE").unwrap_or_else(|_| SLACK_API.into()),
+        })));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "slack"))]
+fn slack_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    if config.channels.slack.is_empty() {
+        Ok(Vec::new())
+    } else {
+        bail!("this okbot build has no Slack support (feature `slack`)")
+    }
+}
+
 /// Opens the knowledge bundle and starts its MCP endpoint.
 pub(crate) async fn knowledge(
     config: &Config,
@@ -280,6 +334,8 @@ pub(crate) async fn knowledge(
 pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::Result<Bot> {
     let mut channels = zalo_channels(config)?;
     channels.extend(gchat_channels(config)?);
+    channels.extend(discord_channels(config)?);
+    channels.extend(slack_channels(config)?);
     if channels.is_empty() {
         bail!(
             "no channel is configured in {}; add one with `okbot init` (or use `okbot chat`)",

@@ -22,6 +22,10 @@ pub(crate) enum Platform {
     Zalo,
     /// Google Chat app.
     Gchat,
+    /// Discord bot.
+    Discord,
+    /// Slack app (Socket Mode).
+    Slack,
     /// No platform yet (use `okbot chat` to try the bot).
     None,
 }
@@ -75,6 +79,15 @@ pub(crate) struct InitArgs {
     /// Google Chat: Pub/Sub subscription (`projects/<p>/subscriptions/<s>`).
     #[arg(long)]
     gchat_subscription: Option<String>,
+    /// Discord: environment variable that already holds the bot token.
+    #[arg(long)]
+    discord_token_env: Option<String>,
+    /// Slack: environment variable that already holds the app-level token (`xapp-…`).
+    #[arg(long)]
+    slack_app_token_env: Option<String>,
+    /// Slack: environment variable that already holds the bot token (`xoxb-…`).
+    #[arg(long)]
+    slack_bot_token_env: Option<String>,
     /// HTTP listen address for webhooks (default: the first free port from 127.0.0.1:8787).
     #[arg(long)]
     listen: Option<String>,
@@ -302,6 +315,34 @@ async fn zalo(
     ))
 }
 
+/// A token from `--<flag>` (an environment variable name) or typed by the user and saved to
+/// `.env` as `default_env`. `prefix` checks the token's shape.
+fn token(
+    w: &Wizard<'_>,
+    dir: &Path,
+    given: Option<&String>,
+    flag: &'static str,
+    question: &str,
+    default_env: &str,
+    prefix: &str,
+) -> anyhow::Result<String> {
+    if let Some(name) = given {
+        return Ok(name.clone());
+    }
+    let value = w.ask_or_fail(flag, question, || {
+        inquire::Password::new(&format!("{question}:"))
+            .without_confirmation()
+            .with_help_message("saved to .env, never printed")
+            .prompt()
+    })?;
+    let value = value.trim();
+    if !value.starts_with(prefix) {
+        bail!("that does not look right (expected a token starting with `{prefix}`)");
+    }
+    upsert_env(&dir.join(ENV_FILE), default_env, value)?;
+    Ok(default_env.to_string())
+}
+
 /// File name of the copied Google service-account key.
 const GCHAT_KEY_FILE: &str = "gchat-service-account.json";
 
@@ -457,6 +498,110 @@ async fn verify_zalo_token(_: &Path, _: &str) -> anyhow::Result<()> {
     bail!("this okbot build has no Zalo support")
 }
 
+/// Step 3a: which platform.
+fn choose_platform(w: &Wizard<'_>) -> anyhow::Result<Platform> {
+    if let Some(p) = w.args.platform {
+        return Ok(p);
+    }
+    let options = vec![
+        "Zalo Bot",
+        "Google Chat",
+        "Discord",
+        "Slack",
+        "none for now (try it with `okbot chat`)",
+    ];
+    let choice = w.ask_or_fail(
+        "--platform",
+        "Which messaging platform (zalo, gchat, discord, slack or none)",
+        || inquire::Select::new("Which messaging platform?", options.clone()).raw_prompt(),
+    )?;
+    Ok(match choice.index {
+        0 => Platform::Zalo,
+        1 => Platform::Gchat,
+        2 => Platform::Discord,
+        3 => Platform::Slack,
+        _ => Platform::None,
+    })
+}
+
+/// Step 3b: the platform's credentials and delivery, written into `options`.
+async fn setup_channel(
+    w: &Wizard<'_>,
+    dir: &Path,
+    instance: &str,
+    platform: Platform,
+    options: &mut InitOptions,
+) -> anyhow::Result<()> {
+    let args = w.args;
+    match platform {
+        Platform::Zalo => {
+            let (z, listen) = zalo(w, dir, instance).await?;
+            eprintln!(
+                "Note: under the Zalo Bot terms you are responsible for what the bot says \
+                 (https://bot.zapps.me/docs/terms/)."
+            );
+            options.zalo = Some(z);
+            options.http_listen = listen;
+        }
+        Platform::Gchat => {
+            let (g, listen) = gchat(w, dir, instance).await?;
+            options.gchat = Some(g);
+            options.http_listen = listen;
+        }
+        Platform::Discord => {
+            let env = token(
+                w,
+                dir,
+                args.discord_token_env.as_ref(),
+                "--discord-token-env",
+                "Discord bot token (Developer Portal → Bot → Reset Token)",
+                "DISCORD_TOKEN",
+                "",
+            )?;
+            options.discord = Some((instance.to_string(), env));
+        }
+        Platform::Slack => {
+            let app = token(
+                w,
+                dir,
+                args.slack_app_token_env.as_ref(),
+                "--slack-app-token-env",
+                "Slack app-level token with connections:write",
+                "SLACK_APP_TOKEN",
+                "xapp-",
+            )?;
+            let bot = token(
+                w,
+                dir,
+                args.slack_bot_token_env.as_ref(),
+                "--slack-bot-token-env",
+                "Slack bot token",
+                "SLACK_BOT_TOKEN",
+                "xoxb-",
+            )?;
+            options.slack = Some((instance.to_string(), app, bot));
+        }
+        Platform::None => {}
+    }
+    Ok(())
+}
+
+/// The instance part of channel ids, from the bot name.
+fn instance_of(name: &str) -> String {
+    let instance: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if instance.is_empty() {
+        "bot".into()
+    } else {
+        instance
+    }
+}
+
 /// Runs the wizard in `dir` and returns the bot name.
 pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
@@ -473,67 +618,15 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
         .name
         .clone()
         .unwrap_or_else(|| crate::registry::name_of(dir));
-    let instance: String = name
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-    let instance = if instance.is_empty() {
-        "bot".into()
-    } else {
-        instance
-    };
-
-    let chain = choose_agents(&w).await?;
-    let platform = match args.platform {
-        Some(p) => p,
-        None => {
-            let choice = w.ask_or_fail(
-                "--platform",
-                "Which messaging platform (zalo or none)",
-                || {
-                    inquire::Select::new(
-                        "Which messaging platform?",
-                        vec!["Zalo Bot", "none for now (try it with `okbot chat`)"],
-                    )
-                    .raw_prompt()
-                },
-            )?;
-            if choice.index == 0 {
-                Platform::Zalo
-            } else {
-                Platform::None
-            }
-        }
-    };
-    let mut gchat_init = None;
-    let (zalo, http_listen) = match platform {
-        Platform::Gchat => {
-            let (g, listen) = gchat(&w, dir, &instance).await?;
-            gchat_init = Some(g);
-            (None, listen)
-        }
-        Platform::Zalo => {
-            let (z, listen) = zalo(&w, dir, &instance).await?;
-            eprintln!(
-                "Note: under the Zalo Bot terms you are responsible for what the bot says \
-                 (https://bot.zapps.me/docs/terms/)."
-            );
-            (Some(z), listen)
-        }
-        Platform::None => (None, None),
-    };
-
-    let options = InitOptions {
+    let instance = instance_of(&name);
+    let mut options = InitOptions {
         name: name.clone(),
-        chain,
-        zalo,
-        gchat: gchat_init,
-        http_listen,
+        chain: choose_agents(&w).await?,
         timezone: args.timezone.clone(),
+        ..InitOptions::default()
     };
+    let platform = choose_platform(&w)?;
+    setup_channel(&w, dir, &instance, platform, &mut options).await?;
     write_bot(dir, &options, platform, args.json)?;
     Ok(name)
 }

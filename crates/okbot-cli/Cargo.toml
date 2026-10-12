@@ -19,14 +19,19 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["zalo", "gchat"]
+default = ["zalo", "gchat", "discord", "slack"]
 ## Zalo Bot Platform channel.
 zalo = ["dep:okbot-channel-zalo"]
 ## Google Chat channel.
 gchat = ["dep:okbot-channel-gchat"]
+## Discord channel.
+discord = ["dep:okbot-channel-discord"]
+## Slack channel (Socket Mode).
+slack = ["dep:okbot-channel-slack"]
 
 [dependencies]
 okbot-core.workspace = true
+rustls.workspace = true
 okbot-agent.workspace = true
 okbot-render.workspace = true
 okbot-runtime.workspace = true
@@ -36,6 +41,8 @@ okbot-channel-console.workspace = true
 okbot-config.workspace = true
 okbot-channel-zalo = { workspace = true, optional = true }
 okbot-channel-gchat = { workspace = true, optional = true }
+okbot-channel-discord = { workspace = true, optional = true }
+okbot-channel-slack = { workspace = true, optional = true }
 inquire.workspace = true
 jiff.workspace = true
 serde.workspace = true

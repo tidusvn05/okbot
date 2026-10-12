@@ -147,12 +147,21 @@ pub struct ChannelsSection {
     /// Google Chat apps by instance name.
     #[serde(default)]
     pub gchat: BTreeMap<String, GChatSection>,
+    /// Discord bots by instance name.
+    #[serde(default)]
+    pub discord: BTreeMap<String, DiscordSection>,
+    /// Slack apps by instance name.
+    #[serde(default)]
+    pub slack: BTreeMap<String, SlackSection>,
 }
 
 impl ChannelsSection {
     /// Whether no channel is configured.
     pub fn is_empty(&self) -> bool {
-        self.zalo.is_empty() && self.gchat.is_empty()
+        self.zalo.is_empty()
+            && self.gchat.is_empty()
+            && self.discord.is_empty()
+            && self.slack.is_empty()
     }
 
     /// Access settings of every channel, as `(platform, instance, settings)`.
@@ -182,9 +191,78 @@ impl ChannelsSection {
                 },
             ));
         }
+        for (instance, d) in &self.discord {
+            out.push(("discord", instance.as_str(), d.access()));
+        }
+        for (instance, sl) in &self.slack {
+            out.push(("slack", instance.as_str(), sl.access()));
+        }
         out
     }
 }
+
+macro_rules! access {
+    ($t:ty) => {
+        impl $t {
+            fn access(&self) -> ChannelAccess<'_> {
+                ChannelAccess {
+                    reply_on: &self.reply_on,
+                    allow_users: &self.allow_users,
+                    blocked_users: &self.blocked_users,
+                    rooms: &self.rooms,
+                }
+            }
+        }
+    };
+}
+
+/// `[channels.discord.<instance>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiscordSection {
+    /// Variable holding the bot token.
+    pub token_env: String,
+    /// Request the privileged message-content intent (enable it in the Developer Portal first).
+    #[serde(default)]
+    pub message_content: bool,
+    /// When to answer.
+    #[serde(default = "default_reply_on")]
+    pub reply_on: Vec<ReplyOn>,
+    /// Only these user ids (all when empty).
+    #[serde(default)]
+    pub allow_users: Vec<String>,
+    /// Never answered.
+    #[serde(default)]
+    pub blocked_users: Vec<String>,
+    /// Per-channel settings (`room` is the Discord channel id).
+    #[serde(default)]
+    pub rooms: Vec<RoomSection>,
+}
+
+/// `[channels.slack.<instance>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlackSection {
+    /// Variable holding the app-level token (`xapp-…`, scope `connections:write`).
+    pub app_token_env: String,
+    /// Variable holding the bot token (`xoxb-…`).
+    pub bot_token_env: String,
+    /// When to answer.
+    #[serde(default = "default_reply_on")]
+    pub reply_on: Vec<ReplyOn>,
+    /// Only these user ids (all when empty).
+    #[serde(default)]
+    pub allow_users: Vec<String>,
+    /// Never answered.
+    #[serde(default)]
+    pub blocked_users: Vec<String>,
+    /// Per-channel settings (`room` is the Slack channel id).
+    #[serde(default)]
+    pub rooms: Vec<RoomSection>,
+}
+
+access!(DiscordSection);
+access!(SlackSection);
 
 /// The access settings every channel section has.
 #[derive(Debug, Clone, Copy)]
