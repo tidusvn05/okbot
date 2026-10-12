@@ -21,7 +21,7 @@ printf '%s\n' '{"is_error":false,"result":"Hello from **fake** claude"}'"#,
         .current_dir(dir.path())
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("HOME", dir.path())
-        .args(["chat", "--unsafe-tools"])
+        .args(["chat"])
         .write_stdin("hello\n/whoami\n")
         .timeout(std::time::Duration::from_secs(60))
         .output()
@@ -42,12 +42,12 @@ fn refuses_unenforced_tools_by_default() {
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    okbot_testkit::fake_cli(&bin, "claude", "exit 0");
+    okbot_testkit::fake_cli(&bin, "devin", "exit 0");
     let output = Command::cargo_bin("okbot")
         .unwrap()
         .current_dir(dir.path())
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-        .args(["chat", "--agent", "claude"])
+        .args(["chat", "--agent", "devin"])
         .write_stdin("")
         .output()
         .unwrap();

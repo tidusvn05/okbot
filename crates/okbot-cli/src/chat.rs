@@ -33,8 +33,8 @@ pub(crate) struct ChatArgs {
     /// Your name in the conversation.
     #[arg(long, default_value = "you")]
     user: String,
-    /// Run agents even though they cannot restrict their tools (they may use a shell).
-    /// Needed until agent-core supports tool policies; use only for your own local chat.
+    /// Also run agents that cannot restrict their tools (Devin, OpenCode): they may use a shell.
+    /// Use only for your own local chat.
     #[arg(long)]
     unsafe_tools: bool,
 }
@@ -75,8 +75,9 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let chain = AgentChain::new(backends, 1).allow_unenforced_tools(args.unsafe_tools);
     if !args.unsafe_tools && chain.caps().tool_policies.is_empty() {
         bail!(
-            "the installed agent-core cannot restrict agent tools yet, so okbot refuses to run \
-             agents by default. For a local chat with yourself, pass --unsafe-tools."
+            "the selected agent CLI cannot restrict its tools (only Claude Code and Codex can), \
+             so okbot refuses to run it by default. For a local chat with yourself, pass \
+             --unsafe-tools."
         );
     }
     std::fs::create_dir_all(&args.state_dir)

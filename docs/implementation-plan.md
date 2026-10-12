@@ -325,6 +325,13 @@ Tasks (in agent-core, one PR per issue, each with fake-CLI tests and opt-in smok
 3. [#3](https://github.com/tidusvn05/agent-core/issues/3) system prompt.
 4. Tag a new agent-core release; bump okbot's git tag.
 
+Status (2026-10-12): implemented as one pull request, [agent-core#7](https://github.com/tidusvn05/agent-core/pull/7)
+(the three features share `RunRequest` and the command builders). okbot pins its commit until
+v0.4.0 is tagged. Measured while building it: with agent-core 0.3, Codex could read files in its
+working directory; Claude's `--allowedTools` + `dontAsk` alone still allowed read-only built-ins,
+so restricted runs use a `--tools` whitelist. ReadOnly/Allow policies and OpenCode support are
+follow-ups.
+
 Tasks (in okbot):
 5. `CliBackend` passes `ToolPolicy`, MCP servers (`/mcp/kb`, `/mcp/bot` with the RunToken in env), system prompt; `AgentCaps` now reports them.
 6. Per-room `tool_policy` resolution (`web` default, `mcp-only` override).

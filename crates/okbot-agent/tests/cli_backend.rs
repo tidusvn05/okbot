@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use okbot_agent::{CliBackend, CliBackendConfig, EnvScrub, Provider};
-use okbot_core::{AgentBackend, AgentError};
+use okbot_core::{AgentBackend, AgentError, McpServer, Secret, ToolPolicy};
 use okbot_testkit::{fake_cli, turn};
 
 fn backend(dir: &std::path::Path, body: &str) -> CliBackend {
@@ -20,25 +20,53 @@ fn backend(dir: &std::path::Path, body: &str) -> CliBackend {
 }
 
 #[tokio::test]
-async fn runs_claude_and_inlines_the_system_prompt() {
+async fn runs_claude_with_policy_mcp_and_system_prompt() {
     let dir = tempfile::tempdir().unwrap();
-    // Echo the prompt back inside Claude's JSON envelope.
+    // Record the arguments and the token variable, echo stdin back as the answer.
     let cli = backend(
         dir.path(),
-        r#"prompt="$(cat)"
-printf '{"is_error":false,"result":%s,"session_id":"s1","usage":{"input_tokens":3,"output_tokens":4}}\n' "$(printf '%s' "$prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')""#,
+        &format!(
+            r#"for a in "$@"; do printf '%s\n' "$a"; done > "{args}"
+printf '%s' "${{KB_MCP_TOKEN:-unset}}" > "{env}"
+prompt="$(cat)"
+printf '{{"is_error":false,"result":%s,"session_id":"s1","usage":{{"input_tokens":3,"output_tokens":4}}}}\n' "$(printf '%s' "$prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')""#,
+            args = dir.path().join("args").display(),
+            env = dir.path().join("env").display(),
+        ),
     );
+    assert!(cli.caps().mcp && cli.caps().system_prompt);
+    assert!(cli.caps().enforces(ToolPolicy::Web) && cli.caps().enforces(ToolPolicy::McpOnly));
     let mut t = turn("hello");
     t.system = "be brief".into();
     t.workdir = dir.path().join("work/conv");
+    t.mcp = vec![McpServer {
+        name: "kb".into(),
+        url: "http://127.0.0.1:9/kb/mcp".into(),
+        bearer_token_env: "KB_MCP_TOKEN".into(),
+    }];
+    t.env = vec![("KB_MCP_TOKEN".into(), Secret::new("run-token".into()))];
     let reply = cli.run(t).await.unwrap();
-    assert_eq!(
-        reply.text,
-        "<instructions>\nbe brief\n</instructions>\n\nhello"
-    );
-    assert_eq!(reply.backend, "claude");
+    assert_eq!(reply.text, "hello", "system prompt is not inlined");
     assert_eq!(reply.session_id.as_deref(), Some("s1"));
     assert_eq!(reply.usage.unwrap().output, 4);
+    let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
+    for expected in [
+        "--append-system-prompt\nbe brief",
+        "--tools\nWebSearch,WebFetch",
+        "--permission-mode\ndontAsk",
+        "--strict-mcp-config",
+    ] {
+        assert!(args.contains(expected), "missing {expected:?} in {args}");
+    }
+    assert!(!args.contains("bypassPermissions"));
+    assert!(
+        !args.contains("run-token"),
+        "token must not be on the command line"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("env")).unwrap(),
+        "run-token"
+    );
     assert!(dir.path().join("work/conv").is_dir(), "workdir created");
 }
 

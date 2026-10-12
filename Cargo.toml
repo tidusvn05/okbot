@@ -48,7 +48,8 @@ okbot-channel-slack = { path = "crates/okbot-channel-slack", version = "0.1.0-de
 okbot-testkit = { path = "crates/okbot-testkit", version = "0.1.0-dev" }
 
 # External crates (ADR 0005 covers the git dependencies).
-agent-core = { git = "https://github.com/tidusvn05/agent-core", tag = "v0.3.1", version = "0.3.1" }
+# Pinned to agent-core PR #7 (tool policies, MCP, system prompt) until v0.4.0 is tagged.
+agent-core = { git = "https://github.com/tidusvn05/agent-core", rev = "1cfe3fbb870e45213e558b475227a57d1e12e336", version = "0.4.0" }
 okbase = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.2", version = "0.2.2" }
 okbase-mcp = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.2", version = "0.2.2" }
 include_dir = "0.7"

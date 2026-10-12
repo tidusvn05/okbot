@@ -8,8 +8,10 @@ okbot builds on [agent-core](https://github.com/tidusvn05/agent-core) and
 `agent-core` on crates.io belongs to an unrelated project.
 
 ## Decision
-- Depend on both by git **tag** (never a branch) in `[workspace.dependencies]`; `deny.toml` allows
-  exactly these two git sources.
+- Depend on both by git **tag** in `[workspace.dependencies]`, or, while an upstream pull request
+  okbot needs is under review, by its exact commit (`rev`), never by a moving branch. `deny.toml`
+  allows exactly these two git sources. Every git dependency also states `version`, which keeps
+  cargo-deny's wildcard check meaningful.
 - Distribute okbot as release binaries and a container image until both dependencies are published.
 - Ask agent-core to choose a publishable crate name before okbot 1.0 ([agent-core#6](https://github.com/tidusvn05/agent-core/issues/6)).
 

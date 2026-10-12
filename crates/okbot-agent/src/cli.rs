@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use agent_core::{AgentCli, Provider, RunRequest};
+use agent_core::{AgentCli, McpServer, Provider, RunRequest, ToolPolicy as CoreToolPolicy};
 use okbot_core::{
-    AgentBackend, AgentCaps, AgentError, AgentReply, AgentTurn, TokenUsage, async_trait,
+    AgentBackend, AgentCaps, AgentError, AgentReply, AgentTurn, TokenUsage, ToolPolicy, async_trait,
 };
 
 use crate::env::EnvScrub;
@@ -98,6 +98,50 @@ fn last_line(text: &str) -> &str {
     text.trim().lines().last().unwrap_or("")
 }
 
+impl CliBackend {
+    /// Builds agent-core's request, using native features where this CLI enforces them.
+    fn request(&self, turn: &AgentTurn) -> RunRequest {
+        let native = self.caps();
+        let base = RunRequest {
+            cwd: turn.workdir.clone(),
+            model: self.model.clone(),
+            timeout: turn.timeout,
+            env_remove: self.scrub.current(),
+            ..RunRequest::default()
+        };
+        if !native.enforces(turn.tools) {
+            // Only reached when the chain allows unenforced tools (development).
+            return RunRequest {
+                prompt: inline_system_prompt(&turn.system, &turn.prompt),
+                ..base
+            };
+        }
+        RunRequest {
+            prompt: turn.prompt.clone(),
+            system_prompt: Some(turn.system.clone()).filter(|s| !s.trim().is_empty()),
+            tool_policy: match turn.tools {
+                ToolPolicy::McpOnly => CoreToolPolicy::McpOnly,
+                _ => CoreToolPolicy::Web,
+            },
+            mcp_servers: turn
+                .mcp
+                .iter()
+                .map(|s| McpServer {
+                    name: s.name.clone(),
+                    url: s.url.clone(),
+                    bearer_token_env: Some(s.bearer_token_env.clone()),
+                })
+                .collect(),
+            env: turn
+                .env
+                .iter()
+                .map(|(k, v)| (k.into(), v.expose().into()))
+                .collect(),
+            ..base
+        }
+    }
+}
+
 #[async_trait]
 impl AgentBackend for CliBackend {
     fn name(&self) -> &str {
@@ -105,9 +149,19 @@ impl AgentBackend for CliBackend {
     }
 
     fn caps(&self) -> AgentCaps {
-        // agent-core 0.3 has no system prompt, MCP or tool policy options yet (agent-core
-        // issues #1–#3). The runtime inlines the system prompt and uses text excerpts instead.
-        AgentCaps::default()
+        // agent-core 0.4 enforces tool policies and per-run MCP servers for Claude and Codex
+        // only; Devin and OpenCode reject them, so they get the system prompt inlined and
+        // knowledge excerpts instead.
+        match self.cli.provider() {
+            Provider::Claude | Provider::Codex => AgentCaps {
+                system_prompt: true,
+                mcp: true,
+                tool_policies: vec![ToolPolicy::Web, ToolPolicy::McpOnly],
+                resume: false,
+                stream: false,
+            },
+            _ => AgentCaps::default(),
+        }
     }
 
     async fn run(&self, turn: AgentTurn) -> Result<AgentReply, AgentError> {
@@ -115,14 +169,7 @@ impl AgentBackend for CliBackend {
             message: format!("cannot create {}: {e}", turn.workdir.display()),
             retryable: false,
         })?;
-        let request = RunRequest {
-            prompt: inline_system_prompt(&turn.system, &turn.prompt),
-            cwd: turn.workdir.clone(),
-            model: self.model.clone(),
-            timeout: turn.timeout,
-            env_remove: self.scrub.current(),
-            json_schema: None,
-        };
+        let request = self.request(&turn);
         let started = Instant::now();
         let result = self.cli.run(request).await.map_err(map_error)?;
         Ok(AgentReply {
