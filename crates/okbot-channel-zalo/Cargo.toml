@@ -19,6 +19,7 @@ okbot-core.workspace = true
 jiff.workspace = true
 rand.workspace = true
 reqwest = { workspace = true }
+rustls = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

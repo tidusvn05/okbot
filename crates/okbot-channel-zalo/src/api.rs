@@ -110,6 +110,8 @@ impl std::fmt::Debug for ZaloApi {
 impl ZaloApi {
     /// A client for `token` against `base` (normally [`DEFAULT_API_BASE`]).
     pub fn new(base: &str, token: Secret<String>) -> Self {
+        // reqwest is built without a crypto provider: okbot uses ring only (no-op when installed).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .user_agent(concat!("okbot/", env!("CARGO_PKG_VERSION")))

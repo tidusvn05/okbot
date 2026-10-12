@@ -19,6 +19,7 @@ okbot-core.workspace = true
 axum.workspace = true
 base64.workspace = true
 reqwest = { workspace = true }
+rustls = { workspace = true }
 hex.workspace = true
 include_dir.workspace = true
 okbase.workspace = true

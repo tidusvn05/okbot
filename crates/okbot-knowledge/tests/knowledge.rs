@@ -120,7 +120,10 @@ struct Mcp {
 impl Mcp {
     fn new(grant: &RunGrant) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: {
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                reqwest::Client::new()
+            },
             url: grant.mcp[0].url.clone(),
             token: grant.env[0].1.expose().clone(),
             session: None,

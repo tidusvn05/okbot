@@ -140,7 +140,7 @@ jobs:
           Every archive is listed in \`SHA256SUMS\`. Container image:
           \`ghcr.io/${{ github.repository }}:${{ needs.check.outputs.version }}\`.
           NOTES
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.check.outputs.tag }}
           name: okbot ${{ needs.check.outputs.tag }}
@@ -167,7 +167,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: true

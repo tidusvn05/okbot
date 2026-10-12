@@ -134,6 +134,8 @@ fn channel_error(error: ApiError) -> ChannelError {
 impl GChatChannel {
     /// Creates the channel. Nothing is contacted until [`Channel::run`].
     pub fn new(config: GChatConfig) -> Self {
+        // reqwest is built without a crypto provider: okbot uses ring only (no-op when installed).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
             .user_agent(concat!("okbot/", env!("CARGO_PKG_VERSION")))
             .build()

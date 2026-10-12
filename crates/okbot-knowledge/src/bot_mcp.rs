@@ -121,6 +121,7 @@ async fn fetch_image(
             attempt.stop()
         }
     });
+    let _ = rustls::crypto::ring::default_provider().install_default(); // see okbot-cli main
     let client = reqwest::Client::builder()
         .redirect(policy)
         .build()
