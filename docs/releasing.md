@@ -19,5 +19,5 @@ Versions follow SemVer; the whole workspace shares one version (`[workspace.pack
 
 Never replace the assets of a published tag: users verified their checksums.
 
-okbot depends on agent-call and okbase by git tag or commit (ADR 0005), so crates are not
-published to crates.io yet.
+Every dependency comes from crates.io (ADR 0005, amended). okbot crates are published to crates.io
+from v1.0.0, when the `okbot-core` API is frozen; until then releases are binaries and images only.

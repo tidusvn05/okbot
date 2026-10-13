@@ -90,10 +90,9 @@ cargo +1.89 check --workspace                      # MSRV
 - Releases (same model as okbase): tag `vX.Y.Z` → CI builds `okbot` for
   `x86_64/aarch64-unknown-linux-gnu` (+ musl), `x86_64/aarch64-apple-darwin`; `SHA256SUMS`;
   GitHub Release; `install.sh`; container image `ghcr.io/<owner>/okbot`.
-- **crates.io**: okbot depends on agent-core and okbase by git tag, which `cargo publish` rejects.
-  okbot crates are published only after both are on crates.io. Note: the name **`agent-core` is
-  already taken on crates.io by another project**, so agent-core needs a new crate name before it can
-  be published (to be raised as an agent-core issue in P0). The names `okbot` and `okbot-*` are free today.
+- **crates.io**: every dependency is on crates.io (agent-core was renamed agent-call; okbase 0.2.3
+  was published on 2026-10-14), so nothing blocks `cargo publish`. okbot crates are published from
+  v1.0.0, when the `okbot-core` API is frozen. The names `okbot` and `okbot-*` are free today.
 
 ---
 
@@ -459,7 +458,7 @@ The reference adapter is plain JavaScript (`examples/bridge/echo-channel.mjs`, n
 than TypeScript. `okbot-testkit` has `conformance::channel`/`channel_stops` and `CollectSink`;
 `templates/channel/` is a compiled, tested workspace member; guides are in `docs/extending/`. Verified
 end to end: `okbot run` answering through the Node adapter with a fake `claude`. Items 1 and 4 wait for
-a first release (no semver baseline yet) and for agent-core and okbase on crates.io.
+a first release (no semver baseline yet); agent-call and okbase are on crates.io since 2026-10-14.
 
 ### P15 — Tasks (to-dos without notifications)
 
@@ -561,5 +560,5 @@ runs on Discord. `okbot memory edit` opens the file in `$EDITOR`. User guide: `d
 | Zalo Bot API changes (young platform, groups in beta) | Typed client isolated in one crate; fake server tests; `doctor` surfaces API errors clearly |
 | Prompt injection through chat or the web | No shell/file tools in any policy, scope-limited MCP, `mcp-only` rooms, tagged memory writes (design §4.4) |
 | CLI quota shared by many bots | Machine-wide concurrency limit; per-bot `[agent].home` |
-| Publishing to crates.io blocked by git dependencies and the `agent-core` name | Ship binaries first; rename/publish upstream before v1.0 |
+| Publishing to crates.io blocked by git dependencies and the `agent-core` name | Resolved 2026-10-14: agent-call and okbase are on crates.io |
 | okbase write API never lands | okbot's own writer is complete on its own; switching is an internal change |

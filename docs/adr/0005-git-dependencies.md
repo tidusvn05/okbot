@@ -27,6 +27,11 @@ agent-core was renamed to [agent-call](https://github.com/tidusvn05/agent-call) 
 crates.io (0.4.1); okbot depends on the registry version and `deny.toml` no longer allows its git
 source. okbase remains a git dependency.
 
+## Amendment (2026-10-14, okbase)
+okbase 0.2.3 (with `okbase-mcp`) is on crates.io; okbot depends on the registry versions and
+`deny.toml` allows no git source. This decision is now fully superseded: every dependency comes from
+crates.io.
+
 ## Consequences
 okbot crates cannot be published to crates.io until the dependencies are; third-party adapters
 depend on `okbot-core` by git tag in the meantime.
