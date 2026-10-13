@@ -140,6 +140,10 @@ async fn answer_batch(
         conversation: event.conversation.clone(),
         user: event.author.clone(),
         internal: room.internal,
+        person: shared
+            .config
+            .person(&event.conversation.channel, &event.author.id)
+            .cloned(),
     };
     let timeout = shared.config.agent_timeout;
 

@@ -1,6 +1,7 @@
 //! The `okbot` command line: creates, runs and manages bots.
 
 mod bot;
+mod channel;
 mod chat;
 mod doctor;
 mod exit;
@@ -8,6 +9,7 @@ mod init;
 mod kb;
 mod logging;
 mod memory;
+mod people;
 mod registry;
 mod run;
 mod service;
@@ -63,6 +65,12 @@ enum Command {
     /// Review and undo what a bot remembers.
     #[command(subcommand)]
     Memory(memory::MemoryCommand),
+    /// List, add and remove a bot's chat platforms.
+    #[command(subcommand, alias = "channels")]
+    Channel(channel::ChannelCommand),
+    /// Link one person's accounts on several platforms (shared profile and memory).
+    #[command(subcommand, alias = "person")]
+    People(people::PeopleCommand),
     /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
@@ -142,6 +150,8 @@ async fn main() -> ExitCode {
         Command::Doctor(args) => doctor::run(args).await,
         Command::Kb(command) => kb::run(command),
         Command::Memory(command) => memory::run(command).await,
+        Command::Channel(command) => channel::run(command).await,
+        Command::People(command) => people::run(command),
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),

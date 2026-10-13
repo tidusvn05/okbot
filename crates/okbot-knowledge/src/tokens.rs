@@ -130,6 +130,7 @@ mod tests {
                     is_bot: false,
                 },
                 internal: false,
+                person: None,
             },
             policy: "web",
             attachments: Vec::new(),

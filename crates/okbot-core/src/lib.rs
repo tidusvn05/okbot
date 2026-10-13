@@ -74,7 +74,7 @@ pub use channel::{Channel, ChannelError, InboundSink, SinkClosed};
 pub use clock::{Clock, SystemClock};
 pub use id::{ChannelId, ConversationKey, IdError, MessageId, RunId, UserId, UserRef};
 pub use knowledge::{
-    KnowledgeContext, KnowledgeError, KnowledgeProvider, Requester, RunGrant, RunInfo,
+    KnowledgeContext, KnowledgeError, KnowledgeProvider, Person, Requester, RunGrant, RunInfo,
 };
 pub use memory::{MemoryEntry, MemoryError, MemoryNote, MemoryScope, MemoryStore};
 pub use message::{

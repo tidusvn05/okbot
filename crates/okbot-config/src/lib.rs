@@ -6,20 +6,25 @@
 //! `okbot init`. It knows every platform's section, so a typo is an error, not a silent default.
 
 mod dotenv;
+mod edit;
 mod schema;
 mod write;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use okbot_core::Secret;
 
+pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
-    DiscordSection, GChatDelivery, GChatSection, HttpSection, ProviderSection, ReplyOn,
-    RoomSection, SlackSection, ZaloSection,
+    DiscordSection, GChatDelivery, GChatSection, HttpSection, PersonSection, ProviderSection,
+    ReplyOn, RoomSection, SlackSection, ZaloSection,
 };
-pub use write::{GChatInit, InitOptions, ZaloInit, render_initial, upsert_env};
+pub use write::{
+    GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
+    upsert_env,
+};
 
 /// The file name of a bot's configuration.
 pub const CONFIG_FILE: &str = "okbot.toml";
@@ -72,6 +77,24 @@ pub enum ConfigError {
 /// Platforms with a native adapter; bridge adapters must use other names.
 pub const BUILT_IN_PLATFORMS: &[&str] = &["console", "zalo", "gchat", "discord", "slack"];
 
+/// Parses an account written `platform:instance/user-id` (`zalo:shop/6ede9afa…`), as `/whoami`
+/// shows it and `[bot] admins` and `[people]` use it.
+pub fn parse_account(value: &str) -> Result<(okbot_core::ChannelId, okbot_core::UserId), String> {
+    let (channel, user) = value
+        .split_once('/')
+        .filter(|(_, user)| !user.is_empty())
+        .ok_or_else(|| format!("`{value}` must look like `zalo:shop/<user id>`"))?;
+    let channel = channel.parse().map_err(|e| format!("`{value}`: {e}"))?;
+    Ok((channel, okbot_core::UserId::new(user)))
+}
+
+fn is_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
 /// A loaded, validated bot configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -85,6 +108,8 @@ pub struct Config {
     pub http: HttpSection,
     /// `[channels.*]`.
     pub channels: ChannelsSection,
+    /// `[people.*]`: linked accounts by person id.
+    pub people: BTreeMap<String, PersonSection>,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -127,6 +152,7 @@ impl Config {
             agent: file.agent,
             http: file.http,
             channels: file.channels,
+            people: file.people,
             dotenv,
         };
         config.validate()?;
@@ -135,6 +161,23 @@ impl Config {
 
     fn validate(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let mut linked = HashMap::new();
+        for (id, person) in &self.people {
+            if !is_slug(id) {
+                return invalid(format!(
+                    "[people.{id}]: the id may only contain a-z, 0-9, `-` and `_`"
+                ));
+            }
+            for account in &person.accounts {
+                let key = parse_account(account)
+                    .map_err(|e| ConfigError::Invalid(format!("[people.{id}] accounts: {e}")))?;
+                if let Some(other) = linked.insert(key, id) {
+                    return invalid(format!(
+                        "account `{account}` is linked to both `{other}` and `{id}` in [people]"
+                    ));
+                }
+            }
+        }
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -245,6 +288,35 @@ impl Config {
         names.sort();
         names.dedup();
         names
+    }
+
+    /// Every channel as `(id, section kind, secret variable names)`; the kind is the
+    /// `[channels.<kind>]` table (`bridge` for bridge adapters).
+    pub fn channel_secrets(&self) -> Vec<(String, &'static str, Vec<String>)> {
+        let c = &self.channels;
+        let mut out = Vec::new();
+        for (i, z) in &c.zalo {
+            let mut names = vec![z.token_env.clone()];
+            names.extend(z.secret_env.clone());
+            out.push((format!("zalo:{i}"), "zalo", names));
+        }
+        for i in c.gchat.keys() {
+            out.push((format!("gchat:{i}"), "gchat", Vec::new()));
+        }
+        for (i, d) in &c.discord {
+            out.push((format!("discord:{i}"), "discord", vec![d.token_env.clone()]));
+        }
+        for (i, s) in &c.slack {
+            out.push((
+                format!("slack:{i}"),
+                "slack",
+                vec![s.app_token_env.clone(), s.bot_token_env.clone()],
+            ));
+        }
+        for (i, b) in &c.bridge {
+            out.push((format!("{}:{i}", b.platform), "bridge", b.env.clone()));
+        }
+        out
     }
 
     /// A path from the configuration, relative to the bot directory.

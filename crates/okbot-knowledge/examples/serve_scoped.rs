@@ -28,6 +28,7 @@ async fn main() {
             is_bot: false,
         },
         internal: false,
+        person: None,
     };
     let grant = knowledge
         .grant(

@@ -19,6 +19,7 @@ fn who(user: &str, room: &str) -> Requester {
             is_bot: false,
         },
         internal: false,
+        person: None,
     }
 }
 

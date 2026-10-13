@@ -19,6 +19,7 @@ fn who(user: &str, room: &str) -> Requester {
             is_bot: false,
         },
         internal: false,
+        person: None,
     }
 }
 
@@ -255,4 +256,87 @@ async fn grants_include_the_memory_server() {
     assert_eq!(names, ["kb", "bot"]);
     assert!(grant.mcp[1].url.ends_with("/bot/mcp"));
     assert_eq!(grant.mcp[0].bearer_token_env, grant.mcp[1].bearer_token_env);
+}
+
+#[tokio::test]
+async fn linked_accounts_share_personal_memory() {
+    let (_dir, k) = open(false);
+    let zalo = who("u1", "r1");
+    // An older note from before the accounts were linked.
+    k.save(&zalo, note(MemoryScope::User, "Luan uống cà phê đen"))
+        .await
+        .unwrap();
+
+    let person = okbot_core::Person {
+        id: "luan".into(),
+        accounts: vec![
+            ("zalo:shop".parse().unwrap(), "u1".into()),
+            ("discord:shop".parse().unwrap(), "d9".into()),
+        ],
+    };
+    let mut zalo = zalo;
+    zalo.person = Some(person.clone());
+    let mut discord = Requester {
+        conversation: ConversationKey::room("discord:shop".parse().unwrap(), "dm-1"),
+        user: UserRef {
+            id: "d9".into(),
+            display_name: "luan".into(),
+            is_bot: false,
+        },
+        internal: false,
+        person: Some(person),
+    };
+
+    let saved = k
+        .save(
+            &discord,
+            note(MemoryScope::User, "Luan prefers short answers"),
+        )
+        .await
+        .unwrap();
+    assert!(saved.id.starts_with("memory/people/luan/"), "{}", saved.id);
+
+    for who in [&zalo, &discord] {
+        let texts: Vec<String> = k
+            .list(who)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.text)
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("short answers")),
+            "{texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("cà phê")),
+            "pre-link notes stay visible: {texts:?}"
+        );
+        let profile = k.context(who).await.unwrap().user_profile.unwrap();
+        assert!(
+            profile.contains("short answers") && profile.contains("cà phê"),
+            "{profile}"
+        );
+    }
+    // Forgetting works from either account.
+    k.forget(&zalo, &saved.id).await.unwrap();
+    discord.person.as_mut().unwrap().accounts.clear();
+    assert!(
+        k.list(&discord)
+            .await
+            .unwrap()
+            .iter()
+            .all(|e| e.id != saved.id)
+    );
+
+    // Someone else sees none of it.
+    let minh = who("u2", "r1");
+    let texts: Vec<String> = k
+        .list(&minh)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert!(!texts.iter().any(|t| t.contains("cà phê")), "{texts:?}");
 }

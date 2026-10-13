@@ -17,6 +17,18 @@ pub(crate) struct File {
     pub(crate) http: HttpSection,
     #[serde(default)]
     pub(crate) channels: ChannelsSection,
+    #[serde(default)]
+    pub(crate) people: BTreeMap<String, PersonSection>,
+}
+
+/// `[people.<id>]`: platform accounts of one human. They share one profile and personal memory
+/// (`memory/people/<id>/`), so only the operator links accounts.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonSection {
+    /// Accounts as `platform:instance/user-id` (`/whoami` shows them).
+    #[serde(default)]
+    pub accounts: Vec<String>,
 }
 
 /// `[bot]`: identity and locations.

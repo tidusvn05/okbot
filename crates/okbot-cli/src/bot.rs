@@ -37,10 +37,7 @@ fn reply_on(values: &[ConfigReplyOn]) -> ReplyOn {
 
 /// `platform:instance/user` → (channel, user).
 fn parse_admin(value: &str) -> anyhow::Result<(ChannelId, UserId)> {
-    let (channel, user) = value
-        .split_once('/')
-        .with_context(|| format!("admin `{value}` must look like `zalo:shop/<user id>`"))?;
-    Ok((channel.parse()?, UserId::new(user)))
+    okbot_config::parse_account(value).map_err(|e| anyhow::anyhow!("[bot] admins: {e}"))
 }
 
 /// Environment for the agent CLIs when `[agent] home` is set: a separate login and quota.
@@ -132,6 +129,14 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     rc.timezone.clone_from(&config.bot.timezone);
     for admin in &config.bot.admins {
         rc.access.admins.insert(parse_admin(admin)?);
+    }
+    for (id, person) in &config.people {
+        let accounts = person
+            .accounts
+            .iter()
+            .map(|a| okbot_config::parse_account(a).map_err(anyhow::Error::msg))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        rc.link_person(id, accounts);
     }
     let mut allow_users = HashSet::new();
     for (platform, instance, access) in config.channels.access() {

@@ -1,6 +1,7 @@
 //! Chat commands handled without an agent.
 
 use okbot_core::InboundEvent;
+use std::fmt::Write as _;
 
 use crate::Shared;
 
@@ -48,18 +49,7 @@ impl Command {
 pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) -> String {
     match command {
         Command::Help => help_text(&s.config.bot_name),
-        Command::WhoAmI => format!(
-            "You are `{}` ({}) in chat `{}` on `{}`.{}",
-            event.author.id,
-            event.author.display_name,
-            event.conversation.room,
-            event.conversation.channel,
-            if s.gate.is_admin(event) {
-                " You are an administrator."
-            } else {
-                ""
-            }
-        ),
+        Command::WhoAmI => whoami(s, event),
         Command::Reset => match s.store.reset(&event.conversation).await {
             Ok(()) => "Okay, I started a new conversation.".to_string(),
             Err(error) => {
@@ -74,6 +64,38 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
     }
 }
 
+fn whoami(s: &Shared, event: &InboundEvent) -> String {
+    let account = format!("{}/{}", event.conversation.channel, event.author.id);
+    let mut reply = format!(
+        "You are `{account}` ({}) in chat `{}`.",
+        event.author.display_name, event.conversation.room
+    );
+    match s
+        .config
+        .person(&event.conversation.channel, &event.author.id)
+    {
+        Some(person) => {
+            let _ = write!(
+                reply,
+                " This account belongs to `{}`, who shares memory across {} linked account(s).",
+                person.id,
+                person.accounts.len()
+            );
+        }
+        None => {
+            let _ = write!(
+                reply,
+                " To share memory with your other accounts, the operator runs \
+                 `okbot people link <name> {account}`."
+            );
+        }
+    }
+    if s.gate.is_admin(event) {
+        reply.push_str(" You are an administrator.");
+    }
+    reply
+}
+
 async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
     let Some(memory) = &s.memory else {
         return "Memory is not enabled for this bot.".into();
@@ -85,6 +107,10 @@ async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
         conversation: event.conversation.clone(),
         user: event.author.clone(),
         internal: room.internal,
+        person: s
+            .config
+            .person(&event.conversation.channel, &event.author.id)
+            .cloned(),
     };
     let result = match command {
         Command::Remember(text) if text.trim().is_empty() => {

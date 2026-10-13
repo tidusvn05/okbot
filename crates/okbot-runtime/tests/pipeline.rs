@@ -139,12 +139,34 @@ async fn commands_do_not_reach_the_agent() {
     assert_eq!(h.agent.calls(), 1);
     let sent = h.channel.sent_texts();
     assert!(sent[1].contains("/reset"), "{sent:?}");
-    assert!(sent[2].contains("`ana`"), "{sent:?}");
+    assert!(sent[2].contains("`fake:test/ana`"), "{sent:?}");
+    assert!(sent[2].contains("okbot people link"), "{sent:?}");
     assert!(sent[3].contains("new conversation"), "{sent:?}");
     let key = okbot_testkit::conversation("fake:test", "room");
     assert!(
         h.store.recent(&key, 10).await.unwrap().is_empty(),
         "history reset"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn whoami_shows_the_linked_person() {
+    let h = Harness::start_with(FakeAgent::echo("fake"), |c| {
+        c.link_person(
+            "ana-k",
+            vec![
+                ("fake:test".parse().unwrap(), "ana".into()),
+                ("discord:main".parse().unwrap(), "42".into()),
+            ],
+        );
+    });
+    h.say("/whoami").await;
+    h.settle().await;
+    let sent = h.channel.sent_texts();
+    assert!(
+        sent[0].contains("belongs to `ana-k`") && sent[0].contains("2 linked"),
+        "{sent:?}"
     );
     h.stop().await;
 }

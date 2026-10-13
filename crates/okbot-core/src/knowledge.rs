@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::agent::McpServer;
 use crate::caps::ToolPolicy;
-use crate::id::{ConversationKey, UserRef};
+use crate::id::{ChannelId, ConversationKey, UserId, UserRef};
 use crate::message::Attachment;
 use crate::secret::Secret;
 use crate::{BoxError, async_trait};
@@ -31,6 +31,18 @@ pub struct Requester {
     pub user: UserRef,
     /// The room may see documents marked `audience: private`.
     pub internal: bool,
+    /// The person this account belongs to, when the operator linked several accounts
+    /// (`[people.<id>]`): they share one profile and personal memory.
+    pub person: Option<Person>,
+}
+
+/// Several platform accounts of one human, linked by the operator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Person {
+    /// Id from `okbot.toml` (`luan`): a lowercase slug.
+    pub id: String,
+    /// Every linked account, as `(channel, user)`.
+    pub accounts: Vec<(ChannelId, UserId)>,
 }
 
 /// What a run needs from the knowledge tools.

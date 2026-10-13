@@ -16,7 +16,7 @@ pub(crate) fn for_requester(who: &Requester) -> Scope {
         .map(|d| (*d).to_string())
         .collect();
     patterns.push(paths::room_dir(channel, &who.conversation.room));
-    patterns.push(paths::user_dir(channel, &who.user.id));
+    patterns.extend(paths::personal_dirs(who));
     build(&patterns, who.internal)
 }
 
@@ -63,6 +63,7 @@ mod tests {
                 is_bot: false,
             },
             internal: false,
+            person: None,
         }
     }
 
@@ -81,6 +82,30 @@ mod tests {
         );
         assert!(!s.permits_path("memory/rooms/zalo-shop/r2/notes"));
         assert!(!s.permits_path("secrets/x"));
+    }
+
+    #[test]
+    fn linked_accounts_share_personal_memory() {
+        let mut zalo = who("u1", "r1");
+        let discord_user: okbot_core::ChannelId = "discord:main".parse().unwrap();
+        zalo.person = Some(okbot_core::Person {
+            id: "luan".into(),
+            accounts: vec![
+                (zalo.conversation.channel.clone(), "u1".into()),
+                (discord_user, "d9".into()),
+            ],
+        });
+        let s = for_requester(&zalo);
+        assert!(s.permits_path("memory/people/luan"));
+        assert!(s.permits_path("memory/people/luan/coffee"));
+        assert!(s.permits_path("memory/users/zalo-shop/u1/old-note"));
+        assert!(s.permits_path("memory/users/discord-main/d9/old-note"));
+        assert!(!s.permits_path("memory/people/minh"));
+        assert!(
+            !s.permits_path("memory/people/luana"),
+            "prefix must not leak"
+        );
+        assert!(!s.permits_path("memory/users/zalo-shop/u2"));
     }
 
     #[test]
