@@ -427,6 +427,16 @@ async fn personal_bot_answers_only_paired_owner_accounts() {
     h.stop().await;
 }
 
+/// Sends `text` as ana in a direct chat and waits until it is handled.
+async fn command(channel: &FakeChannel, handle: &RuntimeHandle, text: &str) {
+    channel
+        .inject(inbound("fake:test", "room", "ana", text))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn reminders_are_sent_by_the_scheduler_and_tasks_commands_work() {
     use okbot_core::{SystemClock, Task, TaskKind, TaskStatus};
@@ -451,12 +461,7 @@ async fn reminders_are_sent_by_the_scheduler_and_tasks_commands_work() {
         async move { runtime.run(stop).await.unwrap() }
     });
 
-    channel
-        .inject(inbound("fake:test", "room", "ana", "/tasks"))
-        .await;
-    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
-        .await
-        .unwrap();
+    command(&channel, &handle, "/tasks").await;
     assert!(
         channel.sent_texts()[0].starts_with("No tasks"),
         "{:?}",
@@ -495,6 +500,27 @@ async fn reminders_are_sent_by_the_scheduler_and_tasks_commands_work() {
     .expect("the reminder is sent");
     assert_eq!(tasks.all()[0].status, TaskStatus::Done);
 
+    command(&channel, &handle, "/snooze 1h").await;
+    let reply = channel.sent_texts().last().unwrap().clone();
+    assert!(
+        reply.contains("remind you again") && reply.contains("Stretch"),
+        "{reply}"
+    );
+    let snoozed = tasks.all()[0].clone();
+    assert_eq!(snoozed.status, TaskStatus::Open);
+    let wait = snoozed
+        .remind_at
+        .unwrap()
+        .duration_since(jiff::Timestamp::now());
+    assert!(wait > jiff::SignedDuration::from_mins(59), "{wait}");
+    let done = okbot_core::TaskChange {
+        status: Some(TaskStatus::Done),
+        ..okbot_core::TaskChange::default()
+    };
+    okbot_core::TaskStore::after_fire(tasks.as_ref(), "t-1", done)
+        .await
+        .unwrap();
+
     tasks.insert(Task {
         id: "tasks/users/fake-test/ana/t-2".into(),
         kind: TaskKind::Todo,
@@ -503,12 +529,7 @@ async fn reminders_are_sent_by_the_scheduler_and_tasks_commands_work() {
         status: TaskStatus::Open,
         ..tasks.all()[0].clone()
     });
-    channel
-        .inject(inbound("fake:test", "room", "ana", "/done 1"))
-        .await;
-    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
-        .await
-        .unwrap();
+    command(&channel, &handle, "/done 1").await;
     assert_eq!(channel.sent_texts().last().unwrap(), "Done: Buy milk");
     stop.cancel();
     task.await.unwrap();

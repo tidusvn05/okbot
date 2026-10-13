@@ -19,6 +19,9 @@ pub(crate) enum TaskCommand {
         /// Include done and cancelled tasks.
         #[arg(long)]
         all: bool,
+        /// Only tasks with a coming reminder, soonest first.
+        #[arg(long)]
+        upcoming: bool,
     },
     /// Add a to-do or a reminder for the owner (personal bots) or a linked person.
     Add {
@@ -140,15 +143,23 @@ async fn resolve(k: &okbot_knowledge::Knowledge, id: &str) -> anyhow::Result<Str
 
 pub(crate) async fn run(command: TaskCommand) -> anyhow::Result<()> {
     match command {
-        TaskCommand::List { name, all } => {
+        TaskCommand::List {
+            name,
+            all,
+            upcoming,
+        } => {
             let (_, k) = crate::memory::open(name.as_deref()).await?;
             let tz = k.timezone().clone();
-            let tasks: Vec<Task> = k
+            let mut tasks: Vec<Task> = k
                 .all_tasks()
                 .await
                 .into_iter()
                 .filter(|t| all || t.status.is_active())
+                .filter(|t| !upcoming || t.remind_at.is_some() && t.status == TaskStatus::Open)
                 .collect();
+            if upcoming {
+                tasks.sort_by_key(|t| t.remind_at);
+            }
             if tasks.is_empty() {
                 println!("no tasks");
             }
