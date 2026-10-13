@@ -207,6 +207,7 @@ runtime.run(shutdown_token).await
 | **v0.2.0** | P9–P10 | **Google Chat** (HTTP or Pub/Sub), personal/room/global **memory** |
 | **v0.3.0** | P11 | **Discord** and **Slack** |
 | **v0.4.0** | P12–P13 | Session resume, progressive replies, fallback metrics, attachments |
+| **v0.5.0** | P15–P19 | Personal assistant: tasks, reminders, snooze, routines, notes, saving documents |
 | **v1.0.0** | P14 | Stable `okbot-core` SDK and bridge protocol, crates.io publication |
 
 ---
@@ -449,7 +450,7 @@ depth). Verified with the real Claude CLI describing an image sent through a fak
 2. Bridge protocol (design §3.4): JSON-RPC over stdio, spec in `docs/bridge.md`, conformance tests, a reference adapter in TypeScript.
 3. Channel template and conformance suite published; "add a platform" guide.
 4. Publish crates to crates.io once agent-core (renamed) and okbase are published.
-5. Candidates driven by users: Telegram (reuses most of the Zalo adapter), Zalo OA, MS Teams, direct-API agent backend, reminders.
+5. Candidates driven by users: Telegram (reuses most of the Zalo adapter), Zalo OA, MS Teams, direct-API agent backend (reminders moved to P15–P18).
 
 Status (2026-10-13): items 2 and 3 done. `okbot-channel-bridge` implements protocol 1
 ([`docs/bridge.md`](bridge.md)): `[channels.bridge.<instance>]` in `okbot.toml`, restart with backoff,
@@ -459,6 +460,55 @@ than TypeScript. `okbot-testkit` has `conformance::channel`/`channel_stops` and 
 `templates/channel/` is a compiled, tested workspace member; guides are in `docs/extending/`. Verified
 end to end: `okbot run` answering through the Node adapter with a fake `claude`. Items 1 and 4 wait for
 a first release (no semver baseline yet) and for agent-core and okbase on crates.io.
+
+### P15 — Tasks (to-dos without notifications)
+
+1. `okbot-core`: `Task`, `TaskKind`, `TaskStatus`, `Repeat` (parser and next-occurrence on `jiff`,
+   DST-safe), the `TaskStore` port; testkit fake and conformance tests.
+2. `okbot-knowledge`: areas in `paths` (`<area>/<owner>`), scope allowing `tasks/` and `notes/` owner
+   folders, `FileTaskStore` (OKF files, atomic writes, ids `t-xxxxxx`), template `index.md` files.
+3. `/mcp/bot`: `task_add`, `task_list`, `task_update`, `task_done`, `task_delete`; `memory_update`.
+4. Chat: `/tasks`, `/done <n>`; CLI: `okbot task list|add|done|rm`.
+
+Tests: scope isolation between users and rooms, path safety, repeat parsing, OKF lint of written files.
+Exit criteria: "add buying milk to my to-dos" from Discord shows in `/tasks` on Zalo for the same owner.
+
+### P16 — Reminders (scheduler and delivery)
+
+1. Migration 3: `task_fires`; `ConversationStore` methods to claim, finish and list firings.
+2. Scheduler in `okbot-runtime` (heap, notify on writes, 10-minute rescan, late grace, retries).
+3. Delivery to `origin` or a channel's owner direct chat; the sent reminder added to history.
+4. `[schedule]` config; `okbot doctor`: timezone set, upcoming and failed firings, which channels
+   can send without a fresh user message (verify Zalo).
+
+Tests: fake clock (on time, late, missed, crash between send and file update, restart), DST.
+Exit criteria: a reminder set for two minutes later arrives once after `okbot restart`.
+
+### P17 — Snooze and repeats
+
+1. `/snooze <duration|time>` on the last reminder of a conversation; `task_update` for free text.
+2. Repeating reminders and to-dos (`repeat`), `okbot task list --upcoming`.
+
+Exit criteria: "remind me again in 10 minutes" after a reminder brings it back once.
+
+### P18 — Routines (scheduled agent turns)
+
+1. `InboundEvent.source` (`Platform` | `Schedule { task_id }`); worker path that skips dedupe and
+   commands; routine preamble in the prompt.
+2. Role check at creation and at every firing; `max_agent_runs_per_day`; paused when created in a turn
+   that used web tools; `/tasks resume|pause <id>`, `okbot task pause|resume`.
+
+Exit criteria: a daily 7:00 summary routine runs with real Codex and Claude; a team member cannot
+create one; the daily cap holds.
+
+### P19 — Notes and saving documents
+
+1. `note_add`, `/note`; `notes/<owner>/<yyyy>/<date>.md`.
+2. `knowledge_add` (owner/admins): text, URL source, attachments (images, PDF through okbase's
+   converters); `okbot kb add|inbox`.
+3. `okbot memory edit`; docs: `docs/assistant.md` (user guide for personal bots).
+
+Exit criteria: a PDF sent in Zalo with "save this" is answered from in a later turn.
 
 ---
 

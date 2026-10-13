@@ -464,6 +464,7 @@ okbot serves a second MCP server, `/mcp/bot` (rmcp, same RunToken mechanism):
 | `memory_save {scope: user\|room\|global, title, text, tags}` | `memory/users\|rooms\|global/…` | Only paths of the caller's RunContext; size limit; `global` is written directly as `status: stable` (D2) |
 | `memory_forget {id}` | marks `status: deprecated` (or deletes) | Only within the caller's scope; admins may forget any global entry |
 | `memory_list` | read | For "what do you remember about me?" |
+| `memory_update {id, text, title?}` | rewrites the note in place | Same scope as `memory_forget`; keeps `created`, sets `updated` |
 
 Writer: create or update the file with OKF frontmatter (`type`, `title`, `description`, `tags`,
 `updated`, `generated`, `author`), keep unknown keys on update (okbase's frontmatter round-trip), write
@@ -478,6 +479,146 @@ Because global memory needs no approval (D2), safety comes from traceability ins
 When okbase ships a `write` module (`Bundle::write`, `kb_write`), the writer switches to it. An okbase
 issue for this is optional and does not block the MVP.
 
+### 5.5 Assistant data: the areas of the bundle
+
+A personal assistant keeps more than facts. Every kind of data it writes is a file area of the bundle
+with the same three owners as memory (person or account, room, global), so one scope rule covers all
+of them:
+
+| Area | What | Written by | Read by the agent through |
+|---|---|---|---|
+| `knowledge/` | documents | operators; owner/admins through `knowledge_add` (§5.8) | okbase `kb_*` |
+| `memory/` | short lasting facts | `memory_save`, `memory_update` (§5.4) | `memory_list`, profile in the prompt |
+| `tasks/` | to-dos, reminders, routines (§5.6) | `task_*` tools, `/tasks`, `okbot task` | `task_list`, `kb_query type=Task` |
+| `notes/` | quick notes and journal (§5.9) | `note_add` | okbase `kb_*` |
+
+```
+kb/
+├── tasks/people/<person>/<task-id>.md            # same owner folders as memory/
+│        users/<channel>/<user>/<task-id>.md
+│        rooms/<channel>/<room>/<task-id>.md
+├── notes/people/<person>/2026/2026-10-13.md      # one file per day
+│        rooms/<channel>/<room>/2026/2026-10-13.md
+└── knowledge/inbox/2026-10-13-<slug>.md          # documents saved from chat
+```
+
+`paths` builds every owner folder as `<area>/<owner>`, and the scope of a requester allows the same
+owner folders in each area. `memory_list` stays limited to `memory/`. Each written file is OKF
+(frontmatter, `index.md` per new folder) so the bundle keeps linting clean and `okbase view` shows it.
+
+### 5.6 Tasks: to-dos, reminders and routines
+
+One model, three kinds, because people mix them ("remind me to file the report on Friday" is both a
+to-do and a reminder):
+
+| `kind` | Has | After it fires |
+|---|---|---|
+| `todo` | optional `due`, optional `remind_at` | stays open until done; `remind_at` is cleared (or moved by `repeat`) |
+| `reminder` | `remind_at`, optional `repeat` | one-shot: `status: done`; repeating: next `remind_at` |
+| `routine` | `remind_at`, `repeat`, a prompt (body) | runs an **agent turn** (§5.7); next `remind_at` |
+
+```markdown
+---
+type: Task
+id: t-7k2m9q
+kind: reminder            # todo | reminder | routine
+title: File the quarterly report
+status: open              # open | done | cancelled
+due: 2026-10-17T17:00:00+07:00
+remind_at: 2026-10-17T09:00:00+07:00   # next firing, absolute with offset
+repeat: weekly fri 09:00  # daily HH:MM | weekdays HH:MM | weekly <days> HH:MM | monthly <day> HH:MM | every <n>h
+timezone: Asia/Ho_Chi_Minh
+deliver_to: origin        # origin | <channel id> (the owner's direct chat there)
+origin: {channel: "discord:main", room: "…", thread: null}
+author: discord:main/2106…
+created: 2026-10-13T14:02:00+07:00
+---
+Optional notes; for a routine, the prompt.
+```
+
+**Files and SQLite.** The file is the task (rule 5): the user and the operator can edit it, okbase can
+query it. SQLite only records firings: `task_fires(task_id, fire_at, state, attempts, sent_at)` with
+`(task_id, fire_at)` as the key, so a firing is never sent twice, even across a crash between sending
+and updating the file.
+
+**Scheduler** (`okbot-runtime`, through the `Clock` port so tests use a fake clock):
+
+1. At start, read every open task with a `remind_at` and keep them in a heap ordered by time.
+2. Sleep until the earliest one, a task write (the task store notifies), a bundle change, or a
+   10-minute rescan.
+3. For a due firing: claim it in `task_fires` (`sending`), deliver it, mark it `sent`, then update the
+   file (next `remind_at`, or `status: done` for a one-shot reminder). A firing already `sent` only
+   updates the file.
+4. Late firings (the bot was down): within `late_grace` (default 6 h) they are sent with "(late)";
+   older ones are marked `missed` and listed by `/tasks` and `okbot doctor`.
+5. Failed sends retry with backoff up to 5 times, then `failed`.
+
+**Delivery.** A reminder is sent verbatim with `Channel::send` to its target (`origin`: the
+conversation and thread where it was created; a channel id: the owner's most recent direct
+conversation on that channel). The sent text, with the task id, is appended to the conversation
+history as an assistant message, so a reply such as "in 10 minutes" reaches an agent that knows which
+task it is about.
+
+**Snoozing.** `/snooze <duration|time>` moves the last reminder sent in this conversation (no agent
+run); in free text the agent calls `task_update {id, remind_at}`. A snooze only moves this firing:
+`repeat` is kept.
+
+**Tools** (`/mcp/bot`, scoped by the run token like memory):
+
+| Tool | Notes |
+|---|---|
+| `task_add {kind, title, notes?, due?, remind_at?, repeat?, deliver_to?, scope: user\|room}` | times are local ISO date-times; the server adds the bot timezone, rejects past times and repeats more often than hourly |
+| `task_list {status?, before?}` | the caller's tasks (person and room) |
+| `task_update {id, …}` | change fields, snooze |
+| `task_done {id}`, `task_delete {id}` | |
+
+The agent already gets the current local time and timezone in its prompt, so it turns "8 am tomorrow"
+into an absolute time; the tool echoes the stored time so the reply can confirm it.
+
+**Limits.** At most 200 open tasks per owner folder; on a team bot a member can only target their own
+direct chat or the current room, never another user.
+
+### 5.7 Routines: scheduled agent turns
+
+A routine is a task whose firing runs the agent ("every morning at 7, summarise today's tasks and the
+weather"):
+
+- The scheduler delivers an `InboundEvent` with `source: Schedule { task_id }` into the routine's
+  conversation queue, authored by the routine's author. It goes through the normal worker (history,
+  session, scope, tool policy, renderer), skipping only dedupe and commands.
+- The prompt states that the turn is a scheduled routine, when it was created and that the user is not
+  waiting for a live answer.
+- **Who.** Only the owner of a personal bot and `[bot] admins` of a team bot may create routines.
+  The check is repeated at every firing: if the author lost the role, the routine is paused.
+- **Cost.** `[schedule] max_agent_runs_per_day` (default 24) per bot; routines repeat at most hourly;
+  a failed run is reported once in the conversation, not retried.
+- **Visibility.** Creating a routine always makes the bot answer with what will run and when; `/tasks`
+  lists routines first. A routine created during a turn that used web tools is created `paused` and
+  must be confirmed with `/tasks resume <id>`, so a web page cannot plant a recurring job.
+
+### 5.8 Saving documents to knowledge
+
+`knowledge_add {title, text?, attachment?, source_url?}` writes `knowledge/inbox/<date>-<slug>.md`
+(`type: Document`, `source`, `added_by`, `added_at`) and makes it searchable at once (`bundle.sync()`):
+
+- **Who.** The owner on a personal bot; admins on a team bot. Everything in `knowledge/` is visible
+  to every user of the bot, which is why members cannot add to it.
+- **What.** Text the agent extracted (a web page the user linked, a pasted text), or an attachment of
+  the current message: images and PDFs are kept under `knowledge/inbox/files/` next to the generated
+  markdown; okbase's converters produce the text where they support the format, otherwise the agent's
+  transcription is stored.
+- **Limits.** 2 MiB of text, 20 MiB per file, the same HTTPS-only fetch rules as `attachment_view`.
+- `okbot kb add <file|url>` does the same from the terminal; `okbot kb inbox` lists recent additions so
+  an operator can move them into the right folder.
+
+### 5.9 Quick notes and journal
+
+`note_add {text, scope: user|room}` appends `- HH:MM text` to the day's file
+(`notes/<owner>/<yyyy>/<yyyy-mm-dd>.md`, `type: Journal`). Notes are searched with the okbase tools
+like any document ("what did I note about project X last week?"). `/note <text>` writes one without an agent run.
+Notes are not memory: memory is a few lasting facts loaded with every turn, notes are a growing log
+read on demand.
+
 ---
 
 ## 6. Operational data, configuration, deployment
@@ -491,6 +632,8 @@ issue for this is optional and does not block the MVP.
 | `inbound_dedupe` | (channel, event_id) with TTL |
 | `agent_runs` | provider, model, tool policy, usage, duration, error — audit and cost |
 | `users` | platform user → role (admin, blocked) |
+| `pairing_codes` | one-time owner pairing codes (personal profile) |
+| `task_fires` | (task, firing time) → sending, sent, failed, missed; attempts (§5.6) |
 
 A retention policy (`retention_days`) applies because this is users' chat data.
 
@@ -545,6 +688,12 @@ listen = "127.0.0.1:8787"            # webhooks + health, behind a TLS reverse p
 [memory]
 enabled = true
 git_commit = true
+
+[schedule]                           # reminders and routines (§5.6, §5.7)
+enabled = true
+deliver_to = "origin"                # origin | a channel id such as "discord:main"
+late_grace = "6h"                    # send late firings up to this age, else mark them missed
+max_agent_runs_per_day = 24          # routines
 ```
 
 Secrets come only from environment variables, never from the config file (okbase convention).
@@ -559,7 +708,9 @@ okbot doctor [<name>]         # agent CLIs logged in, platform credentials, bund
 okbot run                     # run the bot in this directory in the foreground
 okbot chat                    # console channel: try the bot in the terminal
 okbot kb sync|lint|upgrade    # bundle operations
-okbot memory list|log|forget
+okbot memory list|log|forget|edit
+okbot kb add <file|url> | kb inbox   # save documents to knowledge/inbox (§5.8)
+okbot task list|add|done|rm|pause|resume [--upcoming]   # tasks, reminders, routines (§5.6)
 ```
 
 Agent-first like okbase and dcbot: `okbot doctor --json`, `okbot help --agent`.
@@ -695,7 +846,8 @@ okbot pins agent-core by git tag. Until the PRs land it can use a branch, and `C
 | **M4** — memory | `/mcp/bot` memory tools, `/remember` `/forget`, git-committed global memory, `okbot memory log` | "Remember that…" works next turn; other users cannot see personal memory |
 | **M5** — Discord, Slack | Gateway adapter; Socket Mode adapter | Same bot on three platforms with one bundle |
 | **M6** — UX | Session resume, streaming edits (#4, #5), fallback chain, metrics | Time to first visible feedback < 3 s |
-| Later | Bridge adapter, Telegram/Teams/Zalo, attachments and images, reminders, direct-API backend | |
+| M7 — assistant | Tasks, reminders, snooze, routines, notes, saving documents, `memory_update` (§5.5–5.9) | "Remind me at 8 am tomorrow" arrives on time after a restart; a morning routine runs daily |
+| Later | Telegram/Teams, outbound files, calendars, quiet hours, direct-API backend | |
 
 ## 9. Testing
 
