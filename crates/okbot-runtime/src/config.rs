@@ -155,6 +155,32 @@ pub struct RuntimeConfig {
     /// A personal assistant: only the owner's paired accounts are answered, and they share one
     /// profile and memory (person [`OWNER`]).
     pub personal: bool,
+    /// Reminders.
+    pub schedule: ScheduleConfig,
+}
+
+/// When and where reminders are sent (design §5.6).
+#[derive(Debug, Clone)]
+pub struct ScheduleConfig {
+    /// Send reminders.
+    pub enabled: bool,
+    /// The channel whose direct chat receives reminders that cannot go to their own chat.
+    pub deliver_to: Option<ChannelId>,
+    /// Firings found this late are still sent; older ones are marked missed.
+    pub late_grace: Duration,
+    /// Task files are re-read at least this often (hand edits, new tasks).
+    pub rescan: Duration,
+}
+
+impl Default for ScheduleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            deliver_to: None,
+            late_grace: Duration::from_secs(6 * 3600),
+            rescan: Duration::from_secs(30),
+        }
+    }
 }
 
 /// The person id of a personal bot's owner (`memory/people/owner/`).
@@ -209,6 +235,7 @@ impl RuntimeConfig {
             progress_interval: Duration::from_millis(1500),
             people: HashMap::new(),
             personal: false,
+            schedule: ScheduleConfig::default(),
         }
     }
 

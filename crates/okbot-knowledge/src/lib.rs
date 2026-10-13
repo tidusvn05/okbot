@@ -583,6 +583,19 @@ impl TaskStore for Knowledge {
         )
         .await
     }
+
+    async fn scheduled(&self) -> Result<Vec<Task>, TaskError> {
+        Ok(self
+            .all_tasks()
+            .await
+            .into_iter()
+            .filter(|t| t.status.is_active() && t.remind_at.is_some())
+            .collect())
+    }
+
+    async fn after_fire(&self, id: &str, change: TaskChange) -> Result<Task, TaskError> {
+        self.change_task(id, change).await
+    }
 }
 
 #[cfg(test)]

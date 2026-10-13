@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, NewMessage,
-    PAIRING_MAX_FAILURES, StoreError, StoredMessage, UserId, async_trait,
+    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, Fire, FireState,
+    NewMessage, PAIRING_MAX_FAILURES, StoreError, StoredMessage, UserId, async_trait,
 };
 
 #[derive(Default)]
@@ -21,6 +21,8 @@ struct State {
     owners: Vec<(ChannelId, UserId)>,
     /// code → (expires, failures)
     codes: HashMap<String, (Timestamp, u32)>,
+    fires: HashMap<(String, Timestamp), Fire>,
+    direct: HashMap<(ChannelId, UserId), ConversationKey>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -189,14 +191,85 @@ impl ConversationStore for MemoryStore {
         Ok(())
     }
 
+    async fn claim_fire(&self, task_id: &str, fire_at: Timestamp) -> Result<Fire, StoreError> {
+        let now = self.clock.now();
+        Ok(self
+            .lock()
+            .fires
+            .entry((task_id.to_string(), fire_at))
+            .or_insert_with(|| Fire {
+                task_id: task_id.to_string(),
+                fire_at,
+                state: FireState::Sending,
+                attempts: 0,
+                updated_at: now,
+            })
+            .clone())
+    }
+
+    async fn set_fire(
+        &self,
+        task_id: &str,
+        fire_at: Timestamp,
+        state: FireState,
+        attempts: u32,
+    ) -> Result<(), StoreError> {
+        let fire = Fire {
+            task_id: task_id.to_string(),
+            fire_at,
+            state,
+            attempts,
+            updated_at: self.clock.now(),
+        };
+        self.lock()
+            .fires
+            .insert((task_id.to_string(), fire_at), fire);
+        Ok(())
+    }
+
+    async fn recent_fires(&self, limit: usize) -> Result<Vec<Fire>, StoreError> {
+        let mut fires: Vec<Fire> = self.lock().fires.values().cloned().collect();
+        fires.sort_by_key(|f| std::cmp::Reverse((f.updated_at, f.fire_at)));
+        fires.truncate(limit);
+        Ok(fires)
+    }
+
+    async fn set_direct_chat(
+        &self,
+        channel: &ChannelId,
+        user: &UserId,
+        conversation: &ConversationKey,
+    ) -> Result<(), StoreError> {
+        self.lock()
+            .direct
+            .insert((channel.clone(), user.clone()), conversation.clone());
+        Ok(())
+    }
+
+    async fn direct_chat(
+        &self,
+        channel: &ChannelId,
+        user: &UserId,
+    ) -> Result<Option<ConversationKey>, StoreError> {
+        Ok(self
+            .lock()
+            .direct
+            .get(&(channel.clone(), user.clone()))
+            .cloned())
+    }
+
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError> {
         let now = self.clock.now();
         let mut state = self.lock();
-        let start = state.messages.len() + state.runs.len() + state.seen.len();
+        let count = |s: &State| s.messages.len() + s.runs.len() + s.seen.len() + s.fires.len();
+        let start = count(&state);
         state.messages.retain(|(_, m)| m.at >= before);
         state.runs.retain(|r| r.started_at >= before);
         state.seen.retain(|_, expires| *expires > now);
-        let end = state.messages.len() + state.runs.len() + state.seen.len();
+        state
+            .fires
+            .retain(|_, f| f.updated_at >= before || f.state == FireState::Sending);
+        let end = count(&state);
         Ok((start - end) as u64)
     }
 }

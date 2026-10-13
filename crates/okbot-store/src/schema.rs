@@ -64,6 +64,25 @@ const MIGRATIONS: &[&str] = &[
         failures   INTEGER NOT NULL DEFAULT 0
     );
     ",
+    // 3: task firings (design §5.6) and each user's direct chat, where reminders go.
+    r"
+    CREATE TABLE task_fires (
+        task_id    TEXT NOT NULL,
+        fire_at    INTEGER NOT NULL,
+        state      TEXT NOT NULL,
+        attempts   INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (task_id, fire_at)
+    );
+    CREATE INDEX task_fires_by_update ON task_fires(updated_at);
+    CREATE TABLE direct_chats (
+        channel      TEXT NOT NULL,
+        user_id      TEXT NOT NULL,
+        conversation TEXT NOT NULL,
+        updated_at   INTEGER NOT NULL,
+        PRIMARY KEY (channel, user_id)
+    );
+    ",
 ];
 
 /// The schema version this build writes.

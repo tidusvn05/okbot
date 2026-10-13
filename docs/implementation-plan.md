@@ -489,6 +489,13 @@ until P18. `memory_update` rewrites a note in place, keeping its other frontmatt
 Tests: fake clock (on time, late, missed, crash between send and file update, restart), DST.
 Exit criteria: a reminder set for two minutes later arrives once after `okbot restart`.
 
+Status (2026-10-14): done in code and tests (fake clock: on time, repeats, missed, crash after
+send, terminal tasks routed to the owner's direct chat, give-up after 5 attempts; a pipeline test
+runs the real loop). The scheduler re-reads task files every 30 s instead of being notified.
+`[schedule]` holds `enabled`, `deliver_to` and `late_grace_minutes`; `doctor` warns when
+`[bot] timezone` is unset and lists undelivered firings. Whether Zalo accepts a message long after
+the user's last one is checked on the real bot.
+
 ### P17 — Snooze and repeats
 
 1. `/snooze <duration|time>` on the last reminder of a conversation; `task_update` for free text.

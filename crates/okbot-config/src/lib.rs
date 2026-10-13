@@ -19,7 +19,7 @@ pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
     DiscordSection, GChatDelivery, GChatSection, HttpSection, PersonSection, ProviderSection,
-    ReplyOn, RoomSection, SlackSection, ZaloSection,
+    ReplyOn, RoomSection, ScheduleSection, SlackSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -110,6 +110,8 @@ pub struct Config {
     pub channels: ChannelsSection,
     /// `[people.*]`: linked accounts by person id.
     pub people: BTreeMap<String, PersonSection>,
+    /// `[schedule]`.
+    pub schedule: ScheduleSection,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -153,6 +155,7 @@ impl Config {
             http: file.http,
             channels: file.channels,
             people: file.people,
+            schedule: file.schedule,
             dotenv,
         };
         config.validate()?;
@@ -161,23 +164,8 @@ impl Config {
 
     fn validate(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
-        let mut linked = HashMap::new();
-        for (id, person) in &self.people {
-            if !is_slug(id) {
-                return invalid(format!(
-                    "[people.{id}]: the id may only contain a-z, 0-9, `-` and `_`"
-                ));
-            }
-            for account in &person.accounts {
-                let key = parse_account(account)
-                    .map_err(|e| ConfigError::Invalid(format!("[people.{id}] accounts: {e}")))?;
-                if let Some(other) = linked.insert(key, id) {
-                    return invalid(format!(
-                        "account `{account}` is linked to both `{other}` and `{id}` in [people]"
-                    ));
-                }
-            }
-        }
+        self.validate_people()?;
+        self.validate_schedule()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -251,6 +239,45 @@ impl Config {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    fn validate_people(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let mut linked = HashMap::new();
+        for (id, person) in &self.people {
+            if !is_slug(id) {
+                return invalid(format!(
+                    "[people.{id}]: the id may only contain a-z, 0-9, `-` and `_`"
+                ));
+            }
+            for account in &person.accounts {
+                let key = parse_account(account)
+                    .map_err(|e| ConfigError::Invalid(format!("[people.{id}] accounts: {e}")))?;
+                if let Some(other) = linked.insert(key, id) {
+                    return invalid(format!(
+                        "account `{account}` is linked to both `{other}` and `{id}` in [people]"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_schedule(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        if let Some(channel) = &self.schedule.deliver_to {
+            channel.parse::<okbot_core::ChannelId>().map_err(|e| {
+                ConfigError::Invalid(format!("[schedule] deliver_to `{channel}`: {e}"))
+            })?;
+        }
+        if let Some(tz) = &self.bot.timezone
+            && jiff::tz::TimeZone::get(tz).is_err()
+        {
+            return invalid(format!(
+                "[bot] timezone `{tz}` is not an IANA time zone (for example Asia/Ho_Chi_Minh)"
+            ));
         }
         Ok(())
     }

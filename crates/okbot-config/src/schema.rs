@@ -19,6 +19,38 @@ pub(crate) struct File {
     pub(crate) channels: ChannelsSection,
     #[serde(default)]
     pub(crate) people: BTreeMap<String, PersonSection>,
+    #[serde(default)]
+    pub(crate) schedule: ScheduleSection,
+}
+
+/// `[schedule]`: reminders and routines (design §5.6).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleSection {
+    /// Send reminders (on by default).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Where reminders go when their own chat cannot be used (created from the terminal, or the
+    /// channel was removed): a channel id such as `discord:main`, used for the owner's direct chat.
+    #[serde(default)]
+    pub deliver_to: Option<String>,
+    /// Firings found this late (the bot was down) are still sent; older ones are marked missed.
+    #[serde(default = "default_late_grace")]
+    pub late_grace_minutes: u64,
+}
+
+impl Default for ScheduleSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            deliver_to: None,
+            late_grace_minutes: default_late_grace(),
+        }
+    }
+}
+
+fn default_late_grace() -> u64 {
+    360
 }
 
 /// `[people.<id>]`: platform accounts of one human. They share one profile and personal memory
@@ -478,4 +510,8 @@ pub struct RoomSection {
     /// The room may see `audience: private` knowledge.
     #[serde(default)]
     pub internal: bool,
+}
+
+fn default_true() -> bool {
+    true
 }

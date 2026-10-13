@@ -426,3 +426,90 @@ async fn personal_bot_answers_only_paired_owner_accounts() {
     );
     h.stop().await;
 }
+
+#[tokio::test]
+async fn reminders_are_sent_by_the_scheduler_and_tasks_commands_work() {
+    use okbot_core::{SystemClock, Task, TaskKind, TaskStatus};
+    let mut config = RuntimeConfig::new("okbot", std::env::temp_dir().join("okbot-runtime-tests"));
+    config.schedule.rescan = Duration::from_millis(100);
+    let channel = Arc::new(FakeChannel::new("fake:test", ChannelCaps::basic()));
+    let clock = Arc::new(SystemClock);
+    let tasks = Arc::new(okbot_testkit::MemoryTasks::new(clock.clone()));
+    let store = Arc::new(MemoryStore::new(clock.clone()));
+    let runtime = Runtime::builder(config)
+        .store(store.clone())
+        .agent(Arc::new(FakeAgent::echo("fake")))
+        .renderer(Arc::new(PlainRenderer))
+        .tasks(tasks.clone())
+        .channel(channel.clone())
+        .build()
+        .unwrap();
+    let handle = runtime.handle();
+    let stop = CancellationToken::new();
+    let task = tokio::spawn({
+        let stop = stop.clone();
+        async move { runtime.run(stop).await.unwrap() }
+    });
+
+    channel
+        .inject(inbound("fake:test", "room", "ana", "/tasks"))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    assert!(
+        channel.sent_texts()[0].starts_with("No tasks"),
+        "{:?}",
+        channel.sent_texts()
+    );
+    let key = okbot_testkit::conversation("fake:test", "room");
+    let fake: okbot_core::ChannelId = "fake:test".parse().unwrap();
+    assert_eq!(
+        store.direct_chat(&fake, &"ana".into()).await.unwrap(),
+        Some(key.clone()),
+        "direct chats are remembered for reminders"
+    );
+
+    let now = jiff::Timestamp::now();
+    tasks.insert(Task {
+        id: "tasks/users/fake-test/ana/t-1".into(),
+        kind: TaskKind::Reminder,
+        status: TaskStatus::Open,
+        title: "Stretch".into(),
+        notes: String::new(),
+        scope: okbot_core::MemoryScope::User,
+        due: None,
+        remind_at: Some(now + jiff::SignedDuration::from_millis(300)),
+        repeat: None,
+        deliver_to: None,
+        origin: Some(key.clone()),
+        author: "fake:test/ana".into(),
+        created: now,
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !channel.sent_texts().iter().any(|t| t.contains("Stretch")) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the reminder is sent");
+    assert_eq!(tasks.all()[0].status, TaskStatus::Done);
+
+    tasks.insert(Task {
+        id: "tasks/users/fake-test/ana/t-2".into(),
+        kind: TaskKind::Todo,
+        remind_at: None,
+        title: "Buy milk".into(),
+        status: TaskStatus::Open,
+        ..tasks.all()[0].clone()
+    });
+    channel
+        .inject(inbound("fake:test", "room", "ana", "/done 1"))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    assert_eq!(channel.sent_texts().last().unwrap(), "Done: Buy milk");
+    stop.cancel();
+    task.await.unwrap();
+}

@@ -539,25 +539,28 @@ Optional notes; for a routine, the prompt.
 ```
 
 **Files and SQLite.** The file is the task (rule 5): the user and the operator can edit it, okbase can
-query it. SQLite only records firings: `task_fires(task_id, fire_at, state, attempts, sent_at)` with
-`(task_id, fire_at)` as the key, so a firing is never sent twice, even across a crash between sending
-and updating the file.
+query it. SQLite only records firings: `task_fires(task_id, fire_at, state, attempts, updated_at)` with
+`(task_id, fire_at)` as the key, so a firing is not sent again after a restart, even when the bot
+stopped between sending and updating the file (only a crash during the send itself can repeat it).
 
 **Scheduler** (`okbot-runtime`, through the `Clock` port so tests use a fake clock):
 
-1. At start, read every open task with a `remind_at` and keep them in a heap ordered by time.
-2. Sleep until the earliest one, a task write (the task store notifies), a bundle change, or a
-   10-minute rescan.
+1. Read every open task with a `remind_at` (task files are small and few).
+2. Sleep until the earliest one or the 30-second rescan, which also picks up new tasks and hand
+   edits.
 3. For a due firing: claim it in `task_fires` (`sending`), deliver it, mark it `sent`, then update the
    file (next `remind_at`, or `state: done` for a one-shot reminder). A firing already `sent` only
    updates the file.
-4. Late firings (the bot was down): within `late_grace` (default 6 h) they are sent with "(late)";
-   older ones are marked `missed` and listed by `/tasks` and `okbot doctor`.
-5. Failed sends retry with backoff up to 5 times, then `failed`.
+4. Late firings (the bot was down): within `late_grace_minutes` (default 360) they are sent (the
+   message shows the planned time); older ones are marked `missed` and reported by `okbot doctor`.
+   Repeating tasks skip the occurrences they missed.
+5. Failed sends retry with backoff (30 s doubling) up to 5 times, then `failed`.
 
-**Delivery.** A reminder is sent verbatim with `Channel::send` to its target (`origin`: the
-conversation and thread where it was created; a channel id: the owner's most recent direct
-conversation on that channel). The sent text, with the task id, is appended to the conversation
+**Delivery.** A reminder (`⏰ 08:00 · **title**` and the notes) is sent with `Channel::send` to its
+target: a `deliver_to` channel means the owner's most recent direct chat there; otherwise the chat
+where it was created; when that channel is not running (tasks added with `okbot task add`), the
+owner's direct chat on `[schedule] deliver_to` or on any running channel. The runtime records each
+user's latest direct chat (`direct_chats` in SQLite) for this. The sent text, with the task id, is appended to the conversation
 history as an assistant message, so a reply such as "in 10 minutes" reaches an agent that knows which
 task it is about.
 
@@ -636,6 +639,7 @@ read on demand.
 | `users` | platform user → role (admin, blocked) |
 | `pairing_codes` | one-time owner pairing codes (personal profile) |
 | `task_fires` | (task, firing time) → sending, sent, failed, missed; attempts (§5.6) |
+| `direct_chats` | (channel, user) → their latest direct conversation, where reminders go (§5.6) |
 
 A retention policy (`retention_days`) applies because this is users' chat data.
 
@@ -694,7 +698,7 @@ git_commit = true
 [schedule]                           # reminders and routines (§5.6, §5.7)
 enabled = true
 deliver_to = "origin"                # origin | a channel id such as "discord:main"
-late_grace = "6h"                    # send late firings up to this age, else mark them missed
+late_grace_minutes = 360             # send late firings up to this age, else mark them missed
 max_agent_runs_per_day = 24          # routines
 ```
 

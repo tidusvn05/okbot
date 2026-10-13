@@ -24,6 +24,6 @@ them. Hard rule 5 keeps user data in files and only operational data in SQLite.
 ## Consequences
 - Users and operators can read and edit tasks as files (`okbase view`, an editor, git), and the agent
   can query them with `kb_query type=Task`.
-- A hand edit of a task file is picked up on the next bundle change or rescan (at most 10 minutes).
+- The scheduler re-reads task files every 30 seconds, so hand edits and new tasks need no signal.
 - Routines spend agent quota without a user present; the daily cap and the role check bound it.
 - `InboundEvent` gets a `source` field, a change to the public SDK before 1.0.

@@ -398,6 +398,12 @@ pub trait TaskStore: Send + Sync {
 
     /// Deletes a visible task.
     async fn delete(&self, who: &Requester, id: &str) -> Result<Task, TaskError>;
+
+    /// Every open or paused task with a next firing, of every owner (the scheduler).
+    async fn scheduled(&self) -> Result<Vec<Task>, TaskError>;
+
+    /// Changes any task by id after it fired (the scheduler; no visibility check).
+    async fn after_fire(&self, id: &str, change: TaskChange) -> Result<Task, TaskError>;
 }
 
 /// Sorts tasks for display: active first, then by the earliest of next firing and due time, then

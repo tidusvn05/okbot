@@ -440,10 +440,57 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
             if config.bot.profile == okbot_config::BotProfile::Personal {
                 check_owners(&store, &mut r).await;
             }
+            check_reminders(&config, &store, &mut r).await;
         }
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// Reminders: the time zone they are read in, and firings that were not delivered.
+async fn check_reminders(config: &Config, store: &okbot_store::SqliteStore, r: &mut Report) {
+    use okbot_core::{ConversationStore as _, FireState};
+    if !config.schedule.enabled {
+        r.add("reminders", Status::Ok, "off ([schedule] enabled = false)");
+        return;
+    }
+    if config.bot.timezone.is_none() {
+        r.add(
+            "reminders",
+            Status::Warn,
+            "[bot] timezone is not set, so reminder times are read as UTC; set it, for example \
+             timezone = \"Asia/Ho_Chi_Minh\"",
+        );
+    }
+    match store.recent_fires(50).await {
+        Ok(fires) => {
+            let bad: Vec<String> = fires
+                .iter()
+                .filter(|f| matches!(f.state, FireState::Failed | FireState::Missed))
+                .take(5)
+                .map(|f| format!("{} {} at {}", f.task_id, f.state.as_str(), f.fire_at))
+                .collect();
+            let sent = fires.iter().filter(|f| f.state == FireState::Sent).count();
+            if bad.is_empty() {
+                r.add(
+                    "reminders",
+                    Status::Ok,
+                    format!("{sent} sent recently; `okbot task list` shows what is next"),
+                );
+            } else {
+                r.add(
+                    "reminders",
+                    Status::Warn,
+                    format!(
+                        "not delivered: {} (see `okbot logs`; a reminder needs a chat where the \
+                         owner wrote to the bot)",
+                        bad.join("; ")
+                    ),
+                );
+            }
+        }
+        Err(error) => r.add("reminders", Status::Fail, error.to_string()),
+    }
 }
 
 /// Personal bots answer nobody until an account is paired.

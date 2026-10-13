@@ -16,6 +16,7 @@ mod http;
 mod live;
 mod metrics;
 mod policy;
+mod schedule;
 #[cfg(test)]
 mod test_support;
 mod turn;
@@ -32,7 +33,7 @@ use okbot_core::{
 };
 use tokio::sync::{Notify, mpsc};
 
-pub use config::{OWNER, RuntimeConfig};
+pub use config::{OWNER, RuntimeConfig, ScheduleConfig};
 pub use http::HttpOptions;
 
 /// Building the runtime failed.
@@ -356,6 +357,9 @@ impl Runtime {
             tasks.spawn(server);
         }
         drop(sink);
+        if shared.tasks.is_some() && shared.config.schedule.enabled {
+            tasks.spawn(schedule::run(shared.clone(), channel_stop.clone()));
+        }
 
         let work_stop = CancellationToken::new();
         dispatch::Dispatcher::new(shared.clone(), work_stop.clone())

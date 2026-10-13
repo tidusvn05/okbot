@@ -128,6 +128,14 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     rc.tool_policy = config.agent.tool_policy;
     rc.timezone.clone_from(&config.bot.timezone);
     rc.personal = config.bot.profile == okbot_config::BotProfile::Personal;
+    rc.schedule.enabled = config.schedule.enabled;
+    rc.schedule.late_grace = Duration::from_secs(config.schedule.late_grace_minutes * 60);
+    rc.schedule.deliver_to = config
+        .schedule
+        .deliver_to
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
     for admin in &config.bot.admins {
         rc.access.admins.insert(parse_admin(admin)?);
     }
