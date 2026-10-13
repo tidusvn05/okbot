@@ -153,6 +153,7 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
             is_bot: false,
         },
         internal: false,
+        person: None,
     };
     let result = async {
         let grant = knowledge

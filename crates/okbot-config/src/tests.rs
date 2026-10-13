@@ -216,3 +216,33 @@ fn bridge_cannot_shadow_a_built_in_platform() {
     let error = Config::load(dir.path()).unwrap_err().to_string();
     assert!(error.contains("built in"), "{error}");
 }
+
+#[test]
+fn people_link_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[people.luan]\naccounts = [\"zalo:me/u1\", \"discord:me/123\"]\n",
+    );
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.people["luan"].accounts.len(), 2);
+
+    for (body, needle) in [
+        ("[people.Luan]\naccounts = []\n", "may only contain"),
+        (
+            "[people.luan]\naccounts = [\"zalo:me\"]\n",
+            "must look like",
+        ),
+        (
+            "[people.a]\naccounts = [\"zalo:me/u1\"]\n[people.b]\naccounts = [\"zalo:me/u1\"]\n",
+            "linked to both",
+        ),
+    ] {
+        write(
+            dir.path(),
+            &format!("config_version = 1\n[bot]\nname = \"x\"\n{body}"),
+        );
+        let error = Config::load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains(needle), "{error}");
+    }
+}

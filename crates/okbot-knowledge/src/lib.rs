@@ -256,19 +256,26 @@ impl Knowledge {
 
     async fn user_profile(&self, who: &Requester) -> Option<String> {
         let bundle = self.bundle.clone();
-        let id = paths::user_profile(&who.conversation.channel, &who.user.id);
+        // The person's profile first, then the profiles of their accounts (or of this account).
+        let ids = paths::personal_dirs(who);
         let scope = scope::for_requester(who);
-        let request = GetRequest {
-            id,
-            max_tokens: Some(800),
-            ..GetRequest::default()
-        };
-        let profile = tokio::task::spawn_blocking(move || bundle.get(&request, &scope))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .map(|r| strip_frontmatter(&r.content).trim().to_string())
-            .filter(|s| !s.is_empty());
+        let profile = tokio::task::spawn_blocking(move || {
+            ids.into_iter().find_map(|id| {
+                let request = GetRequest {
+                    id,
+                    max_tokens: Some(800),
+                    ..GetRequest::default()
+                };
+                bundle
+                    .get(&request, &scope)
+                    .ok()
+                    .map(|r| strip_frontmatter(&r.content).trim().to_string())
+                    .filter(|s| !s.is_empty())
+            })
+        })
+        .await
+        .ok()
+        .flatten();
         let notes: Vec<String> = self
             .list(who)
             .await

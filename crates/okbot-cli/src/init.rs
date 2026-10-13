@@ -60,6 +60,25 @@ pub(crate) struct InitArgs {
     /// Messaging platform.
     #[arg(long, value_enum)]
     platform: Option<Platform>,
+    #[command(flatten)]
+    pub(crate) channel: PlatformArgs,
+    /// IANA timezone shown to the agent (`Asia/Ho_Chi_Minh`).
+    #[arg(long)]
+    timezone: Option<String>,
+    /// Overwrite an existing okbot.toml.
+    #[arg(long)]
+    force: bool,
+    /// Never ask; fail with exit code 3 when an answer is missing.
+    #[arg(long, short = 'y')]
+    yes: bool,
+    /// Print the result as JSON (implies --yes).
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// A platform's credentials and delivery (`okbot init` and `okbot channel add`).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub(crate) struct PlatformArgs {
     /// Environment variable that already holds the Zalo bot token (otherwise you are asked for
     /// the token and it is saved to .env).
     #[arg(long)]
@@ -91,26 +110,17 @@ pub(crate) struct InitArgs {
     /// HTTP listen address for webhooks (default: the first free port from 127.0.0.1:8787).
     #[arg(long)]
     listen: Option<String>,
-    /// IANA timezone shown to the agent (`Asia/Ho_Chi_Minh`).
-    #[arg(long)]
-    timezone: Option<String>,
-    /// Skip checking the Zalo token with the Zalo API.
+    /// Skip checking credentials with the platform's API.
     #[arg(long)]
     no_verify: bool,
-    /// Overwrite an existing okbot.toml.
-    #[arg(long)]
-    force: bool,
-    /// Never ask; fail with exit code 3 when an answer is missing.
-    #[arg(long, short = 'y')]
-    yes: bool,
-    /// Print the result as JSON (implies --yes).
-    #[arg(long)]
-    pub(crate) json: bool,
 }
 
-struct Wizard<'a> {
-    args: &'a InitArgs,
-    interactive: bool,
+pub(crate) struct Wizard<'a> {
+    pub(crate) args: &'a PlatformArgs,
+    pub(crate) agents: &'a [String],
+    pub(crate) interactive: bool,
+    /// Adding a channel to an existing bot: never reuse a secret name already in `.env`.
+    pub(crate) adding: bool,
 }
 
 impl Wizard<'_> {
@@ -150,18 +160,13 @@ async fn choose_agents(w: &Wizard<'_>) -> anyhow::Result<Vec<(String, Option<Pat
             .find(|c| okbot_agent::provider_name(c.provider) == name)
             .map(|c| c.path.clone())
     };
-    if !w.args.agent.is_empty() {
-        for name in &w.args.agent {
+    if !w.agents.is_empty() {
+        for name in w.agents {
             if okbot_agent::parse_provider(name).is_none() {
                 bail!("unknown agent `{name}` (use claude, codex, opencode or devin)");
             }
         }
-        return Ok(w
-            .args
-            .agent
-            .iter()
-            .map(|n| (n.clone(), path_of(n)))
-            .collect());
+        return Ok(w.agents.iter().map(|n| (n.clone(), path_of(n))).collect());
     }
     // Only CLIs that can restrict their tools are offered; Devin/OpenCode need --agent.
     let usable: Vec<&DetectedCli> = found
@@ -244,8 +249,9 @@ async fn zalo(
             if !token.contains(':') {
                 bail!("that does not look like a Zalo bot token (expected `12345:abc…`)");
             }
-            upsert_env(&env_file, "ZALO_BOT_TOKEN", &token)?;
-            "ZALO_BOT_TOKEN".into()
+            let name = fresh_env_name(w, dir, "ZALO_BOT_TOKEN", instance);
+            upsert_env(&env_file, &name, &token)?;
+            name
         }
     };
     if !w.args.no_verify {
@@ -301,7 +307,8 @@ async fn zalo(
         bail!("the webhook URL must start with https://");
     }
     let secret = hex::encode(rand::random::<[u8; 24]>());
-    upsert_env(&env_file, "ZALO_WEBHOOK_SECRET", &secret)?;
+    let secret_env = fresh_env_name(w, dir, "ZALO_WEBHOOK_SECRET", instance);
+    upsert_env(&env_file, &secret_env, &secret)?;
     let listen = w.args.listen.clone().unwrap_or_else(free_listen);
     Ok((
         ZaloInit {
@@ -309,10 +316,41 @@ async fn zalo(
             token_env,
             delivery,
             public_url: Some(public_url),
-            secret_env: Some("ZALO_WEBHOOK_SECRET".into()),
+            secret_env: Some(secret_env),
         },
         Some(listen),
     ))
+}
+
+/// `base`, or `base_<INSTANCE>` when adding a channel and `.env` already holds `base` (a second
+/// channel of the same platform must not overwrite the first one's secret).
+fn fresh_env_name(w: &Wizard<'_>, dir: &Path, base: &str, instance: &str) -> String {
+    let taken = w.adding
+        && std::fs::read_to_string(dir.join(ENV_FILE))
+            .is_ok_and(|text| text.lines().any(|l| l.starts_with(&format!("{base}="))));
+    if taken {
+        format!(
+            "{base}_{}",
+            instance.to_ascii_uppercase().replace(['-', '.'], "_")
+        )
+    } else {
+        base.to_string()
+    }
+}
+
+/// Adds `name` to the bot directory's `.gitignore`.
+pub(crate) fn ensure_ignored(dir: &Path, name: &str) -> anyhow::Result<()> {
+    let path = dir.join(".gitignore");
+    let mut ignore = std::fs::read_to_string(&path).unwrap_or_default();
+    if !ignore.lines().any(|l| l == name) {
+        if !ignore.is_empty() && !ignore.ends_with('\n') {
+            ignore.push('\n');
+        }
+        ignore.push_str(name);
+        ignore.push('\n');
+        std::fs::write(path, ignore)?;
+    }
+    Ok(())
 }
 
 /// A token from `--<flag>` (an environment variable name) or typed by the user and saved to
@@ -365,8 +403,14 @@ async fn gchat(
     if !w.args.no_verify {
         verify_gchat(&text).await?;
     }
-    let target = dir.join(GCHAT_KEY_FILE);
-    write_private(&target, &text)?;
+    // A second Google Chat app in the same bot gets its own key file.
+    let key_file = if dir.join(GCHAT_KEY_FILE).exists() {
+        format!("gchat-{instance}-service-account.json")
+    } else {
+        GCHAT_KEY_FILE.to_string()
+    };
+    write_private(&dir.join(&key_file), &text)?;
+    ensure_ignored(dir, &key_file)?;
     let delivery = match w.args.gchat_delivery {
         Some(GChatDeliveryArg::Pubsub) => GChatDelivery::Pubsub,
         Some(GChatDeliveryArg::Http) => GChatDelivery::Http,
@@ -394,7 +438,7 @@ async fn gchat(
     };
     let mut init = GChatInit {
         instance: instance.into(),
-        credentials: GCHAT_KEY_FILE.into(),
+        credentials: key_file.into(),
         delivery,
         subscription: None,
         audience_url: None,
@@ -499,8 +543,8 @@ async fn verify_zalo_token(_: &Path, _: &str) -> anyhow::Result<()> {
 }
 
 /// Step 3a: which platform.
-fn choose_platform(w: &Wizard<'_>) -> anyhow::Result<Platform> {
-    if let Some(p) = w.args.platform {
+fn choose_platform(w: &Wizard<'_>, given: Option<Platform>) -> anyhow::Result<Platform> {
+    if let Some(p) = given {
         return Ok(p);
     }
     let options = vec![
@@ -525,7 +569,7 @@ fn choose_platform(w: &Wizard<'_>) -> anyhow::Result<Platform> {
 }
 
 /// Step 3b: the platform's credentials and delivery, written into `options`.
-async fn setup_channel(
+pub(crate) async fn setup_channel(
     w: &Wizard<'_>,
     dir: &Path,
     instance: &str,
@@ -555,7 +599,7 @@ async fn setup_channel(
                 args.discord_token_env.as_ref(),
                 "--discord-token-env",
                 "Discord bot token (Developer Portal → Bot → Reset Token)",
-                "DISCORD_TOKEN",
+                &fresh_env_name(w, dir, "DISCORD_TOKEN", instance),
                 "",
             )?;
             options.discord = Some((instance.to_string(), env));
@@ -567,7 +611,7 @@ async fn setup_channel(
                 args.slack_app_token_env.as_ref(),
                 "--slack-app-token-env",
                 "Slack app-level token with connections:write",
-                "SLACK_APP_TOKEN",
+                &fresh_env_name(w, dir, "SLACK_APP_TOKEN", instance),
                 "xapp-",
             )?;
             let bot = token(
@@ -576,7 +620,7 @@ async fn setup_channel(
                 args.slack_bot_token_env.as_ref(),
                 "--slack-bot-token-env",
                 "Slack bot token",
-                "SLACK_BOT_TOKEN",
+                &fresh_env_name(w, dir, "SLACK_BOT_TOKEN", instance),
                 "xoxb-",
             )?;
             options.slack = Some((instance.to_string(), app, bot));
@@ -587,7 +631,7 @@ async fn setup_channel(
 }
 
 /// The instance part of channel ids, from the bot name.
-fn instance_of(name: &str) -> String {
+pub(crate) fn instance_of(name: &str) -> String {
     let instance: String = name
         .to_lowercase()
         .chars()
@@ -613,7 +657,12 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
         );
     }
     let interactive = !args.yes && !args.json && std::io::stdin().is_terminal();
-    let w = Wizard { args, interactive };
+    let w = Wizard {
+        args: &args.channel,
+        agents: &args.agent,
+        interactive,
+        adding: false,
+    };
     let name = args
         .name
         .clone()
@@ -625,7 +674,7 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
         timezone: args.timezone.clone(),
         ..InitOptions::default()
     };
-    let platform = choose_platform(&w)?;
+    let platform = choose_platform(&w, args.platform)?;
     setup_channel(&w, dir, &instance, platform, &mut options).await?;
     write_bot(dir, &options, platform, args.json)?;
     Ok(name)

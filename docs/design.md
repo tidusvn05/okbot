@@ -443,6 +443,12 @@ Scope::all()
 User A cannot see user B's profile even if the agent is prompt-injected, because okbase treats
 out-of-scope documents as nonexistent.
 
+**Linked accounts.** One human often uses several platforms. The operator can link accounts as one
+person (`[people.<person>] accounts = ["zalo:shop/…", "discord:shop/…"]`, or
+`okbot people link`). A linked account writes personal notes to `memory/people/<person>/` and its
+scope also allows the pre-link folders of every linked account, so nothing is lost when linking.
+Linking is operator-only: chat users cannot claim another account.
+
 ### 5.4 Writing memory
 
 okbot serves a second MCP server, `/mcp/bot` (rmcp, same RunToken mechanism):

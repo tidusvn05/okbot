@@ -33,7 +33,7 @@ printf '%s\n' '{"is_error":false,"result":"Hello from **fake** claude"}'"#,
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("Hello from **fake** claude"), "{stdout}");
-    assert!(stdout.contains("`you`"), "{stdout}");
+    assert!(stdout.contains("`console:local/you`"), "{stdout}");
     assert!(dir.path().join("state/okbot.db").exists());
 }
 

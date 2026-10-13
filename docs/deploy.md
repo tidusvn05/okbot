@@ -45,7 +45,30 @@ okbot stop shop
 installs a system unit instead. Without systemd (containers), run `okbot run` under your own
 supervisor, or use the Docker image (see the `Dockerfile`).
 
-## 4. Many bots on one machine
+## 4. More platforms, and one person on several of them
+
+A bot can serve several platforms at once, with one knowledge bundle:
+
+```sh
+okbot channel add discord --bot shop      # asks for the token, saves it to .env
+okbot channel list --bot shop
+okbot channel remove slack:shop --bot shop
+okbot restart shop
+```
+
+Each platform account has its own personal memory. For a personal assistant used from Zalo and
+Discord, link your accounts so they share one profile and memory (`kb/memory/people/<person>/`):
+
+```sh
+# `/whoami` in each chat shows the account id
+okbot people link luan zalo:shop/6ede9afa66b88fe6d6a9 discord:shop/123456789012345678
+okbot restart shop
+```
+
+Notes saved before the link stay visible from every linked account. Only the operator can link
+accounts (in `okbot.toml` `[people.<person>]`), because linked accounts read each other's notes.
+
+## 5. Many bots on one machine
 
 Repeat `okbot new <name> <dir>` per bot; `okbot list` shows them all. Each bot is its own
 process, with its own token, knowledge, history and service.
@@ -56,7 +79,7 @@ process, with its own token, knowledge, history and service.
 | Agent processes at once | `[agent] max_concurrent` per bot | a machine-wide cap in `~/.config/okbot/config.toml`: `[limits]` `max_agents = 4` |
 | HTTP port | the wizard picks a free one from 8787 | only bots with webhook delivery need one |
 
-## 5. Webhooks behind a reverse proxy
+## 6. Webhooks behind a reverse proxy
 
 Webhook delivery needs a public HTTPS URL that reaches the bot's `[http] listen` address. With
 Caddy:

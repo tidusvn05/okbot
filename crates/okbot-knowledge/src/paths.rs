@@ -1,6 +1,6 @@
 //! Where knowledge and memory live inside the bundle, and path-safe ids.
 
-use okbot_core::{ChannelId, UserId};
+use okbot_core::{ChannelId, Requester, UserId};
 
 /// Folders every requester may read.
 pub(crate) const SHARED_DIRS: [&str; 5] =
@@ -37,6 +37,37 @@ pub(crate) fn user_dir(channel: &ChannelId, user: &UserId) -> String {
     user_profile(channel, user)
 }
 
+/// Profile and notes of a linked person: `memory/people/<person>` (profile) and `…/<person>/`.
+pub(crate) fn person_dir(person: &str) -> String {
+    format!("memory/people/{}", segment(person))
+}
+
+/// Where `who`'s personal notes are written: the person's folder when the account is linked,
+/// otherwise the account's own folder.
+pub(crate) fn owner_dir(who: &Requester) -> String {
+    match &who.person {
+        Some(person) => person_dir(&person.id),
+        None => user_dir(&who.conversation.channel, &who.user.id),
+    }
+}
+
+/// Every personal folder `who` may read, the write folder first: a linked person also keeps the
+/// notes each of their accounts saved before the link.
+pub(crate) fn personal_dirs(who: &Requester) -> Vec<String> {
+    let mut dirs = vec![owner_dir(who)];
+    let accounts = who.person.as_ref().map_or_else(
+        || vec![(who.conversation.channel.clone(), who.user.id.clone())],
+        |p| p.accounts.clone(),
+    );
+    for (channel, user) in &accounts {
+        let dir = user_dir(channel, user);
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,6 +92,7 @@ mod tests {
     fn memory_paths() {
         let ch: ChannelId = "zalo:shop".parse().unwrap();
         assert_eq!(user_profile(&ch, &"u1".into()), "memory/users/zalo-shop/u1");
+        assert_eq!(person_dir("luan"), "memory/people/luan");
         assert_eq!(
             room_dir(&ch, "r/1"),
             format!("memory/rooms/zalo-shop/x-{}", hex::encode("r/1"))

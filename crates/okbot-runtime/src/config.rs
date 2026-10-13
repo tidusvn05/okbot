@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use okbot_core::{ChannelId, ToolPolicy, UserId};
+use okbot_core::{ChannelId, Person, ToolPolicy, UserId};
 
 /// When the bot answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,9 +145,27 @@ pub struct RuntimeConfig {
     pub resume_sessions: bool,
     /// How often a "thinking…" message is updated with progress.
     pub progress_interval: Duration,
+    /// Linked accounts (`[people]`): each account maps to its person.
+    pub people: HashMap<(ChannelId, UserId), Person>,
 }
 
 impl RuntimeConfig {
+    /// Links `accounts` as one person `id`.
+    pub fn link_person(&mut self, id: &str, accounts: Vec<(ChannelId, UserId)>) {
+        let person = Person {
+            id: id.to_string(),
+            accounts: accounts.clone(),
+        };
+        for account in accounts {
+            self.people.insert(account, person.clone());
+        }
+    }
+
+    /// The person `user` of `channel` belongs to.
+    pub fn person(&self, channel: &ChannelId, user: &UserId) -> Option<&Person> {
+        self.people.get(&(channel.clone(), user.clone()))
+    }
+
     /// Defaults with `work_dir` for agent working directories.
     pub fn new(bot_name: impl Into<String>, work_dir: impl Into<PathBuf>) -> Self {
         Self {
@@ -170,6 +188,7 @@ impl RuntimeConfig {
             timezone: None,
             resume_sessions: true,
             progress_interval: Duration::from_millis(1500),
+            people: HashMap::new(),
         }
     }
 

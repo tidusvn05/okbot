@@ -117,14 +117,23 @@ pub fn render_initial(o: &InitOptions) -> String {
     }
 
     if let Some(listen) = &o.http_listen {
-        let _ = writeln!(s, "\n[http]");
-        let _ = writeln!(
-            s,
-            "listen = {}            # put a TLS reverse proxy in front",
-            quoted(listen)
-        );
+        s.push_str(&render_http(listen));
     }
+    s.push_str(&render_channels(o));
+    s
+}
 
+/// The `[http]` section listening on `listen`.
+pub fn render_http(listen: &str) -> String {
+    format!(
+        "\n[http]\nlisten = {}            # put a TLS reverse proxy in front\n",
+        quoted(listen)
+    )
+}
+
+/// The `[channels.*]` sections of `o` (also used by `okbot channel add`).
+pub fn render_channels(o: &InitOptions) -> String {
+    let mut s = String::new();
     if let Some(z) = &o.zalo {
         render_zalo(&mut s, z);
     }
@@ -222,6 +231,29 @@ pub fn upsert_env(path: &Path, name: &str, value: &str) -> std::io::Result<()> {
     lines.push(dotenv::line(name, value));
     let text = lines.join("\n") + "\n";
     write_private(path, &text)
+}
+
+/// Removes `name` from the `.env` file at `path`. Returns whether it was there.
+pub fn remove_env(path: &Path, name: &str) -> std::io::Result<bool> {
+    let Ok(existing) = std::fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let is_it = |l: &&str| {
+        l.trim_start()
+            .trim_start_matches("export ")
+            .starts_with(&format!("{name}="))
+    };
+    if !existing.lines().any(|l| is_it(&l)) {
+        return Ok(false);
+    }
+    let kept: Vec<&str> = existing.lines().filter(|l| !is_it(l)).collect();
+    let text = if kept.is_empty() {
+        String::new()
+    } else {
+        kept.join("\n") + "\n"
+    };
+    write_private(path, &text)?;
+    Ok(true)
 }
 
 #[cfg(unix)]

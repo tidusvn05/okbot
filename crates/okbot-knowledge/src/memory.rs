@@ -31,7 +31,7 @@ pub(crate) fn author_of(who: &Requester) -> String {
 pub(crate) fn folder(scope: MemoryScope, who: &Requester) -> String {
     let channel = &who.conversation.channel;
     match scope {
-        MemoryScope::User => paths::user_dir(channel, &who.user.id),
+        MemoryScope::User => paths::owner_dir(who),
         MemoryScope::Room => paths::room_dir(channel, &who.conversation.room),
         MemoryScope::Global => "memory/global".to_string(),
     }
@@ -237,7 +237,10 @@ impl Notes {
     /// Every note visible to `who`.
     pub(crate) fn list(&self, who: &Requester) -> Vec<MemoryEntry> {
         let mut out = Vec::new();
-        for scope in [MemoryScope::User, MemoryScope::Room, MemoryScope::Global] {
+        for dir in paths::personal_dirs(who) {
+            out.extend(self.read_folder(&dir, MemoryScope::User));
+        }
+        for scope in [MemoryScope::Room, MemoryScope::Global] {
             out.extend(self.read_folder(&folder(scope, who), scope));
         }
         out
@@ -302,6 +305,7 @@ impl Notes {
         walk(self, "memory/global", MemoryScope::Global, &mut out);
         walk(self, "memory/rooms", MemoryScope::Room, &mut out);
         walk(self, "memory/users", MemoryScope::User, &mut out);
+        walk(self, "memory/people", MemoryScope::User, &mut out);
         out
     }
 

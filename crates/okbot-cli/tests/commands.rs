@@ -240,3 +240,115 @@ case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
         assert!(log.contains(expected), "missing {expected:?} in\n{log}");
     }
 }
+
+#[test]
+fn channels_and_people() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "home",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    let run = |args: &[&str]| {
+        let out = env.okbot().args(args).write_stdin("").output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // Missing answers name their flag (exit 3), like `okbot new`.
+    let (code, _, err) = run(&["channel", "add", "discord", "--bot", "home", "--yes"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("--discord-token-env"), "{err}");
+
+    let (code, _, err) = run(&[
+        "channel",
+        "add",
+        "discord",
+        "--bot",
+        "home",
+        "--discord-token-env",
+        "MY_DISCORD",
+        "-y",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("Added discord:home"), "{err}");
+    let (code, _, err) = run(&[
+        "channel",
+        "add",
+        "discord",
+        "--bot",
+        "home",
+        "--discord-token-env",
+        "MY_DISCORD",
+        "-y",
+    ]);
+    assert_ne!(code, 0);
+    assert!(err.contains("already exists"), "{err}");
+    let (code, _, err) = run(&[
+        "channel",
+        "add",
+        "slack",
+        "--bot",
+        "home",
+        "--slack-app-token-env",
+        "SA",
+        "--slack-bot-token-env",
+        "SB",
+        "-y",
+    ]);
+    assert_eq!(code, 0, "{err}");
+
+    let (_, out, _) = run(&["channel", "list", "--bot", "home"]);
+    assert!(
+        out.contains("discord:home") && out.contains("missing MY_DISCORD"),
+        "{out}"
+    );
+    assert!(out.contains("slack:home"), "{out}");
+    let toml = std::fs::read_to_string(env.root().join("home/okbot.toml")).unwrap();
+    assert!(
+        toml.contains("# okbot bot configuration"),
+        "comments are kept"
+    );
+
+    // People: link accounts across platforms.
+    let (code, _, err) = run(&[
+        "people",
+        "link",
+        "luan",
+        "discord:home/123",
+        "slack:home/U9",
+        "--bot",
+        "home",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = run(&["people", "link", "Luan", "discord:home/5", "--bot", "home"]);
+    assert_ne!(code, 0, "invalid person id");
+    assert!(err.contains("may only contain"), "{err}");
+    let (_, out, _) = run(&["people", "list", "--bot", "home"]);
+    assert!(
+        out.contains("luan") && out.contains("discord:home/123"),
+        "{out}"
+    );
+
+    // Removing a channel warns about accounts that pointed at it.
+    let (code, _, err) = run(&["channel", "remove", "discord:home", "--bot", "home"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("discord:home/123"), "{err}");
+    let (_, out, _) = run(&["channel", "list", "--bot", "home"]);
+    assert!(!out.contains("discord:home"), "{out}");
+
+    let (code, _, err) = run(&["people", "unlink", "luan", "slack:home/U9", "--bot", "home"]);
+    assert_eq!(code, 0, "{err}");
+    let (code, _, _) = run(&["people", "remove", "luan", "--bot", "home"]);
+    assert_eq!(code, 0);
+    let (_, out, _) = run(&["people", "list", "--bot", "home"]);
+    assert!(out.contains("no people linked"), "{out}");
+}
