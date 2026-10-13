@@ -23,6 +23,7 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     let a = conversation("zalo:shop", "room-a");
     let b = conversation("zalo:shop", "room-b");
     dedupe(store, clock).await;
+    pairing(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -237,4 +238,72 @@ pub async fn channel_stops(
         .expect("run returns within 10 s of shutdown")
         .expect("run does not panic")
         .expect("run returns Ok on shutdown");
+}
+
+async fn pairing(store: &dyn ConversationStore, clock: &ManualClock) {
+    let zalo: okbot_core::ChannelId = "zalo:shop".parse().expect("valid id");
+    let discord: okbot_core::ChannelId = "discord:shop".parse().expect("valid id");
+    let me = okbot_core::UserId::new("me");
+    assert_eq!(store.owners().await.expect("owners"), vec![]);
+
+    store
+        .create_pairing_code("111111", Duration::from_secs(600))
+        .await
+        .expect("create");
+    assert!(
+        store
+            .redeem_pairing_code("111111", &zalo, &me)
+            .await
+            .expect("redeem"),
+        "a fresh code pairs"
+    );
+    assert!(
+        !store
+            .redeem_pairing_code("111111", &discord, &me)
+            .await
+            .expect("redeem"),
+        "codes are single-use"
+    );
+    assert_eq!(
+        store.owners().await.expect("owners"),
+        vec![(zalo.clone(), me.clone())]
+    );
+
+    // Expired codes do not pair.
+    store
+        .create_pairing_code("222222", Duration::from_secs(60))
+        .await
+        .expect("create");
+    clock.advance(Duration::from_secs(61));
+    assert!(
+        !store
+            .redeem_pairing_code("222222", &discord, &me)
+            .await
+            .expect("redeem")
+    );
+
+    // Too many wrong guesses cancel pending codes.
+    store
+        .create_pairing_code("333333", Duration::from_secs(600))
+        .await
+        .expect("create");
+    for _ in 0..okbot_core::PAIRING_MAX_FAILURES {
+        assert!(
+            !store
+                .redeem_pairing_code("000000", &discord, &me)
+                .await
+                .expect("redeem")
+        );
+    }
+    assert!(
+        !store
+            .redeem_pairing_code("333333", &discord, &me)
+            .await
+            .expect("redeem"),
+        "cancelled after too many failures"
+    );
+
+    assert!(store.remove_owner(&zalo, &me).await.expect("remove"));
+    assert!(!store.remove_owner(&zalo, &me).await.expect("remove"));
+    assert_eq!(store.owners().await.expect("owners"), vec![]);
 }

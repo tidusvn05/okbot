@@ -93,6 +93,8 @@ pub struct FixedReplies {
     /// Shown while an answer is written, on platforms that edit messages but have no typing
     /// indicator (Google Chat).
     pub thinking: String,
+    /// To accounts that are not the owner's, on a personal bot.
+    pub private: String,
 }
 
 impl Default for FixedReplies {
@@ -106,6 +108,9 @@ impl Default for FixedReplies {
             too_long: "That message is too long for me. Please shorten it.".into(),
             stopped: "Stopped.".into(),
             thinking: "_Thinking…_".into(),
+            private: "This is a private assistant. If it is yours, run `okbot pair` where the bot \
+                      runs, then send me `/pair <code>` in a direct message."
+                .into(),
         }
     }
 }
@@ -147,7 +152,13 @@ pub struct RuntimeConfig {
     pub progress_interval: Duration,
     /// Linked accounts (`[people]`): each account maps to its person.
     pub people: HashMap<(ChannelId, UserId), Person>,
+    /// A personal assistant: only the owner's paired accounts are answered, and they share one
+    /// profile and memory (person [`OWNER`]).
+    pub personal: bool,
 }
+
+/// The person id of a personal bot's owner (`memory/people/owner/`).
+pub const OWNER: &str = "owner";
 
 impl RuntimeConfig {
     /// Links `accounts` as one person `id`.
@@ -189,6 +200,7 @@ impl RuntimeConfig {
             resume_sessions: true,
             progress_interval: Duration::from_millis(1500),
             people: HashMap::new(),
+            personal: false,
         }
     }
 

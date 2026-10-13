@@ -6,6 +6,7 @@ use crate::write::{ZaloInit, upsert_env};
 fn options(delivery: Delivery) -> InitOptions {
     InitOptions {
         name: "Shop bot".into(),
+        personal: false,
         chain: vec![
             (
                 "claude".into(),

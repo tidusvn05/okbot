@@ -11,6 +11,8 @@ use crate::{CONFIG_VERSION, Delivery};
 pub struct InitOptions {
     /// Bot name.
     pub name: String,
+    /// A personal assistant (`profile = "personal"`).
+    pub personal: bool,
     /// Agent CLIs in fallback order, with the absolute path detected for each.
     pub chain: Vec<(String, Option<PathBuf>)>,
     /// A Zalo channel, if any.
@@ -75,6 +77,15 @@ pub fn render_initial(o: &InitOptions) -> String {
     let _ = writeln!(s, "config_version = {CONFIG_VERSION}\n");
     let _ = writeln!(s, "[bot]");
     let _ = writeln!(s, "name = {}", quoted(&o.name));
+    let _ = writeln!(
+        s,
+        "profile = {}               # personal: only you (pair accounts with `okbot pair`), one memory | team",
+        if o.personal {
+            "\"personal\""
+        } else {
+            "\"team\"    "
+        }
+    );
     let _ = writeln!(s, "kb = \"kb\"");
     let _ = writeln!(s, "state_dir = \"state\"");
     let _ = writeln!(

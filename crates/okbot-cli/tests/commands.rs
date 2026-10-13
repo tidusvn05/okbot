@@ -352,3 +352,68 @@ fn channels_and_people() {
     let (_, out, _) = run(&["people", "list", "--bot", "home"]);
     assert!(out.contains("no people linked"), "{out}");
 }
+
+#[test]
+fn personal_profile_and_pairing_codes() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "me",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--profile",
+        "personal",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    assert_eq!(json["profile"], "personal");
+    let toml = std::fs::read_to_string(env.root().join("me/okbot.toml")).unwrap();
+    assert!(toml.contains("profile = \"personal\""), "{toml}");
+
+    let run = |args: &[&str]| {
+        let out = env.okbot().args(args).write_stdin("").output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let (_, out, _) = run(&["profile", "--bot", "me"]);
+    assert!(out.starts_with("personal"), "{out}");
+    let (code, out, _) = run(&["pair", "me", "--list"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("no paired accounts"), "{out}");
+    let (code, out, err) = run(&["pair", "me"]);
+    assert_eq!(code, 0, "{err}");
+    let pair_line = out
+        .lines()
+        .find(|l| l.trim().starts_with("/pair "))
+        .unwrap();
+    let digits = pair_line.trim().trim_start_matches("/pair ");
+    assert_eq!(digits.len(), 6, "{out}");
+    assert!(digits.chars().all(|c| c.is_ascii_digit()), "{out}");
+    let (code, _, err) = run(&["pair", "me", "--remove", "zalo:me/nobody"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("not paired"), "{err}");
+
+    let (code, _, err) = run(&["profile", "team", "--bot", "me"]);
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = run(&["pair", "me"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("team bot"), "{err}");
+
+    // Without --profile and without a terminal, new bots are team bots.
+    let (code, json) = env.json(&[
+        "new",
+        "shop",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    assert_eq!(json["profile"], "team");
+}

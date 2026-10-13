@@ -56,6 +56,14 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (channel, user_id)
     );
     ",
+    // 2: pairing codes for personal bots (owners live in `users` with role `owner`).
+    r"
+    CREATE TABLE pairing_codes (
+        code       TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL,
+        failures   INTEGER NOT NULL DEFAULT 0
+    );
+    ",
 ];
 
 /// The schema version this build writes.

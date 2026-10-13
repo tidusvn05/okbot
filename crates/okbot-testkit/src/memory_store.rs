@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, NewMessage, StoreError,
-    StoredMessage, async_trait,
+    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, NewMessage,
+    PAIRING_MAX_FAILURES, StoreError, StoredMessage, UserId, async_trait,
 };
 
 #[derive(Default)]
@@ -18,6 +18,9 @@ struct State {
     sessions: HashMap<ConversationKey, (String, String)>,
     runs: Vec<AgentRunRecord>,
     next: u64,
+    owners: Vec<(ChannelId, UserId)>,
+    /// code → (expires, failures)
+    codes: HashMap<String, (Timestamp, u32)>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -135,6 +138,50 @@ impl ConversationStore for MemoryStore {
             (backend.to_string(), session.to_string()),
         );
         Ok(())
+    }
+
+    async fn owners(&self) -> Result<Vec<(ChannelId, UserId)>, StoreError> {
+        let mut owners = self.lock().owners.clone();
+        owners.sort();
+        Ok(owners)
+    }
+
+    async fn remove_owner(&self, channel: &ChannelId, user: &UserId) -> Result<bool, StoreError> {
+        let mut state = self.lock();
+        let before = state.owners.len();
+        state.owners.retain(|(c, u)| c != channel || u != user);
+        Ok(state.owners.len() != before)
+    }
+
+    async fn create_pairing_code(&self, code: &str, ttl: Duration) -> Result<(), StoreError> {
+        let expires = self.clock.now() + signed(ttl);
+        self.lock().codes.insert(code.to_string(), (expires, 0));
+        Ok(())
+    }
+
+    async fn redeem_pairing_code(
+        &self,
+        code: &str,
+        channel: &ChannelId,
+        user: &UserId,
+    ) -> Result<bool, StoreError> {
+        let now = self.clock.now();
+        let mut state = self.lock();
+        state.codes.retain(|_, (expires, _)| *expires > now);
+        if state.codes.remove(code).is_some() {
+            let account = (channel.clone(), user.clone());
+            if !state.owners.contains(&account) {
+                state.owners.push(account);
+            }
+            return Ok(true);
+        }
+        for (_, failures) in state.codes.values_mut() {
+            *failures += 1;
+        }
+        state
+            .codes
+            .retain(|_, (_, failures)| *failures < PAIRING_MAX_FAILURES);
+        Ok(false)
     }
 
     async fn record_run(&self, run: AgentRunRecord) -> Result<(), StoreError> {

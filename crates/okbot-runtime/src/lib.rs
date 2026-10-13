@@ -31,7 +31,7 @@ use okbot_core::{
 };
 use tokio::sync::{Notify, mpsc};
 
-pub use config::RuntimeConfig;
+pub use config::{OWNER, RuntimeConfig};
 pub use http::HttpOptions;
 
 /// Building the runtime failed.
@@ -107,6 +107,45 @@ pub(crate) struct Shared {
     pub(crate) gate: policy::Gate,
     pub(crate) in_flight: Arc<InFlight>,
     pub(crate) metrics: metrics::Metrics,
+}
+
+impl Shared {
+    /// The owner's accounts on a personal bot. Errors fail closed (no owner).
+    pub(crate) async fn owners(&self) -> Vec<(ChannelId, okbot_core::UserId)> {
+        if !self.config.personal {
+            return Vec::new();
+        }
+        self.store.owners().await.unwrap_or_else(|error| {
+            tracing::error!(%error, "cannot read the owner accounts");
+            Vec::new()
+        })
+    }
+
+    /// The person behind the author of `event`: the owner on a personal bot, or the person the
+    /// operator linked the account to.
+    pub(crate) async fn person_of(&self, event: &InboundEvent) -> Option<okbot_core::Person> {
+        if self.config.personal {
+            let mut owners = self.owners().await;
+            let me = (event.conversation.channel.clone(), event.author.id.clone());
+            // The console is the terminal of the machine the bot runs on: its user is the owner.
+            let local = event.conversation.channel.platform() == "console";
+            if local && !owners.contains(&me) {
+                owners.push(me.clone());
+            }
+            return owners.contains(&me).then(|| okbot_core::Person {
+                id: config::OWNER.to_string(),
+                accounts: owners,
+            });
+        }
+        self.config
+            .person(&event.conversation.channel, &event.author.id)
+            .cloned()
+    }
+
+    /// An administrator: listed in `[bot] admins`, or the owner of a personal bot.
+    pub(crate) async fn is_admin(&self, event: &InboundEvent) -> bool {
+        self.gate.is_admin(event) || (self.config.personal && self.person_of(event).await.is_some())
+    }
 }
 
 /// Builds a [`Runtime`].

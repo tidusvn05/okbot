@@ -378,3 +378,51 @@ async fn progress_updates_the_thinking_message() {
     assert_eq!(edits.last().map(String::as_str), Some("Hello world"));
     h.stop().await;
 }
+
+#[tokio::test]
+async fn personal_bot_answers_only_paired_owner_accounts() {
+    let h = Harness::start_with(FakeAgent::echo("fake"), |c| c.personal = true);
+    let say_as = |user: &'static str, text: &'static str, direct: bool| {
+        let mut event = inbound("fake:test", if direct { user } else { "group" }, user, text);
+        event.is_direct = direct;
+        event.mentions_bot = !direct;
+        let channel = h.channel.clone();
+        async move { channel.inject(event).await }
+    };
+
+    // Nobody is the owner yet: everyone is turned away, the agent never runs.
+    say_as("ana", "hello", true).await;
+    h.settle().await;
+    assert_eq!(h.agent.calls(), 0);
+    assert!(h.channel.sent_texts()[0].contains("private assistant"));
+
+    h.store
+        .create_pairing_code("482913", Duration::from_secs(600))
+        .await
+        .unwrap();
+    say_as("ana", "/pair 482913", false).await; // in a group: refused, code kept
+    say_as("bob", "/pair 000000", true).await; // wrong code
+    say_as("ana", "/pair 482913", true).await;
+    h.settle().await;
+    let sent = h.channel.sent_texts();
+    assert!(sent[1].contains("direct message"), "{sent:?}");
+    assert!(sent[2].contains("not valid"), "{sent:?}");
+    assert!(sent[3].contains("Paired"), "{sent:?}");
+
+    // The owner is answered and the agent sees the owner person; others still are not.
+    say_as("ana", "what do you remember?", true).await;
+    say_as("bob", "hi", true).await;
+    say_as("ana", "/whoami", true).await;
+    h.settle().await;
+    assert_eq!(h.agent.calls(), 1);
+    let sent = h.channel.sent_texts();
+    assert!(
+        sent.iter().any(|t| t.contains("private assistant")),
+        "{sent:?}"
+    );
+    assert!(
+        sent.last().unwrap().contains("owner of this assistant"),
+        "{sent:?}"
+    );
+    h.stop().await;
+}

@@ -45,28 +45,34 @@ okbot stop shop
 installs a system unit instead. Without systemd (containers), run `okbot run` under your own
 supervisor, or use the Docker image (see the `Dockerfile`).
 
-## 4. More platforms, and one person on several of them
+## 4. More platforms, personal assistants
 
 A bot can serve several platforms at once, with one knowledge bundle:
 
 ```sh
-okbot channel add discord --bot shop      # asks for the token, saves it to .env
-okbot channel list --bot shop
-okbot channel remove slack:shop --bot shop
-okbot restart shop
+okbot channel add discord --bot me      # asks for the token, saves it to .env
+okbot channel list --bot me
+okbot channel remove slack:me --bot me
+okbot restart me
 ```
 
-Each platform account has its own personal memory. For a personal assistant used from Zalo and
-Discord, link your accounts so they share one profile and memory (`kb/memory/people/<person>/`):
+**Personal assistant.** Choose the `personal` profile when the bot is only for you
+(`okbot new me --profile personal`, or `okbot profile personal --bot me` for an existing bot). It
+then answers only your paired accounts, and all of them share one profile and memory
+(`kb/memory/people/owner/`), whatever platforms you add later. Pair each account once:
 
 ```sh
-# `/whoami` in each chat shows the account id
-okbot people link luan zalo:shop/6ede9afa66b88fe6d6a9 discord:shop/123456789012345678
-okbot restart shop
+okbot pair me          # prints `/pair 483921`, valid 10 minutes, single use
 ```
 
-Notes saved before the link stay visible from every linked account. Only the operator can link
-accounts (in `okbot.toml` `[people.<person>]`), because linked accounts read each other's notes.
+Send that line to the bot in a direct message on Zalo, Discord, … Everyone else gets "This is a
+private assistant". `okbot pair me --list` shows your accounts and `--remove <account>` unpairs one.
+`okbot chat` in the bot's directory is always you. Notes the bot saved for an account before it
+was paired stay visible.
+
+**Team bots** keep one memory per account. When a team member uses several platforms, the operator
+can still link their accounts: `okbot people link ana zalo:shop/<id> discord:shop/<id>` (ids from
+`/whoami`).
 
 ## 5. Many bots on one machine
 

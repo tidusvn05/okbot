@@ -30,6 +30,15 @@ pub(crate) enum Platform {
     None,
 }
 
+/// Who the bot serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum ProfileArg {
+    /// Only you: pair your accounts with `okbot pair`; one memory on every platform.
+    Personal,
+    /// Many people (a team, customers): each person has their own memory.
+    Team,
+}
+
 /// How Zalo delivers messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum DeliveryArg {
@@ -57,6 +66,9 @@ pub(crate) struct InitArgs {
     /// Agent CLIs in fallback order (`claude,codex`). Default: ask, or the only logged-in one.
     #[arg(long, value_delimiter = ',')]
     agent: Vec<String>,
+    /// Who the bot serves (default: ask, or team).
+    #[arg(long, value_enum)]
+    profile: Option<ProfileArg>,
     /// Messaging platform.
     #[arg(long, value_enum)]
     platform: Option<Platform>,
@@ -542,6 +554,30 @@ async fn verify_zalo_token(_: &Path, _: &str) -> anyhow::Result<()> {
     bail!("this okbot build has no Zalo support")
 }
 
+/// Step 2b: personal assistant or team bot. Without a terminal the default is `team`.
+fn choose_profile(w: &Wizard<'_>, given: Option<ProfileArg>) -> anyhow::Result<ProfileArg> {
+    if let Some(p) = given {
+        return Ok(p);
+    }
+    if !w.interactive {
+        return Ok(ProfileArg::Team);
+    }
+    let choice = inquire::Select::new(
+        "Who is this bot for?",
+        vec![
+            "Just me — a personal assistant, one memory on every platform",
+            "A team or customers — each person has their own memory",
+        ],
+    )
+    .raw_prompt()
+    .map_err(|e| anyhow::anyhow!("profile: {e}"))?;
+    Ok(if choice.index == 0 {
+        ProfileArg::Personal
+    } else {
+        ProfileArg::Team
+    })
+}
+
 /// Step 3a: which platform.
 fn choose_platform(w: &Wizard<'_>, given: Option<Platform>) -> anyhow::Result<Platform> {
     if let Some(p) = given {
@@ -668,8 +704,10 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
         .clone()
         .unwrap_or_else(|| crate::registry::name_of(dir));
     let instance = instance_of(&name);
+    let personal = choose_profile(&w, args.profile)? == ProfileArg::Personal;
     let mut options = InitOptions {
         name: name.clone(),
+        personal,
         chain: choose_agents(&w).await?,
         timezone: args.timezone.clone(),
         ..InitOptions::default()
@@ -714,6 +752,7 @@ fn write_bot(
                 "dir": std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
                 "agents": options.chain.iter().map(|(n, _)| n).collect::<Vec<_>>(),
                 "platform": format!("{platform:?}").to_lowercase(),
+                "profile": if options.personal { "personal" } else { "team" },
                 "knowledge_files_written": written.len(),
                 "next": ["okbot doctor", "okbot run"],
             })
@@ -724,10 +763,16 @@ fn write_bot(
             written.len(),
             dir.display()
         );
-        eprintln!(
-            "Next:\n  okbot doctor {name}\n  okbot run {name}      # or `okbot chat` in {} to try it",
-            dir.display()
-        );
+        if options.personal {
+            eprintln!(
+                "Next:\n  okbot doctor {name}\n  okbot run {name}\n  okbot pair {name}      # then send `/pair <code>` to the bot on each platform"
+            );
+        } else {
+            eprintln!(
+                "Next:\n  okbot doctor {name}\n  okbot run {name}      # or `okbot chat` in {} to try it",
+                dir.display()
+            );
+        }
     }
     Ok(())
 }
