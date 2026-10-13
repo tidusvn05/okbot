@@ -310,7 +310,16 @@ async fn check_discord(config: &Config, r: &mut Report) {
             http_proxy: std::env::var("OKBOT_DISCORD_HTTP_PROXY").ok(),
         });
         match channel.current_user().await {
-            Ok((_, name)) => r.add(&label, Status::Ok, format!("bot `{name}`")),
+            Ok((_, name)) => {
+                r.add(&label, Status::Ok, format!("bot `{name}`"));
+                if let Ok(app) = channel.application_id().await {
+                    r.add(
+                        format!("{label} invite"),
+                        Status::Ok,
+                        okbot_channel_discord::install_url(app),
+                    );
+                }
+            }
             Err(error) => r.add(&label, Status::Fail, error.to_string()),
         }
     }

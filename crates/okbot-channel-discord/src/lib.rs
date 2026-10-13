@@ -34,6 +34,17 @@ pub struct DiscordConfig {
     pub http_proxy: Option<String>,
 }
 
+/// Permissions okbot needs in a server: View Channels, Send Messages, Read Message History and
+/// Send Messages in Threads.
+pub const BOT_PERMISSIONS: u64 = (1 << 10) | (1 << 11) | (1 << 16) | (1 << 38);
+
+/// The link that adds the bot with `application_id` to a server, with [`BOT_PERMISSIONS`].
+pub fn install_url(application_id: u64) -> String {
+    format!(
+        "https://discord.com/oauth2/authorize?client_id={application_id}&scope=bot&permissions={BOT_PERMISSIONS}&integration_type=0"
+    )
+}
+
 /// A Discord bot as an okbot [`Channel`].
 pub struct DiscordChannel {
     id: ChannelId,
@@ -164,6 +175,19 @@ impl DiscordChannel {
             },
             me: OnceLock::new(),
         }
+    }
+
+    /// The bot's application id (its OAuth2 client id), for [`install_url`].
+    pub async fn application_id(&self) -> Result<u64, ChannelError> {
+        let app = self
+            .http
+            .current_user_application()
+            .await
+            .map_err(failed)?
+            .model()
+            .await
+            .map_err(failed)?;
+        Ok(app.id.get())
     }
 
     /// The bot's own user (checks the token).

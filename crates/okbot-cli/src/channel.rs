@@ -179,8 +179,40 @@ async fn add(
         .with_context(|| format!("{id} was not added: the result does not validate"))?;
 
     eprintln!("✓ Added {id} to {}", dir.join(CONFIG_FILE).display());
+    if platform == Platform::Discord {
+        let config = load(dir)?;
+        match discord_invite(&config, &instance).await {
+            Ok(url) => eprintln!("Add the bot to your Discord server with this link:\n  {url}"),
+            Err(error) => eprintln!(
+                "Warning: Discord did not accept the token ({error}); check it with `okbot doctor`"
+            ),
+        }
+    }
     next_steps(dir);
     Ok(())
+}
+
+/// The link that adds the bot of `[channels.discord.<instance>]` to a server (checks the token).
+#[cfg(feature = "discord")]
+pub(crate) async fn discord_invite(config: &Config, instance: &str) -> anyhow::Result<String> {
+    use okbot_channel_discord::{DiscordChannel, DiscordConfig, install_url};
+    let d = config
+        .channels
+        .discord
+        .get(instance)
+        .with_context(|| format!("no [channels.discord.{instance}]"))?;
+    let channel = DiscordChannel::new(DiscordConfig {
+        id: okbot_core::ChannelId::new("discord", instance)?,
+        token: config.secret(&d.token_env)?,
+        message_content: d.message_content,
+        http_proxy: std::env::var("OKBOT_DISCORD_HTTP_PROXY").ok(),
+    });
+    Ok(install_url(channel.application_id().await?))
+}
+
+#[cfg(not(feature = "discord"))]
+pub(crate) async fn discord_invite(_: &Config, _: &str) -> anyhow::Result<String> {
+    bail!("this okbot build has no Discord support")
 }
 
 fn remove(dir: &Path, id: &str, purge_secrets: bool) -> anyhow::Result<()> {

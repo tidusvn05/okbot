@@ -4,9 +4,12 @@ okbot answers on Discord as a bot user (`discord` feature, on by default).
 
 1. In the [Developer Portal](https://discord.com/developers/applications), create an application,
    add a **Bot**, and copy its token (Reset Token).
-2. Invite the bot with the `bot` scope and the permissions *View Channels*, *Send Messages*,
-   *Send Messages in Threads* and *Read Message History*.
-3. `okbot new main --platform discord` (paste the token; it goes to `.env`).
+2. `okbot new main --platform discord`, or `okbot channel add discord` for an existing bot (paste
+   the token; it goes to `.env`). `channel add` prints the link that adds the bot to a server with
+   the permissions okbot needs (*View Channels*, *Send Messages*, *Send Messages in Threads*,
+   *Read Message History*); `okbot doctor` shows it too.
+3. Open the link and pick your server. To talk to the bot in direct messages you must share a
+   server with it.
 
 ```toml
 [channels.discord.main]
