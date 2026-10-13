@@ -181,7 +181,7 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
 
 #[cfg(feature = "zalo")]
 async fn check_zalo(config: &Config, test_webhook: bool, r: &mut Report) {
-    use okbot_channel_zalo::{DEFAULT_API_BASE, ZaloApi};
+    use okbot_channel_zalo::DEFAULT_API_BASE;
     for (instance, zalo) in &config.channels.zalo {
         let label = format!("zalo:{instance}");
         let token = match config.secret(&zalo.token_env) {
@@ -192,7 +192,7 @@ async fn check_zalo(config: &Config, test_webhook: bool, r: &mut Report) {
             }
         };
         let base = std::env::var("OKBOT_ZALO_API_BASE").unwrap_or_else(|_| DEFAULT_API_BASE.into());
-        let api = ZaloApi::new(&base, token);
+        let api = okbot_channel_zalo::client(&base, &token);
         match api.get_me().await {
             Ok(me) => r.add(
                 &label,
@@ -216,7 +216,7 @@ async fn check_zalo(config: &Config, test_webhook: bool, r: &mut Report) {
             continue;
         }
         let expected = zalo.public_url.clone().unwrap_or_default();
-        match api.webhook_url().await {
+        match api.get_webhook_info().await.map(|info| info.url) {
             Ok(url) if url == expected => r.add(format!("{label} webhook"), Status::Ok, url),
             Ok(url) if url.is_empty() => r.add(
                 format!("{label} webhook"),
@@ -233,7 +233,11 @@ async fn check_zalo(config: &Config, test_webhook: bool, r: &mut Report) {
         if test_webhook {
             match api.test_webhook().await {
                 Ok(check) if check.ok => {
-                    r.add(format!("{label} webhook test"), Status::Ok, check.outcome);
+                    r.add(
+                        format!("{label} webhook test"),
+                        Status::Ok,
+                        check.outcome.to_string(),
+                    );
                 }
                 Ok(check) => r.add(
                     format!("{label} webhook test"),

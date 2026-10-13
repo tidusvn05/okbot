@@ -8,7 +8,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::routing::post;
-use okbot_channel_zalo::{Delivery, ZaloApi, ZaloChannel, ZaloConfig};
+use okbot_channel_zalo::{Delivery, ZaloChannel, ZaloConfig};
 use okbot_core::{
     CancellationToken, Channel, ChannelError, InboundEvent, InboundSink, RenderedMessage,
     ReplyTarget, Secret, SinkClosed, WebhookRequest, async_trait,
@@ -220,7 +220,7 @@ async fn webhook_registers_and_checks_the_secret() {
 #[tokio::test]
 async fn errors_never_contain_the_token() {
     // Nothing listens on port 9: the request fails in transport.
-    let api = ZaloApi::new("http://127.0.0.1:9", Secret::new(TOKEN.into()));
+    let api = okbot_channel_zalo::client("http://127.0.0.1:9", &Secret::new(TOKEN.into()));
     let error = api.get_me().await.unwrap_err();
     let text = format!("{error} {error:?}");
     assert!(!text.contains("abc-xyz"), "{text}");
