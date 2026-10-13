@@ -365,15 +365,28 @@ fn inline_text(inlines: &[Inline], style: &Style) -> String {
             Inline::Link { url, text } => {
                 let label = inline_text(text, style);
                 let bare = plain(text);
+                // Only web and mail links: Slack reads `<!channel|x>` as a mention of everyone.
+                let web = ["https://", "http://", "mailto:"]
+                    .iter()
+                    .any(|p| url.to_ascii_lowercase().starts_with(p));
+                // URLs are written as-is in Markdown dialects; entity dialects need `&` escaped.
+                let shown = match style.escape {
+                    Escape::Entities => escape(url, Escape::Entities),
+                    _ => url.clone(),
+                };
                 let _ = match style.link {
-                    _ if bare.is_empty() || bare == *url => write!(out, "{url}"),
+                    _ if !web && bare.is_empty() => write!(out, "{}", escape(url, style.escape)),
+                    _ if !web => write!(out, "{label}"),
+                    _ if bare.is_empty() || bare == *url => write!(out, "{shown}"),
                     LinkStyle::Markdown => write!(out, "[{label}]({url})"),
-                    LinkStyle::Angle => write!(out, "<{url}|{bare}>"),
+                    LinkStyle::Angle => {
+                        write!(out, "<{shown}|{}>", bare.replace(['<', '>', '|'], ""))
+                    }
                     LinkStyle::Plain => write!(out, "{label} ({url})"),
                     LinkStyle::Html => write!(
                         out,
                         "<a href=\"{}\">{label}</a>",
-                        escape(url, Escape::Entities).replace('"', "&quot;")
+                        shown.replace('"', "&quot;")
                     ),
                 };
             }

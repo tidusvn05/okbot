@@ -521,7 +521,13 @@ async fn verify_gchat(_: &str) -> anyhow::Result<()> {
 
 /// Writes a secret file readable by its owner only.
 fn write_private(path: &Path, text: &str) -> anyhow::Result<()> {
-    std::fs::write(path, text)?;
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // Created 0600, never readable by others even for a moment.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(text.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

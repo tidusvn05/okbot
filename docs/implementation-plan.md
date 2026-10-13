@@ -492,8 +492,10 @@ Status (2026-10-14): done in code and tests (fake clock: on time, repeats, misse
 send, terminal tasks routed to the owner's direct chat, give-up after 5 attempts; a pipeline test
 runs the real loop). The scheduler re-reads task files every 30 s instead of being notified.
 `[schedule]` holds `enabled`, `deliver_to` and `late_grace_minutes`; `doctor` warns when
-`[bot] timezone` is unset and lists undelivered firings. Whether Zalo accepts a message long after
-the user's last one is checked on the real bot.
+`[bot] timezone` is unset and lists undelivered firings. On the real bot (2026-10-14), Zalo accepted a
+`sendMessage` to a private chat about 11 hours after the user's last message; the full scheduler path
+on Zalo (owner paired on Zalo, a reminder delivered there) and a gap longer than 24 hours are still to
+be checked.
 
 ### P17 — Snooze and repeats
 

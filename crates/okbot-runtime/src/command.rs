@@ -312,14 +312,19 @@ pub(crate) fn snooze_until(
     okbot_core::parse_time(&text, tz).ok().filter(|t| *t > now)
 }
 
-/// The task id of the newest reminder sent in this conversation (the scheduler writes
-/// "(reminder `t-…`" into the history).
+/// The task id of the newest reminder sent in this conversation: the scheduler ends its history
+/// line with "(reminder `t-…`; …)". Users write user messages, so only bot lines count.
 async fn last_reminder(s: &Shared, event: &InboundEvent) -> Option<String> {
     let history = s.store.recent(&event.conversation, 40).await.ok()?;
-    history.iter().rev().find_map(|m| {
-        let rest = m.text.split("(reminder `").nth(1)?;
-        Some(rest.split('`').next()?.to_string())
-    })
+    history
+        .iter()
+        .rev()
+        .filter(|m| m.role == okbot_core::MessageRole::Bot)
+        .find_map(|m| {
+            let (_, rest) = m.text.rsplit_once("\n\n(reminder `")?;
+            let (id, tail) = rest.split_once('`')?;
+            (tail == "; the user may snooze it or mark it done)").then(|| id.to_string())
+        })
 }
 
 async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
@@ -334,6 +339,15 @@ async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
         return "There is no reminder in this chat to snooze.".into();
     };
     let who = requester(s, event).await;
+    // An agent's answer could imitate the scheduler's line; a routine only starts with `/resume`.
+    let is_routine = store.list(&who).await.is_ok_and(|tasks| {
+        tasks.iter().any(|t| {
+            t.kind == okbot_core::TaskKind::Routine && t.id.rsplit('/').next() == Some(id.as_str())
+        })
+    });
+    if is_routine {
+        return "Routines cannot be snoozed; use `/pause` and `/resume`.".into();
+    }
     let change = okbot_core::TaskChange {
         status: Some(okbot_core::TaskStatus::Open),
         remind_at: Some(Some(until)),

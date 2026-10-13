@@ -460,6 +460,13 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     let state = config.state_dir();
     std::fs::create_dir_all(&state)
         .with_context(|| format!("cannot create {}", state.display()))?;
+    // Chat history and agent work directories: the bot's user only.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("cannot restrict {}", state.display()))?;
+    }
     let store = Arc::new(
         SqliteStore::open(&state.join("okbot.db"))
             .with_context(|| format!("cannot open the database in {}", state.display()))?,

@@ -208,7 +208,7 @@ impl Dispatcher {
 }
 
 /// Handles one conversation's events in order. Messages that arrive during a turn are answered
-/// together in the next turn.
+/// together in the next turn, as long as they come from the same person.
 async fn worker(
     shared: Arc<Shared>,
     workers: Workers,
@@ -244,7 +244,9 @@ async fn worker(
         }
         let mut batch = vec![first];
         while let Ok(more) = rx.try_recv() {
-            if Command::parse(&more.0.text).is_some() {
+            // A turn runs with one person's identity, scope and rights, so it only batches that
+            // person's messages: another author's text must never run as this one.
+            if Command::parse(&more.0.text).is_some() || more.0.author.id != batch[0].0.author.id {
                 pending = Some(more);
                 break;
             }

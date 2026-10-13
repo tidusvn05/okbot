@@ -179,17 +179,20 @@ pub(crate) async fn fetch(url: &str, allow_http: bool, max: usize) -> Result<Fet
     {
         return Err("the file is too large".into());
     }
-    let bytes = response
-        .bytes()
+    // Read in chunks: a server without Content-Length must not make okbot buffer more than `max`.
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| format!("cannot download the file: {}", e.without_url()))?;
-    if bytes.len() > max {
-        return Err("the file is too large".into());
+        .map_err(|e| format!("cannot download the file: {}", e.without_url()))?
+    {
+        if bytes.len() + chunk.len() > max {
+            return Err("the file is too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(Fetched {
-        bytes: bytes.to_vec(),
-        mime,
-    })
+    Ok(Fetched { bytes, mime })
 }
 
 /// Fetches attachment `index` (1-based) of the run: only URLs the platform delivered, over
