@@ -17,8 +17,8 @@ okbot builds on [agent-core](https://github.com/tidusvn05/agent-core) and
 
 ## Amendment (2026-10-13)
 The Zalo Bot API client moved out of `okbot-channel-zalo` into the standalone, unofficial
-[`zalo-bot`](https://github.com/tidusvn05/zalo-bot) crate. It is a third allowed git source, pinned by
-commit until `zalo-bot` 0.1.0 is on crates.io, after which okbot depends on the registry version.
+[`zalo-bot`](https://github.com/tidusvn05/zalo-bot) crate. It was pinned by commit until `zalo-bot` 0.1.0
+reached crates.io; okbot now depends on the registry version.
 okbot uses it with `default-features = false` and installs the ring provider, so no second crypto
 provider is linked.
 

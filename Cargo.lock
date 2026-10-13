@@ -4789,7 +4789,8 @@ dependencies = [
 [[package]]
 name = "zalo-bot"
 version = "0.1.0"
-source = "git+https://github.com/tidusvn05/zalo-bot?rev=c621a034cfae63038c7e0e11d803d498a4822283#c621a034cfae63038c7e0e11d803d498a4822283"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87f466950a4e80cb429c61fbe839a27fe9a5306441f2fb49fa66ecdf7c64dd83"
 dependencies = [
  "futures-util",
  "reqwest",
