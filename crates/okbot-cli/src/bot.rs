@@ -267,6 +267,53 @@ fn gchat_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
     }
 }
 
+#[cfg(feature = "telegram")]
+fn telegram_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    use okbot_channel_telegram::{API_BASE, Delivery, TelegramChannel, TelegramConfig};
+    let mut out: Vec<Arc<dyn Channel>> = Vec::new();
+    for (instance, t) in &config.channels.telegram {
+        let token = config.secret(&t.token_env)?;
+        crate::logging::redact(&token);
+        let delivery = match t.delivery {
+            okbot_config::Delivery::Polling => Delivery::Polling {
+                timeout: Duration::from_secs(30),
+            },
+            okbot_config::Delivery::Webhook => {
+                let secret_env = t.secret_env.as_deref().unwrap_or_default();
+                let secret = config.secret(secret_env)?;
+                if !okbot_channel_telegram::valid_secret(secret.expose()) {
+                    bail!(
+                        "{secret_env} must be 1–256 characters of A-Z, a-z, 0-9, `_` and `-` \
+                         (a Telegram webhook secret)"
+                    );
+                }
+                crate::logging::redact(&secret);
+                Delivery::Webhook {
+                    public_url: t.public_url.clone().unwrap_or_default(),
+                    secret,
+                }
+            }
+        };
+        out.push(Arc::new(TelegramChannel::new(TelegramConfig {
+            id: ChannelId::new("telegram", instance)?,
+            token,
+            delivery,
+            api_base: std::env::var("OKBOT_TELEGRAM_API_BASE")
+                .unwrap_or_else(|_| API_BASE.to_string()),
+        })));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "telegram"))]
+fn telegram_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
+    if config.channels.telegram.is_empty() {
+        Ok(Vec::new())
+    } else {
+        bail!("this okbot build has no Telegram support (feature `telegram`)")
+    }
+}
+
 #[cfg(feature = "discord")]
 fn discord_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
     use okbot_channel_discord::{DiscordChannel, DiscordConfig};
@@ -402,6 +449,7 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     channels.extend(gchat_channels(config)?);
     channels.extend(discord_channels(config)?);
     channels.extend(slack_channels(config)?);
+    channels.extend(telegram_channels(config)?);
     channels.extend(bridge_channels(config)?);
     if channels.is_empty() {
         bail!(
@@ -430,6 +478,11 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
         .zalo
         .values()
         .any(|z| z.delivery == okbot_config::Delivery::Webhook)
+        || config
+            .channels
+            .telegram
+            .values()
+            .any(|t| t.delivery == okbot_config::Delivery::Webhook)
         || config
             .channels
             .gchat

@@ -47,6 +47,11 @@ fn discord() {
 }
 
 #[test]
+fn telegram() {
+    insta::assert_snapshot!(render(MarkdownDialect::TelegramHtml, 4096));
+}
+
+#[test]
 fn plain() {
     insta::assert_snapshot!(render(MarkdownDialect::Plain, 4000));
 }

@@ -1,0 +1,30 @@
+[package]
+name = "okbot-channel-telegram"
+description = "Telegram Bot API channel for okbot (long polling and webhook)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+okbot-core.workspace = true
+jiff.workspace = true
+reqwest = { workspace = true }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+axum.workspace = true

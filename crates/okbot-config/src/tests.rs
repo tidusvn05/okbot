@@ -25,6 +25,7 @@ fn options(delivery: Delivery) -> InitOptions {
         gchat: None,
         discord: None,
         slack: None,
+        telegram: None,
         http_listen: (delivery == Delivery::Webhook).then(|| "127.0.0.1:8787".into()),
         timezone: Some("Asia/Ho_Chi_Minh".into()),
     }
@@ -95,6 +96,10 @@ fn rejects_bad_configs() {
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[channels.slack.a]\n",
             "slack",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[channels.telegram.shop]\ntoken_env = \"T\"\ndelivery = \"webhook\"\npublic_url = \"https://x/telegram/shop\"\n",
+            "secret_env",
         ),
         (
             "config_version = 1\n[bot]\nname = \"x\"\ntimezone = \"Mars/Base\"\n",
@@ -170,7 +175,7 @@ fn gchat_section_round_trips() {
 }
 
 #[test]
-fn discord_and_slack_sections_round_trip() {
+fn discord_slack_and_telegram_sections_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let mut o = options(Delivery::Polling);
     o.zalo = None;
@@ -180,6 +185,7 @@ fn discord_and_slack_sections_round_trip() {
         "SLACK_APP_TOKEN".into(),
         "SLACK_BOT_TOKEN".into(),
     ));
+    o.telegram = Some(("tg".into(), "TELEGRAM_BOT_TOKEN".into()));
     write(dir.path(), &render_initial(&o));
     let config = Config::load(dir.path()).unwrap();
     assert_eq!(config.channels.discord["main"].token_env, "DISCORD_TOKEN");
@@ -193,7 +199,13 @@ fn discord_and_slack_sections_round_trip() {
         .iter()
         .map(|(p, _, _)| *p)
         .collect();
-    assert_eq!(names, ["discord", "slack"]);
+    assert_eq!(names, ["discord", "slack", "telegram"]);
+    assert_eq!(config.channels.telegram["tg"].delivery, Delivery::Polling);
+    assert!(
+        config
+            .secret_names()
+            .contains(&"TELEGRAM_BOT_TOKEN".to_string())
+    );
     assert!(
         config
             .secret_names()
@@ -206,15 +218,15 @@ fn bridge_section() {
     let dir = tempfile::tempdir().unwrap();
     write(
         dir.path(),
-        "config_version = 1\n[bot]\nname = \"x\"\n[channels.bridge.main]\nplatform = \"telegram\"\nenv = [\"TG_TOKEN\"]\ndialect = \"plain\"\nedit = true\n[channels.bridge.main.settings]\npoll = 30\n",
+        "config_version = 1\n[bot]\nname = \"x\"\n[channels.bridge.main]\nplatform = \"matrix\"\nenv = [\"MATRIX_TOKEN\"]\ndialect = \"plain\"\nedit = true\n[channels.bridge.main.settings]\npoll = 30\n",
     );
     let config = Config::load(dir.path()).unwrap();
     let b = &config.channels.bridge["main"];
-    assert_eq!(b.platform, "telegram");
+    assert_eq!(b.platform, "matrix");
     assert_eq!(b.settings["poll"].as_integer(), Some(30));
     assert_eq!(b.dialect, okbot_core::MarkdownDialect::Plain);
-    assert_eq!(config.channels.access()[0].0, "telegram");
-    assert!(config.secret_names().contains(&"TG_TOKEN".to_string()));
+    assert_eq!(config.channels.access()[0].0, "matrix");
+    assert!(config.secret_names().contains(&"MATRIX_TOKEN".to_string()));
 }
 
 #[test]

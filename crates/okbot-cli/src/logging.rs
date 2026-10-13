@@ -19,6 +19,7 @@ fn redactor() -> &'static Arc<RwLock<Redactor>> {
         feature = "zalo",
         feature = "discord",
         feature = "slack",
+        feature = "telegram",
         feature = "bridge"
     )),
     expect(dead_code, reason = "only platform channels hold secrets")

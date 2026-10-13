@@ -16,13 +16,13 @@ The reference adapter is [`examples/bridge/echo-channel.mjs`](../examples/bridge
 
 ```toml
 [channels.bridge.main]               # instance name: the channel id is `<platform>:main`
-platform = "telegram"                # lowercase a-z 0-9 - _; not a built-in platform name
-command = "okbot-channel-telegram"   # default: okbot-channel-<platform> on PATH;
+platform = "matrix"                  # lowercase a-z 0-9 - _; not a built-in platform name
+command = "okbot-channel-matrix"     # default: okbot-channel-<platform> on PATH;
                                      # a path with `/` is relative to the bot directory
 args = []
-env = ["TELEGRAM_TOKEN"]             # passed to the adapter, from .env or okbot's environment
+env = ["MATRIX_TOKEN"]               # passed to the adapter, from .env or okbot's environment
 max_message_len = 4096               # okbot splits longer replies (counted in chars)
-dialect = "common-mark"              # common-mark | plain | slack-mrkdwn | discord-md | g-chat-text | zalo-md
+dialect = "common-mark"              # common-mark | plain | slack-mrkdwn | discord-md | g-chat-text | zalo-md | telegram-html
 threads = false
 edit = true                          # the adapter implements `edit` (enables "thinking…" + progress)
 typing = false                       # the adapter implements `typing`
@@ -60,7 +60,7 @@ may overlap: answer them in any order.
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-  "protocol":1, "channel":"telegram:main", "settings":{"poll_timeout":30}}}
+  "protocol":1, "channel":"matrix:main", "settings":{"poll_timeout":30}}}
 ```
 
 Result: `{"protocol": 1, "name": "<adapter name and version>"}`. A different `protocol` stops the
@@ -71,7 +71,7 @@ response with a clear message.
 
 ```json
 {"jsonrpc":"2.0","id":2,"method":"send","params":{
-  "target":{"conversation":{"channel":"telegram:main","space":null,"room":"12345","thread":null},
+  "target":{"conversation":{"channel":"matrix:main","space":null,"room":"!abc:example.org","thread":null},
             "in_reply_to":"987"},
   "text":"Already rendered in the configured dialect, at most max_message_len long"}}
 ```
@@ -106,7 +106,7 @@ A message for the bot:
 ```json
 {"jsonrpc":"2.0","method":"inbound","params":{"event":{
   "event_id":"upd-1001",
-  "conversation":{"channel":"telegram:main","space":null,"room":"12345","thread":null},
+  "conversation":{"channel":"matrix:main","space":null,"room":"!abc:example.org","thread":null},
   "author":{"id":"42","display_name":"An","is_bot":false},
   "text":"Hello bot",
   "attachments":[{"kind":"image","url":"https://…","caption":null}],

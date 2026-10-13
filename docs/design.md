@@ -202,7 +202,8 @@ The core depends only on `Channel` and `ChannelCaps`. A new platform needs: an a
 | **Zalo Bot** (first) | Long polling (`getUpdates`) or webhook | Polling: no; webhook: yes | See §3.3.2: 2000-char messages, no edit, no threads, groups in beta |
 | Discord | Gateway WebSocket (twilight) | No | `MESSAGE_CONTENT` is a privileged intent; 2000-char limit; reply in threads; typing lasts 10 s |
 | Slack | Socket Mode (`xapp-` app token) | No | Ack within 3 s and process asynchronously; mrkdwn differs from Markdown; reply with `thread_ts`; Events API retries need dedupe |
-| Later | Telegram, MS Teams, Mattermost, Zalo OA | | Zalo OA (official business accounts) is a different API from Zalo Bot; Telegram is almost the same shape as Zalo Bot, so its adapter can reuse most of the Zalo code; Teams needs Bot Framework |
+| Telegram | Long polling (`getUpdates`) or webhook (`secret_token` header) | Polling: no; webhook: yes | 4096 UTF-16 units; `parse_mode = HTML` (plain-text resend when Telegram rejects the markup); edits; forum topics as threads; privacy mode limits group messages to commands, replies and mentions; file URLs contain the token, so only okbot's download code sees them |
+| Later | MS Teams, Mattermost, Zalo OA | | Zalo OA (official business accounts) is a different API from Zalo Bot; Teams needs Bot Framework |
 
 ### 3.3.1 Google Chat delivery: HTTP endpoint or Pub/Sub
 
@@ -856,7 +857,7 @@ okbot pins agent-core by git tag. Until the PRs land it can use a branch, and `C
 | **M5** — Discord, Slack | Gateway adapter; Socket Mode adapter | Same bot on three platforms with one bundle |
 | **M6** — UX | Session resume, streaming edits (#4, #5), fallback chain, metrics | Time to first visible feedback < 3 s |
 | M7 — assistant | Tasks, reminders, snooze, routines, notes, saving documents, `memory_update` (§5.5–5.9) | "Remind me at 8 am tomorrow" arrives on time after a restart; a morning routine runs daily |
-| Later | Telegram/Teams, outbound files, calendars, quiet hours, direct-API backend | |
+| Later | Teams, outbound files, calendars, quiet hours, direct-API backend | |
 
 ## 9. Testing
 

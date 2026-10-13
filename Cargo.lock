@@ -2433,6 +2433,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "okbot-channel-telegram"
+version = "0.1.0-dev"
+dependencies = [
+ "axum",
+ "jiff",
+ "okbot-core",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "okbot-channel-zalo"
 version = "0.1.0-dev"
 dependencies = [
@@ -2466,6 +2483,7 @@ dependencies = [
  "okbot-channel-discord",
  "okbot-channel-gchat",
  "okbot-channel-slack",
+ "okbot-channel-telegram",
  "okbot-channel-zalo",
  "okbot-config",
  "okbot-core",
