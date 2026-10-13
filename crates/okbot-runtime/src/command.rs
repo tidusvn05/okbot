@@ -48,7 +48,8 @@ impl Command {
         let word = word.split('@').next().unwrap_or(word).to_ascii_lowercase();
         match word.as_str() {
             "help" => Some(Self::Help),
-            "reset" | "new" => Some(Self::Reset),
+            // `/new` and `/clear` are unlisted aliases people know from other chat assistants.
+            "reset" | "new" | "clear" => Some(Self::Reset),
             "whoami" => Some(Self::WhoAmI),
             "stop" | "cancel" => Some(Self::Stop),
             "remember" => Some(Self::Remember(rest)),
@@ -469,6 +470,8 @@ mod tests {
     fn parses_commands() {
         assert_eq!(Command::parse("/help"), Some(Command::Help));
         assert_eq!(Command::parse("  /Reset please"), Some(Command::Reset));
+        assert_eq!(Command::parse("/clear"), Some(Command::Reset));
+        assert_eq!(Command::parse("/new"), Some(Command::Reset));
         assert_eq!(Command::parse("/stop@okbot"), Some(Command::Stop));
         assert_eq!(
             Command::parse("/remember  tôi thích trà  "),
