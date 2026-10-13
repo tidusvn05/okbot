@@ -31,6 +31,8 @@ touch your files.
   read another user's memory, even through prompt injection.
 - **Safe by default.** Web search and fetch through the CLI's built-in tools plus okbot's MCP tools;
   never a shell or file access. Rooms with sensitive knowledge can turn the web off (`mcp-only`).
+- **Personal or team.** A `personal` bot answers only you, on every platform you pair with
+  `okbot pair`, with one shared memory; a `team` bot keeps one memory per person.
 - **Many bots per machine.** A bot is a directory; `okbot` creates, checks, runs and supervises them
   (systemd), with a machine-wide concurrency limit.
 - **Operable.** `okbot doctor`, `/healthz`, Prometheus `/metrics`, structured logs with secrets redacted.

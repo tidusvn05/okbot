@@ -13,7 +13,7 @@ use std::time::Duration;
 use jiff::Timestamp;
 use okbot_core::{
     AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, MessageRole, NewMessage,
-    StoreError, StoredMessage, SystemClock, async_trait,
+    StoreError, StoredMessage, SystemClock, UserId, async_trait,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -272,6 +272,89 @@ impl ConversationStore for SqliteStore {
                 params![id, backend, session],
             )?;
             Ok(())
+        })
+        .await
+    }
+
+    async fn owners(&self) -> Result<Vec<(ChannelId, UserId)>, StoreError> {
+        self.with(|conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT channel, user_id FROM users WHERE role = 'owner' ORDER BY channel, user_id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            // Rows were written from valid ids; skip anything that no longer parses.
+            Ok(rows
+                .into_iter()
+                .filter_map(|(c, u)| Some((c.parse().ok()?, UserId::new(u))))
+                .collect())
+        })
+        .await
+    }
+
+    async fn remove_owner(&self, channel: &ChannelId, user: &UserId) -> Result<bool, StoreError> {
+        let (channel, user) = (channel.to_string(), user.as_str().to_string());
+        self.with(move |conn, _| {
+            let n = conn.execute(
+                "DELETE FROM users WHERE channel = ?1 AND user_id = ?2 AND role = 'owner'",
+                params![channel, user],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+    }
+
+    async fn create_pairing_code(&self, code: &str, ttl: Duration) -> Result<(), StoreError> {
+        let code = code.to_string();
+        self.with(move |conn, now| {
+            conn.execute(
+                "DELETE FROM pairing_codes WHERE expires_at <= ?1",
+                params![millis(now)],
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO pairing_codes (code, expires_at, failures) VALUES (?1, ?2, 0)",
+                params![code, millis(now).saturating_add(duration_ms(ttl))],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn redeem_pairing_code(
+        &self,
+        code: &str,
+        channel: &ChannelId,
+        user: &UserId,
+    ) -> Result<bool, StoreError> {
+        let (code, channel, user) = (
+            code.to_string(),
+            channel.to_string(),
+            user.as_str().to_string(),
+        );
+        self.with(move |conn, now| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "DELETE FROM pairing_codes WHERE expires_at <= ?1",
+                params![millis(now)],
+            )?;
+            let found = tx.execute("DELETE FROM pairing_codes WHERE code = ?1", params![code])? > 0;
+            if found {
+                tx.execute(
+                    "INSERT OR REPLACE INTO users (channel, user_id, role) VALUES (?1, ?2, 'owner')",
+                    params![channel, user],
+                )?;
+            } else {
+                tx.execute("UPDATE pairing_codes SET failures = failures + 1", [])?;
+                tx.execute(
+                    "DELETE FROM pairing_codes WHERE failures >= ?1",
+                    params![okbot_core::PAIRING_MAX_FAILURES],
+                )?;
+            }
+            tx.commit()?;
+            Ok(found)
         })
         .await
     }

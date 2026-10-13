@@ -9,6 +9,7 @@ mod init;
 mod kb;
 mod logging;
 mod memory;
+mod owner;
 mod people;
 mod registry;
 mod run;
@@ -65,6 +66,10 @@ enum Command {
     /// Review and undo what a bot remembers.
     #[command(subcommand)]
     Memory(memory::MemoryCommand),
+    /// Show or set who the bot serves: `personal` (only you) or `team`.
+    Profile(owner::ProfileArgs),
+    /// Personal assistants: get a code to pair one of your chat accounts (`/pair <code>`).
+    Pair(owner::PairArgs),
     /// List, add and remove a bot's chat platforms.
     #[command(subcommand, alias = "channels")]
     Channel(channel::ChannelCommand),
@@ -151,6 +156,8 @@ async fn main() -> ExitCode {
         Command::Kb(command) => kb::run(command),
         Command::Memory(command) => memory::run(command).await,
         Command::Channel(command) => channel::run(command).await,
+        Command::Profile(args) => owner::profile(&args),
+        Command::Pair(args) => owner::pair(&args).await,
         Command::People(command) => people::run(command),
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),

@@ -31,6 +31,18 @@ pub struct PersonSection {
     pub accounts: Vec<String>,
 }
 
+/// Who a bot serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BotProfile {
+    /// Many people (a team, a shop's customers): each person has their own memory.
+    #[default]
+    Team,
+    /// One owner: only accounts paired with `okbot pair` are answered, and they share one
+    /// profile and memory on every platform.
+    Personal,
+}
+
 /// `[bot]`: identity and locations.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +55,9 @@ pub struct BotSection {
     /// State directory (database, agent working directories, index).
     #[serde(default = "default_state")]
     pub state_dir: PathBuf,
+    /// Who the bot serves.
+    #[serde(default)]
+    pub profile: BotProfile,
     /// Administrators as `platform:instance/user-id`.
     #[serde(default)]
     pub admins: Vec<String>,

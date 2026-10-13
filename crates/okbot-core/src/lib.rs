@@ -83,7 +83,8 @@ pub use message::{
 pub use render::Renderer;
 pub use secret::{Redactor, Secret};
 pub use store::{
-    AgentRunRecord, ConversationStore, MessageRole, NewMessage, StoreError, StoredMessage,
+    AgentRunRecord, ConversationStore, MessageRole, NewMessage, PAIRING_MAX_FAILURES, StoreError,
+    StoredMessage,
 };
 pub use webhook::{WebhookHandler, WebhookRequest, WebhookResponse};
 

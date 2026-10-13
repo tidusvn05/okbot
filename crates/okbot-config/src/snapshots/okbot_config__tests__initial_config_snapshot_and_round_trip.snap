@@ -8,6 +8,7 @@ config_version = 1
 
 [bot]
 name = "Shop bot"
+profile = "team"                   # personal: only you (pair accounts with `okbot pair`), one memory | team
 kb = "kb"
 state_dir = "state"
 admins = []                        # "zalo:<instance>/<user id>"; /whoami shows ids

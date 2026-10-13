@@ -443,6 +443,12 @@ Scope::all()
 User A cannot see user B's profile even if the agent is prompt-injected, because okbase treats
 out-of-scope documents as nonexistent.
 
+**Personal profile.** `[bot] profile = "personal"` makes a bot one person's assistant: only the
+owner's accounts are answered and every one of them is the person `owner`
+(`memory/people/owner/`). Owner accounts are paired from chat with a one-time code
+(`okbot pair` prints it; `/pair <code>` in a direct message redeems it; 10-minute TTL, single use,
+pending codes cancelled after 5 wrong attempts; stored in SQLite). The console is always the owner.
+
 **Linked accounts.** One human often uses several platforms. The operator can link accounts as one
 person (`[people.<person>] accounts = ["zalo:shop/…", "discord:shop/…"]`, or
 `okbot people link`). A linked account writes personal notes to `memory/people/<person>/` and its

@@ -27,6 +27,9 @@ pub enum StoreError {
     Backend(#[source] BoxError),
 }
 
+/// Wrong pairing codes tolerated before pending codes are cancelled.
+pub const PAIRING_MAX_FAILURES: u32 = 5;
+
 /// Who wrote a stored message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -133,6 +136,27 @@ pub trait ConversationStore: Send + Sync {
 
     /// Records an agent run.
     async fn record_run(&self, run: AgentRunRecord) -> Result<(), StoreError>;
+
+    /// Accounts of the owner of a personal bot (paired with [`ConversationStore::redeem_pairing_code`]).
+    async fn owners(&self) -> Result<Vec<(ChannelId, UserId)>, StoreError>;
+
+    /// Removes an owner account. Returns whether it was one.
+    async fn remove_owner(&self, channel: &ChannelId, user: &UserId) -> Result<bool, StoreError>;
+
+    /// Stores a one-time pairing code, valid for `ttl`.
+    async fn create_pairing_code(&self, code: &str, ttl: Duration) -> Result<(), StoreError>;
+
+    /// Consumes `code` and makes `(channel, user)` an owner account when the code is valid.
+    ///
+    /// A wrong code counts as a failed attempt against every pending code; after
+    /// [`PAIRING_MAX_FAILURES`] failures the pending codes are cancelled, so codes cannot be
+    /// guessed.
+    async fn redeem_pairing_code(
+        &self,
+        code: &str,
+        channel: &ChannelId,
+        user: &UserId,
+    ) -> Result<bool, StoreError>;
 
     /// Deletes messages, runs and dedupe marks older than `before`. Returns rows removed.
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError>;

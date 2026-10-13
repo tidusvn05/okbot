@@ -1,6 +1,6 @@
 //! `okbot chat`: the console channel wired to the full pipeline.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
@@ -108,6 +108,18 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let closed = console.closed();
     let mut config = RuntimeConfig::new(&args.name, args.state_dir.join("work"));
     config.access.rate_limit.messages = 0;
+    // Inside a bot directory, chat as that bot: its profile and linked people apply.
+    if let Ok(bot) = okbot_config::Config::load(Path::new(".")) {
+        config.personal = bot.bot.profile == okbot_config::BotProfile::Personal;
+        for (id, person) in &bot.people {
+            let accounts = person
+                .accounts
+                .iter()
+                .filter_map(|a| okbot_config::parse_account(a).ok())
+                .collect();
+            config.link_person(id, accounts);
+        }
+    }
     let mut builder = Runtime::builder(config)
         .store(Arc::new(store))
         .agent(Arc::new(chain))

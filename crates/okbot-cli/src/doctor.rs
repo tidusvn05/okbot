@@ -424,14 +424,43 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     check_bridge(&config, &mut r);
     let state = config.state_dir();
     match std::fs::create_dir_all(&state).and_then(|()| {
-        okbot_store::SqliteStore::open(&state.join("okbot.db"))
-            .map(drop)
-            .map_err(std::io::Error::other)
+        okbot_store::SqliteStore::open(&state.join("okbot.db")).map_err(std::io::Error::other)
     }) {
-        Ok(()) => r.add("state", Status::Ok, state.display().to_string()),
+        Ok(store) => {
+            r.add("state", Status::Ok, state.display().to_string());
+            if config.bot.profile == okbot_config::BotProfile::Personal {
+                check_owners(&store, &mut r).await;
+            }
+        }
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// Personal bots answer nobody until an account is paired.
+async fn check_owners(store: &okbot_store::SqliteStore, r: &mut Report) {
+    use okbot_core::ConversationStore as _;
+    match store.owners().await {
+        Ok(owners) if owners.is_empty() => r.add(
+            "owner",
+            Status::Warn,
+            "personal bot without a paired account: run `okbot pair` and send the code to the bot",
+        ),
+        Ok(owners) => r.add(
+            "owner",
+            Status::Ok,
+            format!(
+                "personal bot, {} paired account(s): {}",
+                owners.len(),
+                owners
+                    .iter()
+                    .map(|(c, u)| format!("{c}/{u}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+        Err(error) => r.add("owner", Status::Fail, error.to_string()),
+    }
 }
 
 pub(crate) async fn run(args: DoctorArgs) -> anyhow::Result<()> {

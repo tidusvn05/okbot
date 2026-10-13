@@ -22,6 +22,8 @@ pub(crate) enum Command {
     Forget(String),
     /// `/memories`: list the notes visible here.
     Memories,
+    /// `/pair <code>`: make this account the owner's, on a personal bot.
+    Pair(String),
 }
 
 impl Command {
@@ -40,6 +42,7 @@ impl Command {
             "remember" => Some(Self::Remember(rest)),
             "forget" => Some(Self::Forget(rest)),
             "memories" | "memory" => Some(Self::Memories),
+            "pair" => Some(Self::Pair(rest)),
             _ => None,
         }
     }
@@ -49,7 +52,15 @@ impl Command {
 pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) -> String {
     match command {
         Command::Help => help_text(&s.config.bot_name),
-        Command::WhoAmI => whoami(s, event),
+        Command::WhoAmI => whoami(s, event).await,
+        // Personal bots handle `/pair` before commands reach a conversation (dispatch).
+        Command::Pair(_) => {
+            if s.config.personal {
+                "This account is already paired.".into()
+            } else {
+                "Pairing is for personal assistants (`okbot profile set personal`).".into()
+            }
+        }
         Command::Reset => match s.store.reset(&event.conversation).await {
             Ok(()) => "Okay, I started a new conversation.".to_string(),
             Err(error) => {
@@ -64,16 +75,20 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
     }
 }
 
-fn whoami(s: &Shared, event: &InboundEvent) -> String {
+async fn whoami(s: &Shared, event: &InboundEvent) -> String {
     let account = format!("{}/{}", event.conversation.channel, event.author.id);
     let mut reply = format!(
         "You are `{account}` ({}) in chat `{}`.",
         event.author.display_name, event.conversation.room
     );
-    match s
-        .config
-        .person(&event.conversation.channel, &event.author.id)
-    {
+    match s.person_of(event).await {
+        Some(person) if s.config.personal => {
+            let _ = write!(
+                reply,
+                " You are the owner of this assistant ({} paired account(s), one shared memory).",
+                person.accounts.len()
+            );
+        }
         Some(person) => {
             let _ = write!(
                 reply,
@@ -90,7 +105,7 @@ fn whoami(s: &Shared, event: &InboundEvent) -> String {
             );
         }
     }
-    if s.gate.is_admin(event) {
+    if s.is_admin(event).await {
         reply.push_str(" You are an administrator.");
     }
     reply
@@ -107,10 +122,7 @@ async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
         conversation: event.conversation.clone(),
         user: event.author.clone(),
         internal: room.internal,
-        person: s
-            .config
-            .person(&event.conversation.channel, &event.author.id)
-            .cloned(),
+        person: s.person_of(event).await,
     };
     let result = match command {
         Command::Remember(text) if text.trim().is_empty() => {
@@ -167,6 +179,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/remember <text>`: remember something about you\n\
          - `/memories`: show what I remember here\n\
          - `/forget <id>`: forget a note (ids are listed by `/memories`)\n\
+         - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/help`: this message"
     )
 }

@@ -127,6 +127,7 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     rc.history_tokens = config.agent.history_tokens;
     rc.tool_policy = config.agent.tool_policy;
     rc.timezone.clone_from(&config.bot.timezone);
+    rc.personal = config.bot.profile == okbot_config::BotProfile::Personal;
     for admin in &config.bot.admins {
         rc.access.admins.insert(parse_admin(admin)?);
     }

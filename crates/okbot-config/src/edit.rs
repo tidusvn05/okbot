@@ -52,6 +52,27 @@ impl ConfigEditor {
         Ok(())
     }
 
+    /// Sets `[bot] profile`.
+    pub fn set_profile(&mut self, profile: crate::BotProfile) {
+        let value = match profile {
+            crate::BotProfile::Team => "team",
+            crate::BotProfile::Personal => "personal",
+        };
+        if let Some(bot) = self.doc.get_mut("bot").and_then(Item::as_table_like_mut) {
+            match bot.get_mut("profile").and_then(Item::as_value_mut) {
+                Some(existing) => {
+                    // Keep the comment after the value.
+                    let decor = existing.decor().clone();
+                    *existing = toml_edit::Value::from(value);
+                    *existing.decor_mut() = decor;
+                }
+                None => {
+                    bot.insert("profile", toml_edit::value(value));
+                }
+            }
+        }
+    }
+
     /// Whether `[http] listen` is set.
     pub fn has_http_listen(&self) -> bool {
         self.doc.get("http").and_then(|h| h.get("listen")).is_some()
@@ -209,6 +230,20 @@ mod tests {
                 .unwrap()
                 .contains("discord")
         );
+    }
+
+    #[test]
+    fn sets_the_profile() {
+        let dir = bot();
+        let mut e = ConfigEditor::open(dir.path()).unwrap();
+        e.set_profile(crate::BotProfile::Personal);
+        assert_eq!(e.save().unwrap().bot.profile, crate::BotProfile::Personal);
+        let mut e = ConfigEditor::open(dir.path()).unwrap();
+        e.set_profile(crate::BotProfile::Team);
+        let config = e.save().unwrap();
+        assert_eq!(config.bot.profile, crate::BotProfile::Team);
+        let text = std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap();
+        assert!(text.contains("# keep me"), "{text}");
     }
 
     #[test]

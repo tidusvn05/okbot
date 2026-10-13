@@ -27,7 +27,14 @@ okbase knowledge bundle. One bot = one directory with `okbot.toml`, `.env` (secr
 - `okbot channel remove <platform:instance> [--purge-secrets]`.
 - Restart the bot afterwards (`okbot restart NAME`).
 
-## One person on several platforms
+## Personal assistant
+
+If the bot is only for the user, create it with `--profile personal` (or `okbot profile personal`
+later). It then answers only paired accounts, which share one memory on every platform. Run
+`okbot pair <bot>` and tell the user to send the printed `/pair <code>` line to the bot in a direct
+message on each platform within 10 minutes. `okbot pair <bot> --list` shows paired accounts.
+
+## One person on several platforms (team bots)
 
 Personal memory is per account unless the operator links accounts:
 `okbot people link <person> <platform:instance/user-id>…` (each account's id comes from `/whoami`

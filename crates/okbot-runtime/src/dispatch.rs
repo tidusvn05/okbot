@@ -90,6 +90,9 @@ impl Dispatcher {
             }
             Verdict::Answer => {}
         }
+        if s.config.personal && !self.owner_or_pairing(&event).await {
+            return;
+        }
         if event.restricted {
             turn::reply(s, &event, &s.config.replies.restricted).await;
             return;
@@ -99,6 +102,53 @@ impl Dispatcher {
             return;
         }
         self.route((event, guard));
+    }
+
+    /// On a personal bot: handles `/pair` and turns away accounts that are not the owner's.
+    /// Returns whether the event continues (it comes from the owner and is not `/pair`).
+    async fn owner_or_pairing(&self, event: &InboundEvent) -> bool {
+        let s = &self.shared;
+        let is_owner = s.person_of(event).await.is_some();
+        let Some(Command::Pair(code)) = Command::parse(&event.text) else {
+            if !is_owner {
+                s.metrics.ignored();
+                turn::reply(s, event, &s.config.replies.private).await;
+            }
+            return is_owner;
+        };
+        let reply = if is_owner {
+            "This account is already paired.".to_string()
+        } else if !event.is_direct {
+            "Send `/pair <code>` in a direct message, not in a group.".to_string()
+        } else {
+            match s
+                .store
+                .redeem_pairing_code(code.trim(), &event.conversation.channel, &event.author.id)
+                .await
+            {
+                Ok(true) => {
+                    tracing::info!(
+                        channel = %event.conversation.channel,
+                        user = %event.author.id,
+                        "owner account paired"
+                    );
+                    format!(
+                        "✓ Paired. This {} account is now yours; I share one memory across your \
+                         accounts.",
+                        event.conversation.channel.platform()
+                    )
+                }
+                Ok(false) => "That code is not valid. Codes work once and expire after 10 \
+                              minutes: run `okbot pair` again."
+                    .to_string(),
+                Err(error) => {
+                    tracing::error!(%error, "pairing failed");
+                    s.config.replies.error.clone()
+                }
+            }
+        };
+        turn::reply(s, event, &reply).await;
+        false
     }
 
     /// `/stop` acts at once; every other command waits its turn in the conversation.
