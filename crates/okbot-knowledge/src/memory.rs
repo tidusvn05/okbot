@@ -66,7 +66,7 @@ pub(crate) fn language(text: &str) -> &'static str {
 }
 
 /// A file-name slug from the title: ASCII letters and digits, Vietnamese letters folded.
-fn slug(title: &str) -> String {
+pub(crate) fn slug(title: &str) -> String {
     let folded: String = title
         .chars()
         .map(|c| match c {
@@ -407,7 +407,7 @@ pub(crate) fn reindex(root: &Path, folder: &str) -> std::io::Result<()> {
     }
 }
 
-fn write_index(root: &Path, folder: &str) -> std::io::Result<()> {
+pub(crate) fn write_index(root: &Path, folder: &str) -> std::io::Result<()> {
     let dir = root.join(folder);
     std::fs::create_dir_all(&dir)?;
     let mut docs = Vec::new();
@@ -429,10 +429,10 @@ fn write_index(root: &Path, folder: &str) -> std::io::Result<()> {
     subdirs.sort();
     let mut out = format!("# Index: {folder}\n\n");
     if docs.is_empty() && subdirs.is_empty() {
-        out.push_str(if folder.starts_with("tasks") {
-            "No tasks yet.\n"
-        } else {
-            "No notes yet.\n"
+        out.push_str(match folder.split('/').next() {
+            Some("tasks") => "No tasks yet.\n",
+            Some("knowledge") => "No documents yet.\n",
+            _ => "No notes yet.\n",
         });
     }
     if !docs.is_empty() {
@@ -468,7 +468,7 @@ pub(crate) fn git_commit(root: &Path, message: &str) {
             .output()
     };
     // Only the folders the bot writes; `tasks` may not exist yet in older bundles.
-    let areas: Vec<&str> = ["memory", "tasks"]
+    let areas: Vec<&str> = ["memory", "tasks", "notes", "knowledge/inbox"]
         .into_iter()
         .filter(|a| root.join(a).exists())
         .collect();

@@ -157,7 +157,7 @@ async fn main() -> ExitCode {
         Command::Chat(args) => chat::run(args).await,
         Command::List => list(),
         Command::Doctor(args) => doctor::run(args).await,
-        Command::Kb(command) => kb::run(command),
+        Command::Kb(command) => kb::run(command).await,
         Command::Memory(command) => memory::run(command).await,
         Command::Task(command) => task::run(command).await,
         Command::Channel(command) => channel::run(command).await,

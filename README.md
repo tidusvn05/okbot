@@ -102,6 +102,7 @@ shop/
 
 - [Design](docs/design.md) and [architecture decisions](docs/adr/)
 - [Running on a VPS](docs/deploy.md): many bots per machine, services, reverse proxy
+- [A personal assistant](docs/assistant.md): memory, reminders, routines, notes and saved documents
 - [Extending okbot](docs/extending/README.md): new platforms in [Rust](docs/extending/channel.md) or
   [any language](docs/bridge.md), agent backends, stores
 - [Implementation plan](docs/implementation-plan.md): phases, releases, engineering standards

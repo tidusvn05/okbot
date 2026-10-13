@@ -19,6 +19,14 @@ terms:
     synonyms: [việc cần làm, nhắc nhở, to-do, reminder]
     facet: topic
     description: To-dos, reminders and routines.
+  journal:
+    synonyms: [ghi chú, nhật ký, note, notes]
+    facet: topic
+    description: Quick notes and the journal.
+  inbox:
+    synonyms: [tài liệu đã lưu, saved, lưu lại]
+    facet: topic
+    description: Documents saved from chat.
   onboarding:
     synonyms: [bắt đầu, hướng dẫn, getting started]
     facet: topic
