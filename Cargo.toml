@@ -57,8 +57,8 @@ okbot-testkit = { path = "crates/okbot-testkit", version = "0.1.0-dev" }
 agent-core = { git = "https://github.com/tidusvn05/agent-core", rev = "43809767d6e469c4bea84a1ebb7e1fe1d567d4ec", version = "0.4.0" }
 okbase = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.3", version = "0.2.3" }
 okbase-mcp = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.3", version = "0.2.3" }
-# Zalo Bot API client; by commit until v0.1.0 is on crates.io (ADR 0005).
-zalo-bot = { git = "https://github.com/tidusvn05/zalo-bot", rev = "c621a034cfae63038c7e0e11d803d498a4822283", version = "0.1.0", default-features = false }
+# Zalo Bot API client (unofficial); ring is installed by okbot, so no default TLS provider.
+zalo-bot = { version = "0.1", default-features = false }
 include_dir = "0.7"
 # Same minor as okbase-mcp, so one rmcp is linked.
 rmcp = { version = "~3.5", default-features = false, features = ["server", "transport-streamable-http-server"] }

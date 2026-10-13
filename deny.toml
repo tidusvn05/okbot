@@ -46,9 +46,8 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# ADR 0005: agent-core, okbase and zalo-bot are used from git until they are on crates.io.
+# ADR 0005: agent-core and okbase are used from git until they are on crates.io.
 allow-git = [
     "https://github.com/tidusvn05/agent-core",
     "https://github.com/tidusvn05/okbase",
-    "https://github.com/tidusvn05/zalo-bot",
 ]
