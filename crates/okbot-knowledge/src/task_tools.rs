@@ -23,10 +23,10 @@ pub(crate) fn tools() -> Vec<Tool> {
             json!({
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["todo", "reminder"],
-                             "description": "todo: stays open until done (may also have remind_at); reminder: a message at a time, done once sent."},
+                    "kind": {"type": "string", "enum": ["todo", "reminder", "routine"],
+                             "description": "todo: stays open until done (may also have remind_at); reminder: a message at a time, done once sent; routine: you run `notes` as a prompt at each time (owner only, e.g. a daily summary)."},
                     "title": {"type": "string", "description": "Short, in the user's language."},
-                    "notes": {"type": "string"},
+                    "notes": {"type": "string", "description": "Details; for a routine, the instruction to carry out each time."},
                     "remind_at": {"type": "string", "description": "Local time `YYYY-MM-DD HH:MM` when the bot sends the reminder."},
                     "due": {"type": "string", "description": "Local time `YYYY-MM-DD HH:MM` (or a date) when it should be done."},
                     "repeat": {"type": "string", "description": "`daily 08:00`, `weekdays 08:00`, `weekly mon,fri 09:00`, `monthly 1 09:00` or `every 3h`."},
@@ -166,48 +166,122 @@ fn deliver_to(who: &Requester, value: Option<&str>) -> Result<Option<ChannelId>,
     Ok(Some(channel))
 }
 
+async fn add(
+    k: &Knowledge,
+    who: &Requester,
+    admin: bool,
+    args: &Map<String, Value>,
+    tz: &TimeZone,
+) -> Result<String, String> {
+    let kind = match str_arg(args, "kind") {
+        None => TaskKind::Todo,
+        Some(v) => v.parse::<TaskKind>()?,
+    };
+    if kind == TaskKind::Routine && !admin {
+        return Err(
+            "only the owner of this assistant (or an operator) can set up \
+                    routines; add a reminder instead"
+                .into(),
+        );
+    }
+    let task = NewTask {
+        kind,
+        title: str_arg(args, "title").unwrap_or_default().to_string(),
+        notes: str_arg(args, "notes").unwrap_or_default().to_string(),
+        scope: match str_arg(args, "scope") {
+            None => MemoryScope::User,
+            Some(v) => scope(v)
+                .filter(|s| *s != MemoryScope::Global)
+                .ok_or("scope must be user or room")?,
+        },
+        due: time_arg(args, "due", tz)?,
+        remind_at: time_arg(args, "remind_at", tz)?,
+        repeat: repeat_arg(str_arg(args, "repeat"))?,
+        deliver_to: deliver_to(who, str_arg(args, "deliver_to"))?,
+        // A routine runs the agent unattended: the user confirms it in chat first, so
+        // text the agent read (a web page) cannot plant one.
+        paused: kind == TaskKind::Routine,
+    };
+    let task = TaskStore::add(k, who, task)
+        .await
+        .map_err(|e| e.to_string())?;
+    if task.kind == TaskKind::Routine {
+        let short = task.id.rsplit('/').next().unwrap_or(&task.id);
+        return Ok(format!(
+            "Created {} (time zone {}). It is paused until the user confirms: tell them \
+             to send `/resume {short}`.",
+            describe(&task, tz),
+            tz.iana_name().unwrap_or("UTC")
+        ));
+    }
+    Ok(format!(
+        "Added {} (time zone {}).",
+        describe(&task, tz),
+        tz.iana_name().unwrap_or("UTC")
+    ))
+}
+
+async fn update(
+    k: &Knowledge,
+    who: &Requester,
+    args: &Map<String, Value>,
+    tz: &TimeZone,
+) -> Result<String, String> {
+    let id = || str_arg(args, "id").unwrap_or_default().to_string();
+    let mut change = TaskChange {
+        title: str_arg(args, "title").map(str::to_string),
+        notes: str_arg(args, "notes").map(str::to_string),
+        status: str_arg(args, "status")
+            .map(str::parse::<TaskStatus>)
+            .transpose()?,
+        due: time_change(args, "due", tz)?,
+        remind_at: time_change(args, "remind_at", tz)?,
+        repeat: match str_arg(args, "repeat") {
+            None => None,
+            Some(v) => Some(repeat_arg(Some(v))?),
+        },
+    };
+    let target = id();
+    let short = target.rsplit('/').next().unwrap_or(&target).to_string();
+    let is_routine = TaskStore::list(k, who)
+        .await
+        .map_err(|e| e.to_string())?
+        .iter()
+        .any(|t| t.kind == TaskKind::Routine && t.id.ends_with(&format!("/{short}")));
+    if is_routine {
+        // Only the user starts a routine (`/resume`); a changed prompt needs it again.
+        if change.status == Some(TaskStatus::Open) {
+            return Err(format!(
+                "only the user can start a routine: tell them to send `/resume {short}`"
+            ));
+        }
+        if change.notes.is_some() {
+            change.status = Some(TaskStatus::Paused);
+        }
+    }
+    let task = TaskStore::update(k, who, &target, change)
+        .await
+        .map_err(|e| e.to_string())?;
+    if is_routine && task.status == TaskStatus::Paused {
+        return Ok(format!(
+            "Updated {}. It is paused: the user resumes it with `/resume {short}`.",
+            describe(&task, tz)
+        ));
+    }
+    Ok(format!("Updated {}.", describe(&task, tz)))
+}
+
 pub(crate) async fn call(
     k: &Knowledge,
     who: &Requester,
+    admin: bool,
     name: &str,
     args: &Map<String, Value>,
 ) -> Result<String, String> {
     let tz = k.timezone().clone();
     let id = || str_arg(args, "id").unwrap_or_default().to_string();
     match name {
-        "task_add" => {
-            let kind = match str_arg(args, "kind") {
-                None => TaskKind::Todo,
-                Some(v) => v.parse::<TaskKind>()?,
-            };
-            if kind == TaskKind::Routine {
-                return Err("routines are not available yet; add a reminder instead".into());
-            }
-            let task = NewTask {
-                kind,
-                title: str_arg(args, "title").unwrap_or_default().to_string(),
-                notes: str_arg(args, "notes").unwrap_or_default().to_string(),
-                scope: match str_arg(args, "scope") {
-                    None => MemoryScope::User,
-                    Some(v) => scope(v)
-                        .filter(|s| *s != MemoryScope::Global)
-                        .ok_or("scope must be user or room")?,
-                },
-                due: time_arg(args, "due", &tz)?,
-                remind_at: time_arg(args, "remind_at", &tz)?,
-                repeat: repeat_arg(str_arg(args, "repeat"))?,
-                deliver_to: deliver_to(who, str_arg(args, "deliver_to"))?,
-                paused: false,
-            };
-            let task = TaskStore::add(k, who, task)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(format!(
-                "Added {} (time zone {}).",
-                describe(&task, &tz),
-                tz.iana_name().unwrap_or("UTC")
-            ))
-        }
+        "task_add" => add(k, who, admin, args, &tz).await,
         "task_list" => {
             let all = args.get("all").and_then(Value::as_bool).unwrap_or(false);
             let tasks: Vec<Task> = TaskStore::list(k, who)
@@ -225,25 +299,7 @@ pub(crate) async fn call(
                 .collect::<Vec<_>>()
                 .join("\n"))
         }
-        "task_update" => {
-            let change = TaskChange {
-                title: str_arg(args, "title").map(str::to_string),
-                notes: str_arg(args, "notes").map(str::to_string),
-                status: str_arg(args, "status")
-                    .map(str::parse::<TaskStatus>)
-                    .transpose()?,
-                due: time_change(args, "due", &tz)?,
-                remind_at: time_change(args, "remind_at", &tz)?,
-                repeat: match str_arg(args, "repeat") {
-                    None => None,
-                    Some(v) => Some(repeat_arg(Some(v))?),
-                },
-            };
-            let task = TaskStore::update(k, who, &id(), change)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(format!("Updated {}.", describe(&task, &tz)))
-        }
+        "task_update" => update(k, who, args, &tz).await,
         "task_done" => {
             let change = TaskChange {
                 status: Some(TaskStatus::Done),
@@ -276,8 +332,7 @@ mod tests {
         map
     }
 
-    #[tokio::test]
-    async fn add_list_snooze_done() {
+    fn open() -> (tempfile::TempDir, Knowledge, Requester) {
         let dir = tempfile::tempdir().unwrap();
         crate::write_default_bundle(dir.path()).unwrap();
         let mut options = crate::KnowledgeOptions::new(dir.path());
@@ -300,9 +355,16 @@ mod tests {
                 ],
             }),
         };
+        (dir, k, who)
+    }
+
+    #[tokio::test]
+    async fn add_list_snooze_done() {
+        let (_dir, k, who) = open();
         let added = call(
             &k,
             &who,
+            true,
             "task_add",
             &args(
                 json!({"kind": "reminder", "title": "Gọi mẹ", "remind_at": "2099-01-02 20:00",
@@ -323,41 +385,89 @@ mod tests {
         let bad = call(
             &k,
             &who,
+            true,
             "task_add",
             &args(json!({"title": "x", "deliver_to": "slack:other"})),
         )
         .await
         .unwrap_err();
         assert!(bad.contains("not one of"), "{bad}");
-        let routine = call(
-            &k,
-            &who,
-            "task_add",
-            &args(json!({"kind": "routine", "title": "x"})),
-        )
-        .await
-        .unwrap_err();
-        assert!(routine.contains("not available"), "{routine}");
-
         let snoozed = call(
             &k,
             &who,
+            true,
             "task_update",
             &args(json!({"id": id, "remind_at": "2099-01-02 20:10"})),
         )
         .await
         .unwrap();
         assert!(snoozed.contains("remind 2099-01-02 20:10"), "{snoozed}");
-        let list = call(&k, &who, "task_list", &Map::new()).await.unwrap();
-        assert!(list.contains(&id), "{list}");
-        call(&k, &who, "task_done", &args(json!({"id": id})))
+        let list = call(&k, &who, true, "task_list", &Map::new())
             .await
             .unwrap();
-        let list = call(&k, &who, "task_list", &Map::new()).await.unwrap();
+        assert!(list.contains(&id), "{list}");
+        call(&k, &who, true, "task_done", &args(json!({"id": id})))
+            .await
+            .unwrap();
+        let list = call(&k, &who, true, "task_list", &Map::new())
+            .await
+            .unwrap();
         assert_eq!(list, "No tasks.");
-        let list = call(&k, &who, "task_list", &args(json!({"all": true})))
+        let list = call(&k, &who, true, "task_list", &args(json!({"all": true})))
             .await
             .unwrap();
         assert!(list.contains("done"), "{list}");
+    }
+
+    #[tokio::test]
+    async fn routines_are_owner_only_and_start_paused() {
+        let (_dir, k, who) = open();
+        let member = call(
+            &k,
+            &who,
+            false,
+            "task_add",
+            &args(json!({"kind": "routine", "title": "x", "notes": "y", "repeat": "daily 07:00"})),
+        )
+        .await
+        .unwrap_err();
+        assert!(member.contains("only the owner"), "{member}");
+        let routine = call(
+            &k,
+            &who,
+            true,
+            "task_add",
+            &args(json!({"kind": "routine", "title": "Morning brief",
+                         "notes": "Summarise my tasks for today.", "repeat": "daily 07:00"})),
+        )
+        .await
+        .unwrap();
+        assert!(routine.contains("[routine, paused]"), "{routine}");
+        assert!(routine.contains("/resume t-"), "{routine}");
+        let routine_id = routine
+            .trim_start_matches("Created ")
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string();
+        let refused = call(
+            &k,
+            &who,
+            true,
+            "task_update",
+            &args(json!({"id": routine_id, "status": "open"})),
+        )
+        .await
+        .unwrap_err();
+        assert!(refused.contains("/resume"), "{refused}");
+        call(
+            &k,
+            &who,
+            true,
+            "task_delete",
+            &args(json!({"id": routine_id})),
+        )
+        .await
+        .unwrap();
     }
 }

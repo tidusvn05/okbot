@@ -42,6 +42,15 @@ cat >/dev/null; printf '%s\n' '{"is_error":false,"result":"ok"}'"#,
         cmd
     }
 
+    fn run(&self, args: &[&str]) -> (i32, String, String) {
+        let out = self.okbot().args(args).write_stdin("").output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    }
+
     fn json(&self, args: &[&str]) -> (i32, Value) {
         let out = self.okbot().args(args).write_stdin("").output().unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -496,7 +505,10 @@ fn tasks_from_the_terminal() {
         .to_string();
     let (code, out, err) = run(&["task", "done", &id, "--bot", "me"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("done: Buy milk"), "{out}");
+    assert!(
+        out.starts_with("done\n") && out.contains("Buy milk"),
+        "{out}"
+    );
     let (_, out, _) = run(&["task", "list", "me"]);
     assert!(!out.contains("Buy milk"), "{out}");
     let (code, _, err) = run(&["task", "rm", &id, "--bot", "me"]);
@@ -510,4 +522,47 @@ fn tasks_from_the_terminal() {
     // Written tasks keep the bundle lint-clean.
     let (code, out, err) = run(&["kb", "lint", "me"]);
     assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn routines_from_the_terminal() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "me",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--profile",
+        "personal",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    let (code, out, err) = env.run(&[
+        "task",
+        "add",
+        "Morning brief",
+        "--bot",
+        "me",
+        "--repeat",
+        "daily 07:00",
+        "--routine",
+        "Summarise my tasks for today",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("[routine, open] Morning brief"), "{out}");
+    let routine = out
+        .lines()
+        .find(|l| l.contains("Morning brief"))
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap()
+        .to_string();
+    let (_, out, _) = env.run(&["task", "pause", &routine, "--bot", "me"]);
+    assert!(out.contains("[routine, paused]"), "{out}");
+    let (_, out, _) = env.run(&["task", "resume", &routine, "--bot", "me"]);
+    assert!(
+        out.starts_with("resumed") && out.contains("[routine, open]"),
+        "{out}"
+    );
 }

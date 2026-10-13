@@ -170,6 +170,8 @@ pub struct ScheduleConfig {
     pub late_grace: Duration,
     /// Task files are re-read at least this often (hand edits, new tasks).
     pub rescan: Duration,
+    /// Routine runs per local day, for the whole bot.
+    pub max_agent_runs_per_day: u32,
 }
 
 impl Default for ScheduleConfig {
@@ -179,6 +181,7 @@ impl Default for ScheduleConfig {
             deliver_to: None,
             late_grace: Duration::from_secs(6 * 3600),
             rescan: Duration::from_secs(30),
+            max_agent_runs_per_day: 24,
         }
     }
 }

@@ -15,10 +15,10 @@ them. Hard rule 5 keeps user data in files and only operational data in SQLite.
   idempotent across crashes and restarts.
 - A scheduler in `okbot-runtime` (through `Clock`) sends reminders verbatim with `Channel::send`; no
   agent runs for a plain reminder.
-- A routine fires an `InboundEvent` with `source: Schedule` into its conversation queue, so it uses the
-  normal pipeline. Only the owner (personal) or admins (team) may create routines, the role is checked
-  at every firing, runs are capped per day, and routines created during a turn that used web tools
-  start paused until confirmed in chat.
+- A routine fires its prompt as a message of its author into the inbound sink, so it uses the normal
+  pipeline. Only the owner (personal) or admins (team) may create routines, the role is checked at
+  every firing, runs are capped per day, and routines the agent creates start paused until the user
+  sends `/resume`.
 - `okbot-core` gains a `TaskStore` port; `okbot-knowledge` implements it on the bundle.
 
 ## Consequences
@@ -26,4 +26,4 @@ them. Hard rule 5 keeps user data in files and only operational data in SQLite.
   can query them with `kb_query type=Task`.
 - The scheduler re-reads task files every 30 seconds, so hand edits and new tasks need no signal.
 - Routines spend agent quota without a user present; the daily cap and the role check bound it.
-- `InboundEvent` gets a `source` field, a change to the public SDK before 1.0.
+- `RunInfo` gets an `admin` flag so the tools know who may create routines; `InboundEvent` is unchanged.

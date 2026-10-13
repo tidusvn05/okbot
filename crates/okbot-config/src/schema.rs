@@ -37,6 +37,9 @@ pub struct ScheduleSection {
     /// Firings found this late (the bot was down) are still sent; older ones are marked missed.
     #[serde(default = "default_late_grace")]
     pub late_grace_minutes: u64,
+    /// Routine runs (scheduled agent turns) per day, for the whole bot.
+    #[serde(default = "default_agent_runs")]
+    pub max_agent_runs_per_day: u32,
 }
 
 impl Default for ScheduleSection {
@@ -45,12 +48,17 @@ impl Default for ScheduleSection {
             enabled: true,
             deliver_to: None,
             late_grace_minutes: default_late_grace(),
+            max_agent_runs_per_day: default_agent_runs(),
         }
     }
 }
 
 fn default_late_grace() -> u64 {
     360
+}
+
+fn default_agent_runs() -> u32 {
+    24
 }
 
 /// `[people.<id>]`: platform accounts of one human. They share one profile and personal memory

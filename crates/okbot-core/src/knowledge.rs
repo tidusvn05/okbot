@@ -54,6 +54,9 @@ pub struct RunInfo<'a> {
     pub ttl: Duration,
     /// Media the user sent with the messages being answered (offered through a viewing tool).
     pub attachments: &'a [Attachment],
+    /// The requester administers the bot (the owner of a personal bot, or `[bot] admins`): only
+    /// they may create routines and save documents to the shared knowledge.
+    pub admin: bool,
 }
 
 /// Knowledge placed in the system prompt.

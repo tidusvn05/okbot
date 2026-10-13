@@ -356,10 +356,11 @@ impl Runtime {
                 .map_err(|(addr, source)| RunError::Http { addr, source })?;
             tasks.spawn(server);
         }
-        drop(sink);
         if shared.tasks.is_some() && shared.config.schedule.enabled {
-            tasks.spawn(schedule::run(shared.clone(), channel_stop.clone()));
+            let sink: Arc<dyn InboundSink> = sink.clone();
+            tasks.spawn(schedule::run(shared.clone(), sink, channel_stop.clone()));
         }
+        drop(sink);
 
         let work_stop = CancellationToken::new();
         dispatch::Dispatcher::new(shared.clone(), work_stop.clone())

@@ -37,6 +37,7 @@ async fn main() {
                 tools: okbot_core::ToolPolicy::Web,
                 ttl: Duration::from_secs(3600),
                 attachments: &[],
+                admin: false,
             },
         )
         .await

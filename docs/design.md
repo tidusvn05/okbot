@@ -588,18 +588,19 @@ direct chat or the current room, never another user.
 A routine is a task whose firing runs the agent ("every morning at 7, summarise today's tasks and the
 weather"):
 
-- The scheduler delivers an `InboundEvent` with `source: Schedule { task_id }` into the routine's
-  conversation queue, authored by the routine's author. It goes through the normal worker (history,
-  session, scope, tool policy, renderer), skipping only dedupe and commands.
-- The prompt states that the turn is a scheduled routine, when it was created and that the user is not
-  waiting for a live answer.
+- The scheduler delivers the routine's prompt to the runtime's inbound sink as a message of the
+  author's account in the routine's chat, so it goes through the normal pipeline (access, history,
+  session, scope, tool policy, renderer) and the public `InboundEvent` stays unchanged.
+- The message starts with a preamble saying it is a scheduled routine set up earlier and that nobody
+  is waiting for a live answer.
 - **Who.** Only the owner of a personal bot and `[bot] admins` of a team bot may create routines.
   The check is repeated at every firing: if the author lost the role, the routine is paused.
 - **Cost.** `[schedule] max_agent_runs_per_day` (default 24) per bot; routines repeat at most hourly;
-  a failed run is reported once in the conversation, not retried.
-- **Visibility.** Creating a routine always makes the bot answer with what will run and when; `/tasks`
-  lists routines first. A routine created during a turn that used web tools is created `paused` and
-  must be confirmed with `/tasks resume <id>`, so a web page cannot plant a recurring job.
+  a failed run is reported once in the conversation, not retried. Runs over the cap are marked missed.
+- **Confirmation.** A routine the agent creates starts `paused`, and the reply tells the user to send
+  `/resume <id>`, so text the agent read (a web page) cannot plant a recurring job. The agent cannot
+  resume a routine, and changing its prompt pauses it again. `okbot task add --routine` (the operator)
+  starts at once; `/pause`, `/resume` and `okbot task pause|resume` stop and start any task.
 
 ### 5.8 Saving documents to knowledge
 

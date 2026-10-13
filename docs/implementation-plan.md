@@ -518,6 +518,13 @@ were already done in P15–P16.
 Exit criteria: a daily 7:00 summary routine runs with real Codex and Claude; a team member cannot
 create one; the daily cap holds.
 
+Status (2026-10-14): done. Instead of `InboundEvent.source`, the scheduler sends the prompt (with a
+preamble) to the inbound sink as the author's message, so no SDK type changed; `RunInfo.admin` tells
+the tools who may create routines. Every routine the agent creates starts paused (not only after web
+use): the agent cannot tell which text in its turn came from the web. Verified with real Codex: a
+daily routine created in chat, resumed with `/resume`, ran at its time and answered from `task_list`.
+Not yet tried with Claude.
+
 ### P19 — Notes and saving documents
 
 1. `note_add`, `/note`; `notes/<owner>/<yyyy>/<date>.md`.
