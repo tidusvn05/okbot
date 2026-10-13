@@ -24,6 +24,8 @@ pub(crate) struct RunContext {
     pub(crate) policy: &'static str,
     /// Media sent with the messages being answered, viewable through `attachment_view`.
     pub(crate) attachments: Vec<okbot_core::Attachment>,
+    /// The requester administers the bot ([`okbot_core::RunInfo::admin`]).
+    pub(crate) admin: bool,
 }
 
 /// Issued tokens. Tokens are 256-bit random values, valid until revoked or expired.
@@ -134,6 +136,7 @@ mod tests {
             },
             policy: "web",
             attachments: Vec::new(),
+            admin: false,
         }
     }
 

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{
-    CancellationToken, ChannelId, ConversationKey, FireState, MessageRole, NewMessage, ReplyTarget,
-    Task, TaskChange, TaskKind, TaskStatus, UserId,
+    CancellationToken, ChannelId, ConversationKey, FireState, InboundEvent, InboundSink,
+    MessageRole, NewMessage, ReplyTarget, Task, TaskChange, TaskKind, TaskStatus, UserId, UserRef,
 };
 
 use crate::Shared;
@@ -21,11 +21,11 @@ fn backoff(attempts: u32) -> SignedDuration {
 }
 
 /// Runs until `stop`: one pass, then a sleep until the next firing or the rescan interval.
-pub(crate) async fn run(shared: Arc<Shared>, stop: CancellationToken) {
+pub(crate) async fn run(shared: Arc<Shared>, sink: Arc<dyn InboundSink>, stop: CancellationToken) {
     let rescan = shared.config.schedule.rescan;
     tracing::info!("reminder scheduler started");
     loop {
-        let next = tick(&shared).await;
+        let next = tick(&shared, sink.as_ref()).await;
         let now = shared.clock.now();
         let wait = next
             .and_then(|at| Duration::try_from(at.duration_since(now)).ok())
@@ -37,8 +37,9 @@ pub(crate) async fn run(shared: Arc<Shared>, stop: CancellationToken) {
     }
 }
 
-/// One pass: fires every due task and returns the next firing time, if any.
-pub(crate) async fn tick(s: &Shared) -> Option<Timestamp> {
+/// One pass: fires every due task and returns the next firing time, if any. Routines are
+/// delivered to `sink` as the owner's messages.
+pub(crate) async fn tick(s: &Shared, sink: &dyn InboundSink) -> Option<Timestamp> {
     let store = s.tasks.as_ref()?;
     let tasks = match store.scheduled().await {
         Ok(tasks) => tasks,
@@ -58,16 +59,12 @@ pub(crate) async fn tick(s: &Shared) -> Option<Timestamp> {
             next = Some(next.map_or(at, |n| n.min(at)));
             continue;
         }
-        if task.kind == TaskKind::Routine {
-            // Routines run agent turns (design §5.7); they cannot be created yet.
-            continue;
-        }
-        fire(s, &task, at, now).await;
+        fire(s, sink, &task, at, now).await;
     }
     next
 }
 
-async fn fire(s: &Shared, task: &Task, at: Timestamp, now: Timestamp) {
+async fn fire(s: &Shared, sink: &dyn InboundSink, task: &Task, at: Timestamp, now: Timestamp) {
     let span = tracing::info_span!("reminder", task = %task.id, %at);
     let _enter = span.enter();
     let fire = match s.store.claim_fire(&task.id, at).await {
@@ -93,6 +90,10 @@ async fn fire(s: &Shared, task: &Task, at: Timestamp, now: Timestamp) {
         advance(s, task, at, now).await;
         return;
     }
+    if task.kind == TaskKind::Routine {
+        run_routine(s, sink, task, at, now, fire.attempts).await;
+        return;
+    }
     let attempts = fire.attempts + 1;
     match deliver(s, task, at, now).await {
         Ok(()) => {
@@ -110,6 +111,148 @@ async fn fire(s: &Shared, task: &Task, at: Timestamp, now: Timestamp) {
             finish(s, task, at, FireState::Sending, attempts).await;
         }
     }
+}
+
+/// Starts a routine's agent turn by delivering its prompt as a message of its author (design
+/// §5.7). The turn reports its own failures in the chat, so a run is not retried.
+async fn run_routine(
+    s: &Shared,
+    sink: &dyn InboundSink,
+    task: &Task,
+    at: Timestamp,
+    now: Timestamp,
+    attempts: u32,
+) {
+    if !may_run_routine(s, task) {
+        tracing::warn!("routine paused: its author no longer administers the bot");
+        finish(s, task, at, FireState::Failed, attempts).await;
+        pause(s, task).await;
+        return;
+    }
+    if runs_today(s, now).await >= s.config.schedule.max_agent_runs_per_day {
+        tracing::warn!(
+            limit = s.config.schedule.max_agent_runs_per_day,
+            "routine skipped: daily run limit reached"
+        );
+        finish(s, task, at, FireState::Missed, attempts).await;
+        advance(s, task, at, now).await;
+        return;
+    }
+    match routine_event(s, task, at, now).await {
+        Ok(event) => match sink.deliver(event).await {
+            Ok(()) => {
+                tracing::info!("routine started");
+                finish(s, task, at, FireState::Sent, attempts + 1).await;
+                advance(s, task, at, now).await;
+            }
+            // Shutting down: the firing stays claimed and runs after the restart.
+            Err(_) => tracing::warn!("routine not started: the bot is stopping"),
+        },
+        Err(reason) if attempts + 1 >= MAX_ATTEMPTS => {
+            tracing::error!(%reason, "giving up on a routine run");
+            finish(s, task, at, FireState::Failed, attempts + 1).await;
+            advance(s, task, at, now).await;
+        }
+        Err(reason) => {
+            tracing::warn!(%reason, "routine not started; will retry");
+            finish(s, task, at, FireState::Sending, attempts + 1).await;
+        }
+    }
+}
+
+/// Routines are for the owner of a personal bot and for `[bot] admins`; checked at every run.
+fn may_run_routine(s: &Shared, task: &Task) -> bool {
+    let parts: Vec<&str> = task.id.split('/').collect();
+    if s.config.personal && parts.get(1..3) == Some(&["people", crate::config::OWNER][..]) {
+        return true;
+    }
+    task.author
+        .split_once('/')
+        .and_then(|(channel, user)| Some((channel.parse::<ChannelId>().ok()?, UserId::new(user))))
+        .is_some_and(|account| s.config.access.admins.contains(&account))
+}
+
+/// Routine runs started today (local day), counted from the firing records.
+async fn runs_today(s: &Shared, now: Timestamp) -> u32 {
+    let Some(store) = &s.tasks else { return 0 };
+    let routines: Vec<String> = store
+        .scheduled()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| t.kind == TaskKind::Routine)
+        .map(|t| t.id)
+        .collect();
+    let tz = s.config.time_zone();
+    let today = now.to_zoned(tz.clone()).date();
+    let fires = s.store.recent_fires(1000).await.unwrap_or_default();
+    let count = fires
+        .iter()
+        .filter(|f| f.state == FireState::Sent && routines.contains(&f.task_id))
+        .filter(|f| f.updated_at.to_zoned(tz.clone()).date() == today)
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+async fn pause(s: &Shared, task: &Task) {
+    let Some(store) = &s.tasks else { return };
+    let change = TaskChange {
+        status: Some(TaskStatus::Paused),
+        ..TaskChange::default()
+    };
+    if let Err(error) = store.after_fire(&task.id, change).await {
+        tracing::error!(%error, "cannot pause the routine");
+    }
+}
+
+/// The message that starts a routine run: from the author's account on the target chat's
+/// platform, with a preamble so the agent knows nobody is waiting live.
+async fn routine_event(
+    s: &Shared,
+    task: &Task,
+    at: Timestamp,
+    now: Timestamp,
+) -> Result<InboundEvent, String> {
+    let conversation = target(s, task).await?;
+    let mut accounts = accounts(s, task).await;
+    if let Some((channel, user)) = task.author.split_once('/')
+        && let Ok(channel) = channel.parse::<ChannelId>()
+    {
+        accounts.push((channel, UserId::new(user)));
+    }
+    let user = accounts
+        .iter()
+        .find(|(c, _)| *c == conversation.channel)
+        .map(|(_, u)| u.clone())
+        .ok_or_else(|| format!("no account of the author on {}", conversation.channel))?;
+    let is_direct = s
+        .store
+        .direct_chat(&conversation.channel, &user)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|dm| dm == conversation);
+    let short = task.id.rsplit('/').next().unwrap_or(&task.id);
+    Ok(InboundEvent {
+        event_id: format!("routine:{}:{}", task.id, at.as_millisecond()),
+        conversation,
+        author: UserRef {
+            id: user.clone(),
+            display_name: user.as_str().to_string(),
+            is_bot: false,
+        },
+        text: format!(
+            "(Scheduled routine `{short}` \"{}\", set up earlier by me; I am not waiting for a \
+             live reply. Do it now and answer in my language.)\n{}",
+            task.title, task.notes
+        ),
+        attachments: Vec::new(),
+        mentions_bot: true,
+        is_direct,
+        restricted: false,
+        message_id: None,
+        sent_at: now,
+    })
 }
 
 async fn finish(s: &Shared, task: &Task, at: Timestamp, state: FireState, attempts: u32) {
@@ -277,6 +420,7 @@ mod tests {
 
     struct Setup {
         shared: Shared,
+        sink: okbot_testkit::CollectSink,
         clock: Arc<ManualClock>,
         tasks: Arc<MemoryTasks>,
         zalo: Arc<FakeChannel>,
@@ -311,6 +455,7 @@ mod tests {
         };
         Setup {
             shared,
+            sink: okbot_testkit::CollectSink::default(),
             clock,
             tasks,
             zalo,
@@ -351,11 +496,11 @@ mod tests {
             now + mins(5),
             Some(origin.clone()),
         ));
-        assert_eq!(tick(&t.shared).await, Some(now + mins(5)));
+        assert_eq!(tick(&t.shared, &t.sink).await, Some(now + mins(5)));
         assert_eq!(t.zalo.sent_texts(), Vec::<String>::new());
 
         t.clock.advance(Duration::from_secs(300));
-        assert_eq!(tick(&t.shared).await, None);
+        assert_eq!(tick(&t.shared, &t.sink).await, None);
         // 2026-01-01 00:05Z is 07:05 in Ho Chi Minh City.
         assert_eq!(t.zalo.sent_texts(), ["⏰ 07:05 · **Gọi mẹ**"]);
         assert_eq!(t.zalo.sent()[0].0.conversation, origin);
@@ -364,7 +509,7 @@ mod tests {
         let history = t.shared.store.recent(&origin, 5).await.unwrap();
         assert!(history[0].text.contains("reminder `t-1`"), "{history:?}");
 
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(t.zalo.sent_texts().len(), 1, "sent once");
     }
 
@@ -383,7 +528,7 @@ mod tests {
         t.tasks.insert(daily);
         let todo = task("t-2", TaskKind::Todo, now - mins(1), Some(origin));
         t.tasks.insert(todo);
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(
             t.zalo.sent_texts().len(),
             2,
@@ -412,7 +557,7 @@ mod tests {
             now - mins(7 * 60),
             Some(origin.clone()),
         ));
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(t.zalo.sent_texts(), Vec::<String>::new());
         let fires = t.shared.store.recent_fires(5).await.unwrap();
         assert_eq!(fires[0].state, FireState::Missed);
@@ -426,7 +571,7 @@ mod tests {
             .set_fire("tasks/people/owner/t-2", at, FireState::Sent, 1)
             .await
             .unwrap();
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(t.zalo.sent_texts(), Vec::<String>::new());
         assert!(t.tasks.all().iter().all(|t| t.status == TaskStatus::Done));
     }
@@ -445,10 +590,10 @@ mod tests {
         ));
 
         // No owner and no direct chat yet: retried with backoff, then given up.
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         let fires = t.shared.store.recent_fires(5).await.unwrap();
         assert_eq!((fires[0].state, fires[0].attempts), (FireState::Sending, 1));
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(
             t.shared.store.recent_fires(5).await.unwrap()[0].attempts,
             1,
@@ -477,7 +622,7 @@ mod tests {
             .await
             .unwrap();
         t.clock.advance(Duration::from_secs(31));
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(t.discord.sent_texts().len(), 1);
         assert_eq!(t.discord.sent()[0].0.conversation, dm);
 
@@ -490,9 +635,85 @@ mod tests {
         );
         to_discord.deliver_to = Some(discord);
         t.tasks.insert(to_discord);
-        tick(&t.shared).await;
+        tick(&t.shared, &t.sink).await;
         assert_eq!(t.discord.sent_texts().len(), 2);
         assert_eq!(t.zalo.sent_texts(), Vec::<String>::new());
+    }
+
+    fn routine(id: &str, at: Timestamp, author: &str) -> Task {
+        let mut t = task(
+            id,
+            TaskKind::Routine,
+            at,
+            Some(ConversationKey::room("zalo:me".parse().unwrap(), "dm-u1")),
+        );
+        t.title = "Morning brief".into();
+        t.notes = "Summarise my tasks for today.".into();
+        t.repeat = Some("daily 07:00".parse::<Repeat>().unwrap());
+        t.author = author.into();
+        t
+    }
+
+    #[tokio::test]
+    async fn routines_run_as_the_owner_and_respect_roles_and_the_daily_cap() {
+        let mut t = setup(true);
+        t.shared.config.schedule.max_agent_runs_per_day = 1;
+        let now = t.clock.now();
+        t.tasks.insert(routine("t-1", now - mins(1), "zalo:me/u1"));
+        tick(&t.shared, &t.sink).await;
+        let events = t.sink.events();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.author.id.as_str(), "u1");
+        assert_eq!(event.conversation.room, "dm-u1");
+        assert!(
+            event.text.contains("Scheduled routine `t-1`"),
+            "{}",
+            event.text
+        );
+        assert!(
+            event.text.ends_with("Summarise my tasks for today."),
+            "{}",
+            event.text
+        );
+        assert_eq!(
+            t.zalo.sent_texts(),
+            Vec::<String>::new(),
+            "no reminder text"
+        );
+        let after = &t.tasks.all()[0];
+        assert_eq!(after.status, TaskStatus::Open);
+        assert_eq!(
+            after.remind_at,
+            Some("2026-01-02T00:00:00Z".parse().unwrap())
+        );
+
+        // A second routine the same day goes over the cap of one run.
+        t.tasks.insert(routine("t-2", now - mins(1), "zalo:me/u1"));
+        tick(&t.shared, &t.sink).await;
+        assert_eq!(t.sink.events().len(), 1);
+        let fires = t.shared.store.recent_fires(5).await.unwrap();
+        assert!(
+            fires
+                .iter()
+                .any(|f| f.task_id.ends_with("t-2") && f.state == FireState::Missed)
+        );
+
+        // On a team bot, a routine whose author is not an admin is paused, not run.
+        t.shared.config.personal = false;
+        t.shared.config.schedule.max_agent_runs_per_day = 10;
+        let mut team = routine("t-3", now - mins(1), "zalo:me/u9");
+        team.id = "tasks/users/zalo-me/u9/t-3".into();
+        t.tasks.insert(team);
+        tick(&t.shared, &t.sink).await;
+        assert_eq!(t.sink.events().len(), 1);
+        let team = t
+            .tasks
+            .all()
+            .into_iter()
+            .find(|t| t.id.ends_with("t-3"))
+            .unwrap();
+        assert_eq!(team.status, TaskStatus::Paused);
     }
 
     #[tokio::test]
@@ -506,7 +727,7 @@ mod tests {
             Some(gone),
         ));
         for _ in 0..MAX_ATTEMPTS {
-            tick(&t.shared).await;
+            tick(&t.shared, &t.sink).await;
             t.clock.advance(Duration::from_secs(600));
         }
         let fires = t.shared.store.recent_fires(5).await.unwrap();

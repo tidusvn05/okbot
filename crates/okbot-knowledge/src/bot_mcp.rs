@@ -258,7 +258,7 @@ impl BotServer {
                 Ok(format!("Updated {}.", entry.id))
             }
             "task_add" | "task_list" | "task_update" | "task_done" | "task_delete" => {
-                crate::task_tools::call(k, who, name, args).await
+                crate::task_tools::call(k, who, context.admin, name, args).await
             }
             other => Err(format!("unknown tool {other}")),
         }

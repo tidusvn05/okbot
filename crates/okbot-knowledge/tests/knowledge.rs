@@ -195,6 +195,7 @@ async fn mcp_tools_respect_the_requester_scope() {
                 tools: okbot_core::ToolPolicy::Web,
                 ttl: Duration::from_secs(60),
                 attachments: &[],
+                admin: false,
             },
         )
         .await

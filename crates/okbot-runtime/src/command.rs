@@ -30,6 +30,10 @@ pub(crate) enum Command {
     Done(String),
     /// `/snooze [10m|1h|15:30]`: send the last reminder of this chat again later.
     Snooze(String),
+    /// `/resume <number|id>`: start a paused task (routines need this confirmation).
+    Resume(String),
+    /// `/pause <number|id>`: stop a task from firing until resumed.
+    Pause(String),
 }
 
 impl Command {
@@ -52,6 +56,8 @@ impl Command {
             "tasks" | "todo" | "todos" => Some(Self::Tasks(rest.eq_ignore_ascii_case("all"))),
             "done" => Some(Self::Done(rest)),
             "snooze" | "later" => Some(Self::Snooze(rest)),
+            "resume" | "start" => Some(Self::Resume(rest)),
+            "pause" => Some(Self::Pause(rest)),
             _ => None,
         }
     }
@@ -81,7 +87,9 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
         Command::Remember(_) | Command::Forget(_) | Command::Memories => {
             memory(s, command, event).await
         }
-        Command::Tasks(_) | Command::Done(_) => tasks(s, command, event).await,
+        Command::Tasks(_) | Command::Done(_) | Command::Resume(_) | Command::Pause(_) => {
+            tasks(s, command, event).await
+        }
         Command::Snooze(when) => snooze(s, &when, event).await,
     }
 }
@@ -174,8 +182,8 @@ async fn tasks(s: &Shared, command: Command, event: &InboundEvent) -> String {
             return s.config.replies.error.clone();
         }
     };
-    match command {
-        Command::Done(which) => {
+    match &command {
+        Command::Done(which) | Command::Resume(which) | Command::Pause(which) => {
             let which = which.trim();
             let active: Vec<&okbot_core::Task> =
                 listed.iter().filter(|t| t.status.is_active()).collect();
@@ -192,12 +200,40 @@ async fn tasks(s: &Shared, command: Command, event: &InboundEvent) -> String {
             let Some(target) = target else {
                 return "Which task? `/tasks` lists them; use its number, like `/done 2`.".into();
             };
-            let change = okbot_core::TaskChange {
-                status: Some(okbot_core::TaskStatus::Done),
-                ..okbot_core::TaskChange::default()
+            let mut change = okbot_core::TaskChange::default();
+            let verb = match &command {
+                Command::Resume(_) => {
+                    // A routine runs the agent unattended: only an administrator starts one.
+                    if target.kind == okbot_core::TaskKind::Routine && !s.is_admin(event).await {
+                        return "Only the owner of this assistant can start a routine.".into();
+                    }
+                    change.status = Some(okbot_core::TaskStatus::Open);
+                    // A time that passed while paused moves to the next occurrence.
+                    if target.repeat.is_some()
+                        && target.remind_at.is_none_or(|at| at <= s.clock.now())
+                    {
+                        change.remind_at = Some(None);
+                    }
+                    "Started"
+                }
+                Command::Pause(_) => {
+                    change.status = Some(okbot_core::TaskStatus::Paused);
+                    "Paused"
+                }
+                _ => {
+                    change.status = Some(okbot_core::TaskStatus::Done);
+                    "Done"
+                }
             };
             match store.update(&who, &target.id, change).await {
-                Ok(task) => format!("Done: {}", task.title),
+                Ok(task) => match task.remind_at.filter(|_| verb == "Started") {
+                    Some(at) => format!(
+                        "{verb}: {} (next: {})",
+                        task.title,
+                        at.to_zoned(tz.clone()).strftime("%H:%M %d/%m")
+                    ),
+                    None => format!("{verb}: {}", task.title),
+                },
                 Err(okbot_core::TaskError::Backend(error)) => {
                     tracing::error!(%error, "finishing a task failed");
                     s.config.replies.error.clone()
@@ -216,7 +252,10 @@ async fn tasks(s: &Shared, command: Command, event: &InboundEvent) -> String {
             if shown.is_empty() {
                 "No tasks. Ask me to remind you of something or to add a to-do.".into()
             } else {
-                format!("{}\n\n`/done <number>` finishes one.", shown.join("\n"))
+                format!(
+                    "{}\n\n`/done <number>` finishes one; `/pause` and `/resume` stop and start one.",
+                    shown.join("\n")
+                )
             }
         }
     }
@@ -372,6 +411,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/tasks`: your to-dos and reminders (`/tasks all` includes finished ones)\n\
          - `/done <number>`: mark a task as done\n\
          - `/snooze [10m|2h|15:30]`: remind me again of the last reminder\n\
+         - `/pause <number>`, `/resume <number>`: stop or start a task; new routines start paused\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/help`: this message"
     )
@@ -422,6 +462,14 @@ mod tests {
         assert_eq!(
             Command::parse("/snooze"),
             Some(Command::Snooze(String::new()))
+        );
+        assert_eq!(
+            Command::parse("/resume 1"),
+            Some(Command::Resume("1".into()))
+        );
+        assert_eq!(
+            Command::parse("/pause t-x"),
+            Some(Command::Pause("t-x".into()))
         );
         assert_eq!(Command::parse("help"), None);
         assert_eq!(Command::parse("/unknown"), None);

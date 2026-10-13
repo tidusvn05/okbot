@@ -144,7 +144,9 @@ async fn answer_batch(
     };
     let timeout = shared.config.agent_timeout;
 
-    let (knowledge, grant, excerpts) = gather_knowledge(shared, batch, &requester, tools).await;
+    let admin = shared.is_admin(event).await;
+    let (knowledge, grant, excerpts) =
+        gather_knowledge(shared, batch, &requester, tools, admin).await;
 
     let history = shared
         .store
@@ -293,6 +295,7 @@ async fn gather_knowledge(
     batch: &[Tracked],
     requester: &Requester,
     tools: okbot_core::ToolPolicy,
+    admin: bool,
 ) -> (KnowledgeContext, RunGrant, Option<String>) {
     let Some(k) = &shared.knowledge else {
         return (KnowledgeContext::default(), RunGrant::none(), None);
@@ -311,6 +314,7 @@ async fn gather_knowledge(
             tools,
             ttl: shared.config.agent_timeout + Duration::from_secs(30),
             attachments: &attachments,
+            admin,
         };
         let grant = k.grant(requester, &run).await.unwrap_or_else(|error| {
             tracing::warn!(%error, "knowledge tools unavailable");
