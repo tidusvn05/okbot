@@ -53,7 +53,7 @@ okbot-testkit = { path = "crates/okbot-testkit", version = "0.1.0-dev" }
 
 # External crates (ADR 0005 covers the git dependencies).
 # Agent CLI adapters (formerly agent-core).
-agent-call = "0.4.1"
+agent-call = "0.4.2"
 okbase = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.3", version = "0.2.3" }
 okbase-mcp = { git = "https://github.com/tidusvn05/okbase", tag = "v0.2.3", version = "0.2.3" }
 # Zalo Bot API client (unofficial); ring is installed by okbot, so no default TLS provider.

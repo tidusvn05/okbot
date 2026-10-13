@@ -21,9 +21,9 @@ dependencies = [
 
 [[package]]
 name = "agent-call"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7eaffb11b1f32102de1db70f37b02eaeb4985a282518154b0ed8684c4dd0127"
+checksum = "2f4bbb3cb81841e34fb21952032fc4bb40694488da6e313f8ed796ac904fb8f7"
 dependencies = [
  "serde_json",
  "tempfile",
