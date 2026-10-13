@@ -1,4 +1,4 @@
-//! Agent backends for okbot: agent CLIs through agent-core, fallback chains and CLI detection.
+//! Agent backends for okbot: agent CLIs through agent-call, fallback chains and CLI detection.
 //!
 //! - [`CliBackend`] runs one agent CLI (Claude Code, Codex, OpenCode, Devin) per turn.
 //! - [`AgentChain`] tries backends in order, enforces the tool policy and limits concurrency.
@@ -11,7 +11,7 @@ mod env;
 mod prompt;
 mod slots;
 
-pub use agent_core::Provider;
+pub use agent_call::Provider;
 pub use chain::AgentChain;
 pub use cli::{CliBackend, CliBackendConfig};
 pub use env::EnvScrub;

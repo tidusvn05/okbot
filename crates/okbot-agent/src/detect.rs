@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use agent_core::Provider;
+use agent_call::Provider;
 use tokio::process::Command;
 
 use crate::{PROVIDERS, provider_name};

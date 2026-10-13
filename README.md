@@ -22,7 +22,7 @@ touch your files.
   Slack (Socket Mode) and a terminal console. Adapters in any language via the
   [bridge protocol](docs/bridge.md).
 - **Agent CLIs as the brain.** Claude Code, Codex, OpenCode or Devin through
-  [agent-core](https://github.com/tidusvn05/agent-core), using the CLI's own login: no API key. Fallback
+  [agent-call](https://github.com/tidusvn05/agent-call), using the CLI's own login: no API key. Fallback
   chains, session resume, live "thinking…" progress where the platform can edit messages.
 - **Knowledge and memory in markdown.** One [okbase](https://github.com/tidusvn05/okbase) (OKF) bundle
   per bot: default knowledge, your documents, and memory the bot writes ("remember that…"), versioned
@@ -47,7 +47,7 @@ touch your files.
                   okbot runtime ── access rules, dedupe, per-conversation queue, history (SQLite)
                          │
            ┌─────────────┴──────────────┐
-   agent CLI (agent-core)          okbase bundle (kb/)
+   agent CLI (agent-call)          okbase bundle (kb/)
    claude · codex · …      ◄────── MCP: kb search/read, memory, attachment_view
    web tools, no shell             scoped to the current user and room
 ```

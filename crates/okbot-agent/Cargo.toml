@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 okbot-core.workspace = true
-agent-core.workspace = true
+agent-call.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }

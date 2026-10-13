@@ -22,6 +22,11 @@ reached crates.io; okbot now depends on the registry version.
 okbot uses it with `default-features = false` and installs the ring provider, so no second crypto
 provider is linked.
 
+## Amendment (2026-10-13, agent-call)
+agent-core was renamed to [agent-call](https://github.com/tidusvn05/agent-call) and published to
+crates.io (0.4.1); okbot depends on the registry version and `deny.toml` no longer allows its git
+source. okbase remains a git dependency.
+
 ## Consequences
 okbot crates cannot be published to crates.io until the dependencies are; third-party adapters
 depend on `okbot-core` by git tag in the meantime.

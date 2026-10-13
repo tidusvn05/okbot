@@ -20,9 +20,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-core"
-version = "0.4.0"
-source = "git+https://github.com/tidusvn05/agent-core?rev=43809767d6e469c4bea84a1ebb7e1fe1d567d4ec#43809767d6e469c4bea84a1ebb7e1fe1d567d4ec"
+name = "agent-call"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7eaffb11b1f32102de1db70f37b02eaeb4985a282518154b0ed8684c4dd0127"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -2316,7 +2317,7 @@ dependencies = [
 name = "okbot-agent"
 version = "0.1.0-dev"
 dependencies = [
- "agent-core",
+ "agent-call",
  "okbot-core",
  "okbot-testkit",
  "serde_json",
@@ -3377,7 +3378,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
 dependencies = [
  "annotate-snippets",
- "base64 0.22.1",
+ "base64 0.23.1",
  "encoding_rs_io",
  "granit-parser",
  "nohash-hasher",

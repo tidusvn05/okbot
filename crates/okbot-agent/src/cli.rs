@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use agent_core::{AgentCli, McpServer, Provider, RunRequest, ToolPolicy as CoreToolPolicy};
+use agent_call::{AgentCli, McpServer, Provider, RunRequest, ToolPolicy as CoreToolPolicy};
 use okbot_core::{
     AgentBackend, AgentCaps, AgentError, AgentReply, AgentTurn, TokenUsage, ToolPolicy, async_trait,
 };
@@ -27,7 +27,7 @@ pub struct CliBackendConfig {
     pub env: Vec<(String, String)>,
 }
 
-/// An agent CLI run through agent-core. Each turn starts a fresh process.
+/// An agent CLI run through agent-call. Each turn starts a fresh process.
 #[derive(Debug)]
 pub struct CliBackend {
     cli: AgentCli,
@@ -61,9 +61,9 @@ impl CliBackend {
     }
 }
 
-/// Maps agent-core errors to the port's error, deciding which ones justify trying another backend.
-fn map_error(error: agent_core::Error) -> AgentError {
-    use agent_core::Error as E;
+/// Maps agent-call errors to the port's error, deciding which ones justify trying another backend.
+fn map_error(error: agent_call::Error) -> AgentError {
+    use agent_call::Error as E;
     match error {
         E::NotFound(path) => AgentError::Unavailable(format!("not found: {}", path.display())),
         E::VersionProbe(msg) | E::UnsupportedVersion(msg) => AgentError::Unavailable(msg),
@@ -99,7 +99,7 @@ fn map_error(error: agent_core::Error) -> AgentError {
             message: format!("session {id} not found"),
             retryable: true,
         },
-        // agent-core may add variants; treat them as retryable failures.
+        // agent-call may add variants; treat them as retryable failures.
         #[allow(unreachable_patterns)]
         other => AgentError::Failed {
             message: other.to_string(),
@@ -108,14 +108,14 @@ fn map_error(error: agent_core::Error) -> AgentError {
     }
 }
 
-/// Forwards agent-core events as okbot progress.
-fn events(progress: Option<&okbot_core::ProgressFn>) -> Option<agent_core::EventHandler> {
+/// Forwards agent-call events as okbot progress.
+fn events(progress: Option<&okbot_core::ProgressFn>) -> Option<agent_call::EventHandler> {
     let progress = progress?.clone();
-    Some(agent_core::EventHandler::new(move |event| {
+    Some(agent_call::EventHandler::new(move |event| {
         let mapped = match event {
-            agent_core::AgentEvent::TextDelta(t) => okbot_core::AgentProgress::TextDelta(t),
-            agent_core::AgentEvent::Text(t) => okbot_core::AgentProgress::Text(t),
-            agent_core::AgentEvent::ToolUse { name } => okbot_core::AgentProgress::ToolUse(name),
+            agent_call::AgentEvent::TextDelta(t) => okbot_core::AgentProgress::TextDelta(t),
+            agent_call::AgentEvent::Text(t) => okbot_core::AgentProgress::Text(t),
+            agent_call::AgentEvent::ToolUse { name } => okbot_core::AgentProgress::ToolUse(name),
             _ => return,
         };
         progress.report(mapped);
@@ -127,7 +127,7 @@ fn last_line(text: &str) -> &str {
 }
 
 impl CliBackend {
-    /// Builds agent-core's request, using native features where this CLI enforces them.
+    /// Builds agent-call's request, using native features where this CLI enforces them.
     fn request(&self, turn: &AgentTurn) -> RunRequest {
         let native = self.caps();
         let base = RunRequest {
@@ -184,7 +184,7 @@ impl AgentBackend for CliBackend {
     }
 
     fn caps(&self) -> AgentCaps {
-        // agent-core 0.4 enforces tool policies and per-run MCP servers for Claude and Codex
+        // agent-call 0.4 enforces tool policies and per-run MCP servers for Claude and Codex
         // only; Devin and OpenCode reject them, so they get the system prompt inlined and
         // knowledge excerpts instead.
         match self.cli.provider() {
@@ -208,7 +208,7 @@ impl AgentBackend for CliBackend {
         let started = Instant::now();
         let result = match self.cli.run(request).await {
             // The session is gone (expired, CLI data cleared): start over with the full history.
-            Err(agent_core::Error::SessionNotFound(id)) => {
+            Err(agent_call::Error::SessionNotFound(id)) => {
                 tracing::info!(backend = %self.name, session = %id, "session not found; starting a new one");
                 let fresh = AgentTurn {
                     resume: None,
