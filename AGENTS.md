@@ -2,7 +2,7 @@
 
 okbot is an open-source (MIT OR Apache-2.0) Rust chat assistant: platform adapters (Zalo Bot, Google
 Chat, Discord, Slack, console) in front of a message pipeline that runs agent CLIs through
-`agent-core` and answers from an okbase knowledge bundle.
+`agent-call` and answers from an okbase knowledge bundle.
 
 ## Read first
 

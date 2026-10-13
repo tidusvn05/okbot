@@ -174,7 +174,7 @@ pub fn turn(prompt: &str) -> AgentTurn {
 }
 
 /// Writes an executable shell script `dir/name` that prints `1.0.0` for `--version` and runs
-/// `body` otherwise (Unix only). Mirrors agent-core's test helper.
+/// `body` otherwise (Unix only). Mirrors agent-call's test helper.
 #[cfg(unix)]
 pub fn fake_cli(dir: &Path, name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;

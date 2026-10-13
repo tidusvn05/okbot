@@ -18,5 +18,5 @@ core change and every core change a risk for every platform.
 ## Consequences
 - A new platform is one crate plus registration in `okbot-cli`.
 - `okbot-core` becomes the public SDK and must be kept small and documented (`missing_docs = deny`).
-- Some conversions happen at crate edges (for example agent-core errors → `AgentError`), which is
+- Some conversions happen at crate edges (for example agent-call errors → `AgentError`), which is
   intentional: external types never leak into the core.
