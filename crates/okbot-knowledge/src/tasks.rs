@@ -285,7 +285,7 @@ impl Tasks {
         )
         .map_err(backend)?;
         reindex(&self.root, folder).map_err(backend)?;
-        link_area(&self.root).map_err(backend)
+        crate::areas::ensure(&self.root, &crate::areas::TASKS).map_err(backend)
     }
 
     /// Creates a task for `who`.
@@ -452,39 +452,6 @@ impl Tasks {
     }
 }
 
-/// The `task` tag, for bundles created before tasks existed.
-const TASK_TERM: &str = "  task:\n    synonyms: [việc cần làm, nhắc nhở, to-do, reminder]\n    \
-facet: topic\n    description: To-dos, reminders and routines.\n";
-
-/// Brings a bundle created before tasks existed up to date: the `task` tag in the vocabulary and
-/// `tasks/` in the root index.
-fn link_area(root: &Path) -> std::io::Result<()> {
-    let vocabulary = root.join("_meta/vocabulary.md");
-    if let Ok(text) = std::fs::read_to_string(&vocabulary)
-        && !text.contains("\n  task:")
-        && let Some(at) = text.find("terms:\n")
-    {
-        let at = at + "terms:\n".len();
-        write_atomic(
-            &vocabulary,
-            &format!("{}{TASK_TERM}{}", &text[..at], &text[at..]),
-        )?;
-    }
-    let index = root.join("index.md");
-    let Ok(text) = std::fs::read_to_string(&index) else {
-        return Ok(());
-    };
-    if text.contains("/tasks/index.md") {
-        return Ok(());
-    }
-    let mut text = text.trim_end().to_string();
-    if !text.contains("## Subdirectories") {
-        text.push_str("\n\n## Subdirectories");
-    }
-    text.push_str("\n* [tasks](/tasks/index.md) - To-dos, reminders and routines.\n");
-    write_atomic(&index, &text)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,32 +527,6 @@ mod tests {
         assert_eq!(tasks.all(), Vec::<Task>::new());
         let index = std::fs::read_to_string(dir.path().join("index.md")).unwrap();
         assert_eq!(index.matches("/tasks/index.md").count(), 1);
-    }
-
-    #[test]
-    fn older_bundles_get_the_task_tag_and_index_link() {
-        let dir = tempfile::tempdir().unwrap();
-        crate::write_default_bundle(dir.path()).unwrap();
-        let vocabulary = dir.path().join("_meta/vocabulary.md");
-        let text = std::fs::read_to_string(&vocabulary).unwrap();
-        std::fs::write(&vocabulary, text.replace(TASK_TERM, "")).unwrap();
-        let index = dir.path().join("index.md");
-        let text = std::fs::read_to_string(&index).unwrap();
-        let old: Vec<&str> = text.lines().filter(|l| !l.contains("/tasks/")).collect();
-        let old = old.join("\n");
-        std::fs::write(&index, old).unwrap();
-
-        let tasks = Tasks::new(dir.path(), tz());
-        tasks
-            .add(&who("ana", "dm"), NewTask::todo("x"), now())
-            .unwrap();
-        tasks
-            .add(&who("ana", "dm"), NewTask::todo("y"), now())
-            .unwrap();
-        let text = std::fs::read_to_string(&vocabulary).unwrap();
-        assert_eq!(text.matches("\n  task:").count(), 1, "{text}");
-        let text = std::fs::read_to_string(&index).unwrap();
-        assert_eq!(text.matches("/tasks/index.md").count(), 1, "{text}");
     }
 
     #[test]

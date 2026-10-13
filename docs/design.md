@@ -610,12 +610,14 @@ weather"):
 - **Who.** The owner on a personal bot; admins on a team bot. Everything in `knowledge/` is visible
   to every user of the bot, which is why members cannot add to it.
 - **What.** Text the agent extracted (a web page the user linked, a pasted text), or an attachment of
-  the current message: images and PDFs are kept under `knowledge/inbox/files/` next to the generated
-  markdown; okbase's converters produce the text where they support the format, otherwise the agent's
-  transcription is stored.
+  the current message (Discord delivers files, Zalo images only): the original file is kept next to
+  a markdown document with the agent's summary, and okbase indexes PDF, Word, PowerPoint, HTML and
+  images itself. Only the inbox index is rewritten; `knowledge/index.md` belongs to the operator and
+  only gets an `inbox` link.
 - **Limits.** 2 MiB of text, 20 MiB per file, the same HTTPS-only fetch rules as `attachment_view`.
 - `okbot kb add <file|url>` does the same from the terminal; `okbot kb inbox` lists recent additions so
-  an operator can move them into the right folder.
+  an operator can move them into the right folder. `okbot memory edit <id>` opens any memory, task,
+  note or knowledge file in `$EDITOR`.
 
 ### 5.9 Quick notes and journal
 

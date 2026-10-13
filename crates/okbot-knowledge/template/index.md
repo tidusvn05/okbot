@@ -11,3 +11,4 @@ Knowledge and memory of this okbot bot. Edit the files with any editor; okbot re
 * [knowledge](/knowledge/index.md) - Your organization's knowledge.
 * [memory](/memory/index.md) - What the bot remembers about people, chats and the team.
 * [tasks](/tasks/index.md) - To-dos, reminders and routines.
+* [notes](/notes/index.md) - Quick notes and journal, one file per day.

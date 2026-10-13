@@ -254,25 +254,30 @@ async fn resume_for(
 
 /// Stores the batch's messages now, so history order matches the order turns see them in.
 async fn store_user_messages(shared: &Shared, batch: &[Tracked]) {
-    // Attachments are numbered across the batch, in the order the viewing tool uses.
+    // Images and files are numbered across the batch, in the order the tools use.
     let mut number = 0;
     for (event, _) in batch {
         let mut text = event.text.clone();
-        let images = event
-            .attachments
-            .iter()
-            .filter(|a| matches!(a, okbot_core::Attachment::Image { .. }))
-            .count();
-        if images > 0 {
-            let ids: Vec<String> = (number + 1..=number + images)
-                .map(|i| format!("#{i}"))
-                .collect();
-            number += images;
-            let _ = write!(
-                text,
-                "\n[The user attached image {} — view it with the attachment_view tool.]",
-                ids.join(", ")
-            );
+        for attachment in &event.attachments {
+            match attachment {
+                okbot_core::Attachment::Image { .. } => {
+                    number += 1;
+                    let _ = write!(
+                        text,
+                        "\n[The user attached image #{number} — view it with the attachment_view tool.]"
+                    );
+                }
+                okbot_core::Attachment::File { name, .. } => {
+                    number += 1;
+                    let _ = write!(
+                        text,
+                        "\n[The user attached file #{number} ({}) — it can be saved to the \
+                         knowledge base with the knowledge_add tool.]",
+                        name.as_deref().unwrap_or("no name")
+                    );
+                }
+                _ => {}
+            }
         }
         let message = NewMessage {
             conversation: event.conversation.clone(),
@@ -308,7 +313,12 @@ async fn gather_knowledge(
         let attachments: Vec<okbot_core::Attachment> = batch
             .iter()
             .flat_map(|(e, _)| e.attachments.iter().cloned())
-            .filter(|a| matches!(a, okbot_core::Attachment::Image { .. }))
+            .filter(|a| {
+                matches!(
+                    a,
+                    okbot_core::Attachment::Image { .. } | okbot_core::Attachment::File { .. }
+                )
+            })
             .collect();
         let run = okbot_core::RunInfo {
             tools,

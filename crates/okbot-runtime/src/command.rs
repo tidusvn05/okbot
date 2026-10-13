@@ -34,6 +34,8 @@ pub(crate) enum Command {
     Resume(String),
     /// `/pause <number|id>`: stop a task from firing until resumed.
     Pause(String),
+    /// `/note <text>`: append to today's journal.
+    Note(String),
 }
 
 impl Command {
@@ -58,6 +60,7 @@ impl Command {
             "snooze" | "later" => Some(Self::Snooze(rest)),
             "resume" | "start" => Some(Self::Resume(rest)),
             "pause" => Some(Self::Pause(rest)),
+            "note" => Some(Self::Note(rest)),
             _ => None,
         }
     }
@@ -91,6 +94,7 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
             tasks(s, command, event).await
         }
         Command::Snooze(when) => snooze(s, &when, event).await,
+        Command::Note(text) => note(s, &text, event).await,
     }
 }
 
@@ -348,6 +352,24 @@ async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
     }
 }
 
+async fn note(s: &Shared, text: &str, event: &InboundEvent) -> String {
+    let Some(memory) = &s.memory else {
+        return "Notes are not enabled for this bot.".into();
+    };
+    if text.trim().is_empty() {
+        return "What should I note? For example `/note call the bank on Monday`.".into();
+    }
+    let who = requester(s, event).await;
+    match memory.note(&who, okbot_core::MemoryScope::User, text).await {
+        Ok(_) => "Noted.".into(),
+        Err(okbot_core::MemoryError::Backend(error)) => {
+            tracing::error!(%error, "writing a note failed");
+            s.config.replies.error.clone()
+        }
+        Err(other) => other.to_string(),
+    }
+}
+
 async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
     let Some(memory) = &s.memory else {
         return "Memory is not enabled for this bot.".into();
@@ -412,6 +434,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/done <number>`: mark a task as done\n\
          - `/snooze [10m|2h|15:30]`: remind me again of the last reminder\n\
          - `/pause <number>`, `/resume <number>`: stop or start a task; new routines start paused\n\
+         - `/note <text>`: add a line to today's notes\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/help`: this message"
     )
@@ -470,6 +493,10 @@ mod tests {
         assert_eq!(
             Command::parse("/pause t-x"),
             Some(Command::Pause("t-x".into()))
+        );
+        assert_eq!(
+            Command::parse("/note gọi ngân hàng"),
+            Some(Command::Note("gọi ngân hàng".into()))
         );
         assert_eq!(Command::parse("help"), None);
         assert_eq!(Command::parse("/unknown"), None);

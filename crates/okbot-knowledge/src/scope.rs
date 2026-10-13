@@ -17,8 +17,10 @@ pub(crate) fn for_requester(who: &Requester) -> Scope {
         .collect();
     let mut owned = vec![paths::room_dir(channel, &who.conversation.room)];
     owned.extend(paths::personal_dirs(who));
-    let tasks: Vec<String> = owned.iter().map(|d| paths::in_area("tasks", d)).collect();
-    patterns.extend(tasks);
+    for area in ["tasks", "notes"] {
+        let dirs: Vec<String> = owned.iter().map(|d| paths::in_area(area, d)).collect();
+        patterns.extend(dirs);
+    }
     patterns.extend(owned);
     build(&patterns, who.internal)
 }
@@ -89,6 +91,8 @@ mod tests {
         assert!(s.permits_path("tasks/rooms/zalo-shop/r1/t-abc123"));
         assert!(!s.permits_path("tasks/users/zalo-shop/u2/t-abc123"));
         assert!(!s.permits_path("tasks/rooms/zalo-shop/r2/t-abc123"));
+        assert!(s.permits_path("notes/users/zalo-shop/u1/2026/2026-10-14"));
+        assert!(!s.permits_path("notes/users/zalo-shop/u2/2026/2026-10-14"));
     }
 
     #[test]

@@ -566,3 +566,78 @@ fn routines_from_the_terminal() {
         "{out}"
     );
 }
+
+#[test]
+fn documents_and_notes() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "me",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--profile",
+        "personal",
+        "--timezone",
+        "Asia/Ho_Chi_Minh",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    std::fs::write(
+        env.root().join("refunds.md"),
+        "---\ntitle: x\n---\n# Refunds\n\nRefunds within 7 days.\n",
+    )
+    .unwrap();
+    std::fs::write(env.root().join("hours.txt"), "Open 8:00-17:00.\n").unwrap();
+    let (code, out, err) = env.run(&[
+        "kb",
+        "add",
+        "refunds.md",
+        "--bot",
+        "me",
+        "--title",
+        "Refund policy",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("saved knowledge/inbox/"), "{out}");
+    let (code, _, err) = env.run(&["kb", "add", "hours.txt", "--bot", "me"]);
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = env.run(&["kb", "add", "missing.pdf", "--bot", "me"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("cannot read"), "{err}");
+    let (_, out, _) = env.run(&["kb", "inbox", "me"]);
+    assert!(
+        out.contains("Refund policy") && out.contains("hours"),
+        "{out}"
+    );
+
+    // `/note` from the bot's own terminal (the owner) lands in today's journal.
+    let out = env
+        .okbot()
+        .current_dir(env.root().join("me"))
+        .args(["chat"])
+        .write_stdin("/note call the bank\n")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Noted."), "{stdout}");
+    let notes = env.root().join("me/kb/notes/people/owner");
+    let year = std::fs::read_dir(&notes)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.is_dir())
+        .unwrap();
+    let day = std::fs::read_dir(&year)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|e| e.file_name() != "index.md")
+        .unwrap()
+        .path();
+    let text = std::fs::read_to_string(day).unwrap();
+    assert!(text.contains(" call the bank\n"), "{text}");
+
+    let (code, out, err) = env.run(&["kb", "lint", "me"]);
+    assert_eq!(code, 0, "{out}{err}");
+}

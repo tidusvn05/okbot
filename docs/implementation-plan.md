@@ -532,7 +532,14 @@ Not yet tried with Claude.
    converters); `okbot kb add|inbox`.
 3. `okbot memory edit`; docs: `docs/assistant.md` (user guide for personal bots).
 
-Exit criteria: a PDF sent in Zalo with "save this" is answered from in a later turn.
+Exit criteria: a PDF sent in chat with "save this" is answered from in a later turn.
+
+Status (2026-10-14): done. The journal is one OKF file per owner and day; `MemoryStore::note` (a
+default method, so other stores keep compiling) serves `/note` and `note_add`. `knowledge_add` keeps
+the original file next to a markdown document and lets okbase index it (okbot's okbase build reads
+PDF, Word, PowerPoint, OpenDocument, RTF, EPUB, HTML and images). Discord now delivers non-image
+attachments as files, numbered with images; Zalo's Bot API delivers images only, so the exit check
+runs on Discord. `okbot memory edit` opens the file in `$EDITOR`. User guide: `docs/assistant.md`.
 
 ---
 
