@@ -170,7 +170,12 @@ impl ZaloChannel {
             if error.is_unauthorized() {
                 return Err(channel_error(error));
             }
-            tracing::warn!(channel = %self.shared.id, %error, "deleteWebhook failed");
+            if error.code() == Some(400) {
+                // Zalo answers 400 when no webhook is registered: nothing to remove.
+                tracing::debug!(channel = %self.shared.id, %error, "no webhook to delete");
+            } else {
+                tracing::warn!(channel = %self.shared.id, %error, "deleteWebhook failed");
+            }
         }
         tracing::info!(channel = %self.shared.id, "polling Zalo for messages");
         let options = PollOptions::default().timeout(timeout).delete_webhook(true);

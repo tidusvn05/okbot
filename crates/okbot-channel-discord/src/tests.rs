@@ -132,3 +132,12 @@ async fn sends_edits_and_types_without_pinging() {
             .any(|c| c.0 == "POST" && c.1.ends_with("/channels/500/typing"))
     );
 }
+
+#[test]
+fn install_url_has_the_needed_permissions() {
+    assert_eq!(BOT_PERMISSIONS, 274_877_975_552);
+    assert_eq!(
+        install_url(1_559_468_846_841_200_730),
+        "https://discord.com/oauth2/authorize?client_id=1559468846841200730&scope=bot&permissions=274877975552&integration_type=0"
+    );
+}
