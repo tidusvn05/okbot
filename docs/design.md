@@ -514,7 +514,7 @@ to-do and a reminder):
 | `kind` | Has | After it fires |
 |---|---|---|
 | `todo` | optional `due`, optional `remind_at` | stays open until done; `remind_at` is cleared (or moved by `repeat`) |
-| `reminder` | `remind_at`, optional `repeat` | one-shot: `status: done`; repeating: next `remind_at` |
+| `reminder` | `remind_at`, optional `repeat` | one-shot: `state: done`; repeating: next `remind_at` |
 | `routine` | `remind_at`, `repeat`, a prompt (body) | runs an **agent turn** (§5.7); next `remind_at` |
 
 ```markdown
@@ -523,13 +523,15 @@ type: Task
 id: t-7k2m9q
 kind: reminder            # todo | reminder | routine
 title: File the quarterly report
-status: open              # open | done | cancelled
+status: stable            # OKF document status (lint); the task's life is `state`
+state: open               # open | paused | done | cancelled
 due: 2026-10-17T17:00:00+07:00
 remind_at: 2026-10-17T09:00:00+07:00   # next firing, absolute with offset
 repeat: weekly fri 09:00  # daily HH:MM | weekdays HH:MM | weekly <days> HH:MM | monthly <day> HH:MM | every <n>h
 timezone: Asia/Ho_Chi_Minh
 deliver_to: origin        # origin | <channel id> (the owner's direct chat there)
-origin: {channel: "discord:main", room: "…", thread: null}
+origin_channel: "discord:main"   # where it was created (also origin_space, origin_thread)
+origin_room: "…"
 author: discord:main/2106…
 created: 2026-10-13T14:02:00+07:00
 ---
@@ -547,7 +549,7 @@ and updating the file.
 2. Sleep until the earliest one, a task write (the task store notifies), a bundle change, or a
    10-minute rescan.
 3. For a due firing: claim it in `task_fires` (`sending`), deliver it, mark it `sent`, then update the
-   file (next `remind_at`, or `status: done` for a one-shot reminder). A firing already `sent` only
+   file (next `remind_at`, or `state: done` for a one-shot reminder). A firing already `sent` only
    updates the file.
 4. Late firings (the bot was down): within `late_grace` (default 6 h) they are sent with "(late)";
    older ones are marked `missed` and listed by `/tasks` and `okbot doctor`.

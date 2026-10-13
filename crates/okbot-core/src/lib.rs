@@ -11,6 +11,7 @@
 //! | [`ConversationStore`] | SQLite store | the runtime |
 //! | [`KnowledgeProvider`] | okbase integration | the runtime |
 //! | [`MemoryStore`] | okbase integration | the runtime (chat commands) |
+//! | [`TaskStore`] | okbase integration | the runtime (chat commands, scheduler) |
 //! | [`Renderer`] | Markdown dialect renderer | the runtime |
 //! | [`Clock`] | [`SystemClock`], test clocks | everything that reads time |
 //!
@@ -63,6 +64,7 @@ mod message;
 mod render;
 mod secret;
 mod store;
+mod task;
 mod webhook;
 
 pub use agent::{
@@ -85,6 +87,10 @@ pub use secret::{Redactor, Secret};
 pub use store::{
     AgentRunRecord, ConversationStore, MessageRole, NewMessage, PAIRING_MAX_FAILURES, StoreError,
     StoredMessage,
+};
+pub use task::{
+    NewTask, Repeat, Task, TaskChange, TaskError, TaskKind, TaskStatus, TaskStore, format_time,
+    parse_time, sort_tasks,
 };
 pub use webhook::{WebhookHandler, WebhookRequest, WebhookResponse};
 

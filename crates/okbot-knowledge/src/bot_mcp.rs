@@ -22,6 +22,12 @@ for facts about this chat, `global` only for facts useful to everyone. Write one
 note, in the user's language. Never save passwords, payment data or other secrets.\n\
 - memory_list: what you remember here (use it before saving to avoid duplicates).\n\
 - memory_forget: when the user asks you to forget something; pass the note id from memory_list.\n\
+- memory_update: when a remembered fact changed; pass the note id and the new text.\n\
+- task_add: to-dos and reminders the user asks for (\"remind me…\", \"add … to my list\"). Times are \
+local (`YYYY-MM-DD HH:MM`, the bot's time zone, from the current time in your instructions). A \
+reminder is sent by the bot at that time, even if nobody writes. Confirm the stored time in your answer.\n\
+- task_list / task_update / task_done / task_delete: show and change tasks; snooze by updating \
+remind_at. Use the id (`t-…`) from task_list or from a reminder message.\n\
 - attachment_view: see an image the user sent with the current message (index from the message).";
 
 /// Largest attachment fetched for the agent.
@@ -34,7 +40,7 @@ pub(crate) struct BotServer {
     pub(crate) tokens: Arc<RunTokens>,
 }
 
-fn tool(name: &str, description: &str, schema: Value) -> Tool {
+pub(crate) fn tool(name: &str, description: &str, schema: Value) -> Tool {
     let Value::Object(schema) = schema else {
         unreachable!("tool schemas are JSON objects")
     };
@@ -42,7 +48,7 @@ fn tool(name: &str, description: &str, schema: Value) -> Tool {
 }
 
 fn tools() -> Vec<Tool> {
-    vec![
+    let mut tools = vec![
         tool(
             "memory_save",
             "Save one short note to remember later.",
@@ -73,6 +79,19 @@ fn tools() -> Vec<Tool> {
             }),
         ),
         tool(
+            "memory_update",
+            "Replace the text of a note (from memory_list) when the fact changed.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "text": {"type": "string", "description": "The new fact, one or two sentences."},
+                    "title": {"type": "string"}
+                },
+                "required": ["id", "text"]
+            }),
+        ),
+        tool(
             "memory_forget",
             "Forget a note by its id (from memory_list).",
             json!({
@@ -81,10 +100,16 @@ fn tools() -> Vec<Tool> {
                 "required": ["id"]
             }),
         ),
-    ]
+    ];
+    tools.extend(crate::task_tools::tools());
+    tools
 }
 
-fn scope(value: &str) -> Option<MemoryScope> {
+pub(crate) fn str_arg<'a>(args: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    args.get(key).and_then(Value::as_str)
+}
+
+pub(crate) fn scope(value: &str) -> Option<MemoryScope> {
     match value {
         "user" => Some(MemoryScope::User),
         "room" => Some(MemoryScope::Room),
@@ -200,7 +225,9 @@ impl BotServer {
                 Ok(format!("Saved as {} ({:?}).", entry.id, entry.scope))
             }
             "memory_list" => {
-                let entries = k.list(who).await.map_err(|e| e.to_string())?;
+                let entries = MemoryStore::list(k.as_ref(), who)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if entries.is_empty() {
                     return Ok("No notes yet.".into());
                 }
@@ -219,6 +246,19 @@ impl BotServer {
                 let id = args.get("id").and_then(Value::as_str).unwrap_or_default();
                 let entry = k.forget(who, id).await.map_err(|e| e.to_string())?;
                 Ok(format!("Forgot {}.", entry.id))
+            }
+            "memory_update" => {
+                let id = str_arg(args, "id").unwrap_or_default();
+                let text = str_arg(args, "text").unwrap_or_default().to_string();
+                let title = str_arg(args, "title").map(str::to_string);
+                let entry = k
+                    .update_note(who, id, text, title)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(format!("Updated {}.", entry.id))
+            }
+            "task_add" | "task_list" | "task_update" | "task_done" | "task_delete" => {
+                crate::task_tools::call(k, who, name, args).await
             }
             other => Err(format!("unknown tool {other}")),
         }

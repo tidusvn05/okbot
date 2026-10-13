@@ -68,6 +68,15 @@ pub(crate) fn personal_dirs(who: &Requester) -> Vec<String> {
     dirs
 }
 
+/// The same owner folder in another area of the bundle: `memory/people/owner` → `tasks/people/owner`
+/// (design §5.5). Every owner folder is built under `memory/`, so the first segment is the area.
+pub(crate) fn in_area(area: &str, memory_dir: &str) -> String {
+    match memory_dir.split_once('/') {
+        Some((_, rest)) => format!("{area}/{rest}"),
+        None => area.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

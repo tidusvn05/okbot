@@ -37,12 +37,12 @@ pub(crate) fn folder(scope: MemoryScope, who: &Requester) -> String {
     }
 }
 
-fn quote(text: &str) -> String {
+pub(crate) fn quote(text: &str) -> String {
     // A JSON string is a valid YAML double-quoted scalar.
     serde_json::Value::String(text.to_string()).to_string()
 }
 
-fn truncate(text: &str, max: usize) -> String {
+pub(crate) fn truncate(text: &str, max: usize) -> String {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.chars().count() <= max {
         return text;
@@ -55,7 +55,7 @@ fn truncate(text: &str, max: usize) -> String {
 }
 
 /// `vi` when the text has Vietnamese letters, otherwise `en`.
-fn language(text: &str) -> &'static str {
+pub(crate) fn language(text: &str) -> &'static str {
     let vietnamese = text.chars().any(|c| {
         matches!(
             c,
@@ -120,7 +120,7 @@ fn scope_label(scope: MemoryScope) -> &'static str {
 }
 
 /// Writes `text` to `path` atomically (temporary file + rename).
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)
@@ -192,7 +192,7 @@ impl Notes {
         let _ = writeln!(doc, "generated: {{by: okbot, at: \"{day}\"}}");
         let _ = writeln!(doc, "---\n\n{text}");
         write_atomic(&dir.join(format!("{name}.md")), &doc).map_err(backend)?;
-        self.reindex(&folder).map_err(backend)?;
+        reindex(&self.root, &folder).map_err(backend)?;
         Ok(MemoryEntry {
             id: format!("{folder}/{name}"),
             scope: note.scope,
@@ -253,18 +253,7 @@ impl Notes {
         id: &str,
         admin: bool,
     ) -> Result<MemoryEntry, MemoryError> {
-        let id = id.trim().trim_start_matches('/').trim_end_matches(".md");
-        if id
-            .split('/')
-            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
-        {
-            return Err(MemoryError::NotFound(id.to_string()));
-        }
-        let entry = self
-            .list(who)
-            .into_iter()
-            .find(|e| e.id == id)
-            .ok_or_else(|| MemoryError::NotFound(id.to_string()))?;
+        let entry = self.visible(who, id)?;
         if entry.scope == MemoryScope::Global
             && !admin
             && entry.author.as_deref() != Some(author_of(who).as_str())
@@ -277,6 +266,101 @@ impl Notes {
         Ok(entry)
     }
 
+    /// Rewrites a visible note's text (and title) in place; same permissions as [`Self::forget`].
+    pub(crate) fn update(
+        &self,
+        who: &Requester,
+        id: &str,
+        text: &str,
+        title: Option<&str>,
+        now: Timestamp,
+    ) -> Result<MemoryEntry, MemoryError> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(MemoryError::Invalid("the note is empty".into()));
+        }
+        if text.chars().count() > MAX_NOTE_CHARS {
+            return Err(MemoryError::Invalid(format!(
+                "the note is longer than {MAX_NOTE_CHARS} characters"
+            )));
+        }
+        let entry = self.visible(who, id)?;
+        if entry.scope == MemoryScope::Global
+            && entry.author.as_deref() != Some(author_of(who).as_str())
+        {
+            return Err(MemoryError::Forbidden(
+                "only the author can change a team note".into(),
+            ));
+        }
+        let path = self.root.join(format!("{}.md", entry.id));
+        let old = std::fs::read_to_string(&path).map_err(backend)?;
+        let title = title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map_or_else(|| entry.title.clone(), |t| truncate(t, 80));
+        let description = truncate(
+            &format!("Remembered for {}: {text}", scope_label(entry.scope)),
+            160,
+        );
+        let day = now.strftime("%Y-%m-%d").to_string();
+        // Rewrite the managed keys, keep every other frontmatter line as it is.
+        let mut doc = String::new();
+        let mut in_frontmatter = false;
+        for (i, line) in old.lines().enumerate() {
+            if line == "---" {
+                if i == 0 {
+                    in_frontmatter = true;
+                } else if in_frontmatter {
+                    doc.push_str("---\n\n");
+                    doc.push_str(text);
+                    doc.push('\n');
+                    break;
+                }
+                doc.push_str("---\n");
+                continue;
+            }
+            let replaced = if !in_frontmatter {
+                None
+            } else if line.starts_with("title:") {
+                Some(format!("title: {}", quote(&title)))
+            } else if line.starts_with("description:") {
+                Some(format!("description: {}", quote(&description)))
+            } else if line.starts_with("updated:") {
+                Some(format!("updated: {day}"))
+            } else if line.starts_with("lang:") {
+                Some(format!("lang: {}", language(text)))
+            } else {
+                None
+            };
+            doc.push_str(replaced.as_deref().unwrap_or(line));
+            doc.push('\n');
+        }
+        write_atomic(&path, &doc).map_err(backend)?;
+        let folder = entry.id.rsplit_once('/').map_or("memory", |(f, _)| f);
+        reindex(&self.root, folder).map_err(backend)?;
+        Ok(MemoryEntry {
+            title,
+            text: text.to_string(),
+            updated: day,
+            ..entry
+        })
+    }
+
+    /// A note `who` sees, by id.
+    fn visible(&self, who: &Requester, id: &str) -> Result<MemoryEntry, MemoryError> {
+        let id = id.trim().trim_start_matches('/').trim_end_matches(".md");
+        if id
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        {
+            return Err(MemoryError::NotFound(id.to_string()));
+        }
+        self.list(who)
+            .into_iter()
+            .find(|e| e.id == id)
+            .ok_or_else(|| MemoryError::NotFound(id.to_string()))
+    }
+
     /// Deletes a note by id (no visibility check: operators only) and refreshes its index.
     pub(crate) fn remove(&self, id: &str) -> Result<(), MemoryError> {
         if !id.starts_with("memory/") || id.split('/').any(|s| s.is_empty() || s == "..") {
@@ -285,7 +369,7 @@ impl Notes {
         let path = self.root.join(format!("{id}.md"));
         std::fs::remove_file(&path).map_err(|_| MemoryError::NotFound(id.to_string()))?;
         let folder = id.rsplit_once('/').map_or("memory", |(f, _)| f);
-        self.reindex(folder).map_err(backend)
+        reindex(&self.root, folder).map_err(backend)
     }
 
     /// Every note in the bundle (operators).
@@ -308,64 +392,69 @@ impl Notes {
         walk(self, "memory/people", MemoryScope::User, &mut out);
         out
     }
+}
 
-    /// Rewrites `index.md` of `folder` and of every parent up to `memory/`.
-    fn reindex(&self, folder: &str) -> std::io::Result<()> {
-        let mut current = folder.to_string();
-        loop {
-            self.write_index(&current)?;
-            match current.rsplit_once('/') {
-                Some((parent, _)) if parent.starts_with("memory") => current = parent.to_string(),
-                _ => return Ok(()),
-            }
+/// Rewrites `index.md` of `folder` and of every parent up to its area (`memory`, `tasks`, …),
+/// so the bundle keeps linting clean.
+pub(crate) fn reindex(root: &Path, folder: &str) -> std::io::Result<()> {
+    let mut current = folder.to_string();
+    loop {
+        write_index(root, &current)?;
+        match current.rsplit_once('/') {
+            Some((parent, _)) => current = parent.to_string(),
+            None => return Ok(()),
         }
-    }
-
-    fn write_index(&self, folder: &str) -> std::io::Result<()> {
-        let dir = self.dir(folder);
-        std::fs::create_dir_all(&dir)?;
-        let mut docs = Vec::new();
-        let mut subdirs = Vec::new();
-        for entry in std::fs::read_dir(&dir)?.filter_map(Result::ok) {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if path.is_dir() {
-                subdirs.push(name);
-            } else if path.extension().is_some_and(|x| x == "md") && name != "index.md" {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                let (fm, _) = okbase::core::Frontmatter::split(&text);
-                let title = fm.get_str("title").unwrap_or(&name).to_string();
-                let description = fm.get_str("description").unwrap_or("").to_string();
-                docs.push((name, title, description));
-            }
-        }
-        docs.sort();
-        subdirs.sort();
-        let mut out = format!("# Index: {folder}\n\n");
-        if docs.is_empty() && subdirs.is_empty() {
-            out.push_str("No notes yet.\n");
-        }
-        if !docs.is_empty() {
-            out.push_str("## Documents\n");
-            for (file, title, description) in &docs {
-                let _ = writeln!(out, "* [{title}]({file}) - {description}");
-            }
-        }
-        if !subdirs.is_empty() {
-            out.push_str(if docs.is_empty() {
-                "## Subdirectories\n"
-            } else {
-                "\n## Subdirectories\n"
-            });
-            for sub in &subdirs {
-                let _ = writeln!(out, "* [{sub}](/{folder}/{sub}/index.md)");
-            }
-        }
-        write_atomic(&dir.join("index.md"), &out)
     }
 }
 
-/// Commits memory changes when the bundle is a git repository (operators can review and revert).
+fn write_index(root: &Path, folder: &str) -> std::io::Result<()> {
+    let dir = root.join(folder);
+    std::fs::create_dir_all(&dir)?;
+    let mut docs = Vec::new();
+    let mut subdirs = Vec::new();
+    for entry in std::fs::read_dir(&dir)?.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if path.is_dir() {
+            subdirs.push(name);
+        } else if path.extension().is_some_and(|x| x == "md") && name != "index.md" {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let (fm, _) = okbase::core::Frontmatter::split(&text);
+            let title = fm.get_str("title").unwrap_or(&name).to_string();
+            let description = fm.get_str("description").unwrap_or("").to_string();
+            docs.push((name, title, description));
+        }
+    }
+    docs.sort();
+    subdirs.sort();
+    let mut out = format!("# Index: {folder}\n\n");
+    if docs.is_empty() && subdirs.is_empty() {
+        out.push_str(if folder.starts_with("tasks") {
+            "No tasks yet.\n"
+        } else {
+            "No notes yet.\n"
+        });
+    }
+    if !docs.is_empty() {
+        out.push_str("## Documents\n");
+        for (file, title, description) in &docs {
+            let _ = writeln!(out, "* [{title}]({file}) - {description}");
+        }
+    }
+    if !subdirs.is_empty() {
+        out.push_str(if docs.is_empty() {
+            "## Subdirectories\n"
+        } else {
+            "\n## Subdirectories\n"
+        });
+        for sub in &subdirs {
+            let _ = writeln!(out, "* [{sub}](/{folder}/{sub}/index.md)");
+        }
+    }
+    write_atomic(&dir.join("index.md"), &out)
+}
+
+/// Commits memory and task changes when the bundle is a git repository (operators can review and revert).
 pub(crate) fn git_commit(root: &Path, message: &str) {
     if !root.join(".git").exists() {
         return;
@@ -378,8 +467,17 @@ pub(crate) fn git_commit(root: &Path, message: &str) {
             .args(args)
             .output()
     };
-    let added = git(&["add", "-A", "memory"]);
-    let committed = git(&["commit", "-q", "-m", message, "--", "memory"]);
+    // Only the folders the bot writes; `tasks` may not exist yet in older bundles.
+    let areas: Vec<&str> = ["memory", "tasks"]
+        .into_iter()
+        .filter(|a| root.join(a).exists())
+        .collect();
+    let mut add = vec!["add", "-A", "--"];
+    add.extend(&areas);
+    let mut commit = vec!["commit", "-q", "-m", message, "--"];
+    commit.extend(&areas);
+    let added = git(&add);
+    let committed = git(&commit);
     if let Err(error) = added.and(committed) {
         tracing::warn!(%error, "cannot commit memory changes");
     }
@@ -396,6 +494,40 @@ mod tests {
         assert_eq!(slug("???"), "note");
         assert_eq!(language("Tôi thích trà"), "vi");
         assert_eq!(language("likes tea"), "en");
+    }
+
+    #[test]
+    fn update_rewrites_text_and_keeps_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = Notes::new(dir.path());
+        let who = Requester {
+            conversation: okbot_core::ConversationKey::room("zalo:shop".parse().unwrap(), "dm"),
+            user: okbot_core::UserRef {
+                id: "ana".into(),
+                display_name: "Ana".into(),
+                is_bot: false,
+            },
+            internal: false,
+            person: None,
+        };
+        let now: Timestamp = "2026-10-13T07:00:00Z".parse().unwrap();
+        let note = MemoryNote {
+            scope: MemoryScope::User,
+            title: Some("Coffee".into()),
+            text: "Likes black coffee".into(),
+        };
+        let saved = notes.save(&who, &note, now, "web").unwrap();
+        let updated = notes
+            .update(&who, &saved.id, "Likes black coffee, no sugar", None, now)
+            .unwrap();
+        assert_eq!(updated.id, saved.id);
+        let text = std::fs::read_to_string(dir.path().join(format!("{}.md", saved.id))).unwrap();
+        assert!(text.contains("run_policy: web"), "{text}");
+        assert!(
+            text.ends_with("---\n\nLikes black coffee, no sugar\n"),
+            "{text}"
+        );
+        assert_eq!(notes.list(&who)[0].text, "Likes black coffee, no sugar");
     }
 
     #[test]

@@ -172,6 +172,14 @@ impl RuntimeConfig {
         }
     }
 
+    /// The bot's time zone (`timezone`), UTC when unset or unknown.
+    pub fn time_zone(&self) -> jiff::tz::TimeZone {
+        self.timezone
+            .as_deref()
+            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+            .unwrap_or(jiff::tz::TimeZone::UTC)
+    }
+
     /// The person `user` of `channel` belongs to.
     pub fn person(&self, channel: &ChannelId, user: &UserId) -> Option<&Person> {
         self.people.get(&(channel.clone(), user.clone()))

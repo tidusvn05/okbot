@@ -377,6 +377,7 @@ pub(crate) async fn knowledge(
     }
     let mut options = KnowledgeOptions::new(&kb);
     options.index_dir = Some(config.state_dir().join("index"));
+    options.timezone.clone_from(&config.bot.timezone);
     let knowledge = Arc::new(
         tokio::task::spawn_blocking(move || Knowledge::open(options))
             .await?
@@ -413,7 +414,8 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
         .agent(Arc::new(chain))
         .renderer(Arc::new(MarkdownRenderer))
         .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
-        .memory(knowledge as Arc<dyn okbot_core::MemoryStore>);
+        .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
+        .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
     let needs_http = config
         .channels
         .zalo

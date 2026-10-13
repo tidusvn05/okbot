@@ -473,6 +473,11 @@ a first release (no semver baseline yet) and for agent-core and okbase on crates
 Tests: scope isolation between users and rooms, path safety, repeat parsing, OKF lint of written files.
 Exit criteria: "add buying milk to my to-dos" from Discord shows in `/tasks` on Zalo for the same owner.
 
+Status (2026-10-14): done. Task files keep the bundle lint-clean at L2: the task's life is `state`
+(OKF reserves `status` for documents) and a single `task` tag, which older bundles get added to their
+vocabulary (with `tasks/` in the root index) on the first write. `routine` is refused by the tools
+until P18. `memory_update` rewrites a note in place, keeping its other frontmatter.
+
 ### P16 — Reminders (scheduler and delivery)
 
 1. Migration 3: `task_fires`; `ConversationStore` methods to claim, finish and list firings.

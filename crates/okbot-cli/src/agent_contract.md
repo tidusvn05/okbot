@@ -34,6 +34,14 @@ later). It then answers only paired accounts, which share one memory on every pl
 `okbot pair <bot>` and tell the user to send the printed `/pair <code>` line to the bot in a direct
 message on each platform within 10 minutes. `okbot pair <bot> --list` shows paired accounts.
 
+## Tasks and reminders
+
+Users ask the bot in chat ("remind me at 8 tomorrow…"); `/tasks` and `/done <n>` work in chat. From
+the terminal: `okbot task list [BOT] [--all]`, `okbot task add "<title>" --bot BOT [--remind
+"YYYY-MM-DD HH:MM"] [--due …] [--repeat "daily 08:00"] [--to discord:main] [--person ID]`,
+`okbot task done|rm <id> --bot BOT`. Times are local to `[bot] timezone`; set it for correct
+reminders. Tasks are files in `kb/tasks/`.
+
 ## One person on several platforms (team bots)
 
 Personal memory is per account unless the operator links accounts:

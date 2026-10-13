@@ -15,6 +15,10 @@ terms:
     synonyms: [ghi nhớ, bộ nhớ]
     facet: topic
     description: Things the bot remembers.
+  task:
+    synonyms: [việc cần làm, nhắc nhở, to-do, reminder]
+    facet: topic
+    description: To-dos, reminders and routines.
   onboarding:
     synonyms: [bắt đầu, hướng dẫn, getting started]
     facet: topic
