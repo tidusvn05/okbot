@@ -2111,8 +2111,8 @@ dependencies = [
 
 [[package]]
 name = "okbase"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2135,8 +2135,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-analyze"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "flate2",
  "lindera",
@@ -2152,8 +2152,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-convert"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "anydoc",
  "crc32fast",
@@ -2169,8 +2169,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-core"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "ignore",
  "pulldown-cmark",
@@ -2184,8 +2184,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-data"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "blake3",
  "calamine",
@@ -2200,8 +2200,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-embed"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2213,8 +2213,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-index"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2229,8 +2229,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-lint"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "okbase-analyze",
  "okbase-core",
@@ -2242,8 +2242,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-mcp"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "axum",
  "http",
@@ -2257,8 +2257,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-query"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "okbase-analyze",
  "okbase-core",
@@ -2273,8 +2273,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-search"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "okbase-analyze",
  "okbase-embed",
@@ -2287,8 +2287,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-standard"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "okbase-core",
  "serde",
@@ -2298,8 +2298,8 @@ dependencies = [
 
 [[package]]
 name = "okbase-tune"
-version = "0.2.2"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.2#5fbbfa5bf13dab6167645edc7aede52f4b87e32f"
+version = "0.2.3"
+source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -3378,7 +3378,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
 dependencies = [
  "annotate-snippets",
- "base64 0.23.1",
+ "base64 0.22.1",
  "encoding_rs_io",
  "granit-parser",
  "nohash-hasher",
