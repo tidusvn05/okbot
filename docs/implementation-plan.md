@@ -503,6 +503,11 @@ the user's last one is checked on the real bot.
 
 Exit criteria: "remind me again in 10 minutes" after a reminder brings it back once.
 
+Status (2026-10-14): done. `/snooze` (alias `/later`) takes `10m`, `2h`, `1d`, Vietnamese units
+(`10 phút`, `2 giờ`), bare minutes, a clock time (`15:30`, today or tomorrow) or a date-time, and finds
+the last reminder from the history line the scheduler writes; it reopens a one-shot reminder. Repeats
+were already done in P15–P16.
+
 ### P18 — Routines (scheduled agent turns)
 
 1. `InboundEvent.source` (`Platform` | `Schedule { task_id }`); worker path that skips dedupe and

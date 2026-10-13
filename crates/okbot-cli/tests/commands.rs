@@ -480,6 +480,11 @@ fn tasks_from_the_terminal() {
     assert!(out.contains("[todo, open] Buy milk"), "{out}");
     assert!(out.contains("[reminder, open] Standup"), "{out}");
     assert!(out.contains("(weekdays 09:00)"), "{out}");
+    let (_, upcoming, _) = run(&["task", "list", "me", "--upcoming"]);
+    assert!(
+        upcoming.contains("Standup") && !upcoming.contains("Buy milk"),
+        "{upcoming}"
+    );
     let id = out
         .lines()
         .find(|l| l.contains("Buy milk"))

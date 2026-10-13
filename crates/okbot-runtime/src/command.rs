@@ -28,6 +28,8 @@ pub(crate) enum Command {
     Tasks(bool),
     /// `/done <number|id>`: finish a task.
     Done(String),
+    /// `/snooze [10m|1h|15:30]`: send the last reminder of this chat again later.
+    Snooze(String),
 }
 
 impl Command {
@@ -49,6 +51,7 @@ impl Command {
             "pair" => Some(Self::Pair(rest)),
             "tasks" | "todo" | "todos" => Some(Self::Tasks(rest.eq_ignore_ascii_case("all"))),
             "done" => Some(Self::Done(rest)),
+            "snooze" | "later" => Some(Self::Snooze(rest)),
             _ => None,
         }
     }
@@ -79,6 +82,7 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
             memory(s, command, event).await
         }
         Command::Tasks(_) | Command::Done(_) => tasks(s, command, event).await,
+        Command::Snooze(when) => snooze(s, &when, event).await,
     }
 }
 
@@ -218,6 +222,93 @@ async fn tasks(s: &Shared, command: Command, event: &InboundEvent) -> String {
     }
 }
 
+/// When a snooze ends: `10m`, `2h`, `1d`, `10 phút`, `2 giờ`, a bare number of minutes, a local
+/// clock time (`15:30`, today or tomorrow) or a date-time. Ten minutes when empty.
+pub(crate) fn snooze_until(
+    text: &str,
+    now: jiff::Timestamp,
+    tz: &jiff::tz::TimeZone,
+) -> Option<jiff::Timestamp> {
+    let text = text.trim().to_lowercase();
+    if text.is_empty() {
+        return now.checked_add(jiff::SignedDuration::from_mins(10)).ok();
+    }
+    let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
+    let unit = text[digits.len()..].trim();
+    if let Ok(n) = digits.parse::<i64>()
+        && !unit.starts_with(':')
+    {
+        let minutes = match unit {
+            "" | "m" | "min" | "mins" | "minute" | "minutes" | "p" | "phút" => n,
+            "h" | "hour" | "hours" | "g" | "giờ" | "tiếng" => n.checked_mul(60)?,
+            "d" | "day" | "days" | "ngày" => n.checked_mul(24 * 60)?,
+            _ => return None,
+        };
+        if !(1..=60 * 24 * 30).contains(&minutes) {
+            return None;
+        }
+        return now
+            .checked_add(jiff::SignedDuration::from_mins(minutes))
+            .ok();
+    }
+    if let Ok(time) = text.parse::<jiff::civil::Time>() {
+        let today = now.to_zoned(tz.clone()).date();
+        let at = today
+            .to_datetime(time)
+            .to_zoned(tz.clone())
+            .ok()?
+            .timestamp();
+        return if at > now {
+            Some(at)
+        } else {
+            let tomorrow = today.tomorrow().ok()?.to_datetime(time);
+            Some(tomorrow.to_zoned(tz.clone()).ok()?.timestamp())
+        };
+    }
+    okbot_core::parse_time(&text, tz).ok().filter(|t| *t > now)
+}
+
+/// The task id of the newest reminder sent in this conversation (the scheduler writes
+/// "(reminder `t-…`" into the history).
+async fn last_reminder(s: &Shared, event: &InboundEvent) -> Option<String> {
+    let history = s.store.recent(&event.conversation, 40).await.ok()?;
+    history.iter().rev().find_map(|m| {
+        let rest = m.text.split("(reminder `").nth(1)?;
+        Some(rest.split('`').next()?.to_string())
+    })
+}
+
+async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
+    let Some(store) = &s.tasks else {
+        return "Tasks are not enabled for this bot.".into();
+    };
+    let tz = s.config.time_zone();
+    let Some(until) = snooze_until(when, s.clock.now(), &tz) else {
+        return "When? For example `/snooze 10m`, `/snooze 2h` or `/snooze 15:30`.".into();
+    };
+    let Some(id) = last_reminder(s, event).await else {
+        return "There is no reminder in this chat to snooze.".into();
+    };
+    let who = requester(s, event).await;
+    let change = okbot_core::TaskChange {
+        status: Some(okbot_core::TaskStatus::Open),
+        remind_at: Some(Some(until)),
+        ..okbot_core::TaskChange::default()
+    };
+    match store.update(&who, &id, change).await {
+        Ok(task) => format!(
+            "Okay, I'll remind you again at {}: {}",
+            until.to_zoned(tz).strftime("%H:%M %d/%m"),
+            task.title
+        ),
+        Err(okbot_core::TaskError::Backend(error)) => {
+            tracing::error!(%error, "snoozing failed");
+            s.config.replies.error.clone()
+        }
+        Err(other) => other.to_string(),
+    }
+}
+
 async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
     let Some(memory) = &s.memory else {
         return "Memory is not enabled for this bot.".into();
@@ -280,6 +371,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/forget <id>`: forget a note (ids are listed by `/memories`)\n\
          - `/tasks`: your to-dos and reminders (`/tasks all` includes finished ones)\n\
          - `/done <number>`: mark a task as done\n\
+         - `/snooze [10m|2h|15:30]`: remind me again of the last reminder\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/help`: this message"
     )
@@ -288,6 +380,27 @@ pub(crate) fn help_text(bot_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snooze_times() {
+        let tz = jiff::tz::TimeZone::get("Asia/Ho_Chi_Minh").unwrap();
+        // 14:00 local.
+        let now: jiff::Timestamp = "2026-10-14T07:00:00Z".parse().unwrap();
+        let at = |text: &str| snooze_until(text, now, &tz).map(|t| t.to_string());
+        assert_eq!(at("").as_deref(), Some("2026-10-14T07:10:00Z"));
+        assert_eq!(at("30").as_deref(), Some("2026-10-14T07:30:00Z"));
+        assert_eq!(at("10 phút").as_deref(), Some("2026-10-14T07:10:00Z"));
+        assert_eq!(at("2h").as_deref(), Some("2026-10-14T09:00:00Z"));
+        assert_eq!(at("1 ngày").as_deref(), Some("2026-10-15T07:00:00Z"));
+        assert_eq!(at("15:30").as_deref(), Some("2026-10-14T08:30:00Z"));
+        assert_eq!(
+            at("09:00").as_deref(),
+            Some("2026-10-15T02:00:00Z"),
+            "tomorrow"
+        );
+        assert_eq!(at("0"), None);
+        assert_eq!(at("soon"), None);
+    }
 
     #[test]
     fn parses_commands() {
@@ -306,6 +419,10 @@ mod tests {
         assert_eq!(Command::parse("/tasks"), Some(Command::Tasks(false)));
         assert_eq!(Command::parse("/todo ALL"), Some(Command::Tasks(true)));
         assert_eq!(Command::parse("/done 2"), Some(Command::Done("2".into())));
+        assert_eq!(
+            Command::parse("/snooze"),
+            Some(Command::Snooze(String::new()))
+        );
         assert_eq!(Command::parse("help"), None);
         assert_eq!(Command::parse("/unknown"), None);
         assert_eq!(Command::parse(""), None);
