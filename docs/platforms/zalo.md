@@ -1,7 +1,8 @@
 # Zalo Bot
 
 okbot answers in Zalo through the [Zalo Bot Platform](https://bot.zapps.me/docs/) (`zalo` feature,
-on by default).
+on by default). The API client is the
+unofficial [`zalo-bot`](https://github.com/tidusvn05/zalo-bot) crate, usable on its own.
 
 ## 1. Create the bot
 

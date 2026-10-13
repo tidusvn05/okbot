@@ -5,25 +5,40 @@
 //! by webhook (`setWebhook`, a public HTTPS URL), and replies with `sendMessage`.
 //!
 //! Notes from the platform (design §3.3.2):
-//! - the bot token is part of every API URL, so URLs are never logged;
+//! - the API client is the [`zalo_bot`] crate; the token is part of every API URL, which that crate
+//!   keeps out of `Debug` output and errors;
 //! - messages hold at most 2000 characters, support a small Markdown subset, cannot be edited;
 //! - group messages are delivered only when they mention or reply to the bot;
 //! - `message.unsupported.received` replaces messages from protected users and is answered with a
 //!   fixed reply, never processed.
 
-mod api;
 mod event;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use futures::StreamExt as _;
 use okbot_core::{
     CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, InboundSink, LengthUnit,
     MarkdownDialect, MessageId, RenderedMessage, ReplyTarget, Secret, SentRef, WebhookHandler,
     WebhookRequest, WebhookResponse, async_trait,
 };
+use zalo_bot::{Bot, ChatAction, PollOptions, Token, Update};
 
-pub use api::{ApiError, BotInfo, DEFAULT_API_BASE, WebhookCheck, ZaloApi};
+/// The production API base.
+pub const DEFAULT_API_BASE: &str = zalo_bot::API_BASE;
+
+/// The Zalo Bot API client okbot uses (re-exported for `okbot doctor` and `okbot init`).
+pub use zalo_bot;
+
+/// A Zalo Bot API client for `token` against `base`.
+///
+/// okbot links rustls with ring only, so the ring provider is installed first (a no-op when it is
+/// already installed).
+pub fn client(base: &str, token: &Secret<String>) -> Bot {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    Bot::new(Token::new(token.expose().as_str())).with_base_url(base)
+}
 
 /// How the channel receives events. The two modes are mutually exclusive on Zalo's side.
 #[derive(Debug, Clone)]
@@ -72,14 +87,14 @@ impl ZaloConfig {
 /// State shared by the channel and its webhook handler.
 struct Shared {
     id: ChannelId,
-    api: ZaloApi,
+    bot: Bot,
     sink: OnceLock<Arc<dyn InboundSink>>,
 }
 
 impl Shared {
-    async fn deliver(&self, update: &serde_json::Value) {
+    async fn deliver(&self, update: &Update) {
         let Some(event) = event::to_inbound(&self.id, update, jiff::Timestamp::now()) else {
-            tracing::debug!(channel = %self.id, "ignored a Zalo update");
+            tracing::debug!(channel = %self.id, event = %update.event_name, "ignored a Zalo update");
             return;
         };
         let Some(sink) = self.sink.get() else {
@@ -107,20 +122,16 @@ impl std::fmt::Debug for ZaloChannel {
     }
 }
 
-fn channel_error(error: ApiError) -> ChannelError {
-    match error {
-        ApiError::Unauthorized(message) => ChannelError::Auth(message),
-        ApiError::RateLimited(_) => ChannelError::RateLimited { retry_after: None },
-        e if e.is_retryable() => ChannelError::Transient(Box::new(e)),
-        e => ChannelError::Failed(Box::new(e)),
+fn channel_error(error: zalo_bot::Error) -> ChannelError {
+    if error.is_unauthorized() {
+        ChannelError::Auth(error.to_string())
+    } else if error.is_rate_limited() {
+        ChannelError::RateLimited { retry_after: None }
+    } else if error.is_retryable() {
+        ChannelError::Transient(Box::new(error))
+    } else {
+        ChannelError::Failed(Box::new(error))
     }
-}
-
-/// Exponential backoff with jitter: 1 s, 2 s, 4 s … up to 60 s.
-fn backoff(attempt: u32) -> Duration {
-    let base = 1000u64.saturating_mul(1 << attempt.min(6)).min(60_000);
-    let jitter = rand::random::<u64>() % (base / 4 + 1);
-    Duration::from_millis(base + jitter)
 }
 
 impl ZaloChannel {
@@ -128,7 +139,7 @@ impl ZaloChannel {
     pub fn new(config: ZaloConfig) -> Self {
         Self {
             shared: Arc::new(Shared {
-                api: ZaloApi::new(&config.api_base, config.token),
+                bot: client(&config.api_base, &config.token),
                 id: config.id,
                 sink: OnceLock::new(),
             }),
@@ -145,8 +156,8 @@ impl ZaloChannel {
     }
 
     /// The API client (for `okbot doctor` checks).
-    pub fn api(&self) -> &ZaloApi {
-        &self.shared.api
+    pub fn bot(&self) -> &Bot {
+        &self.shared.bot
     }
 
     async fn poll(
@@ -155,36 +166,28 @@ impl ZaloChannel {
         shutdown: &CancellationToken,
     ) -> Result<(), ChannelError> {
         // getUpdates does not work while a webhook is registered.
-        if let Err(error) = self.shared.api.delete_webhook().await {
-            if matches!(error, ApiError::Unauthorized(_)) {
+        if let Err(error) = self.shared.bot.delete_webhook().await {
+            if error.is_unauthorized() {
                 return Err(channel_error(error));
             }
             tracing::warn!(channel = %self.shared.id, %error, "deleteWebhook failed");
         }
         tracing::info!(channel = %self.shared.id, "polling Zalo for messages");
-        let mut failures = 0u32;
+        let options = PollOptions::default().timeout(timeout).delete_webhook(true);
+        let mut updates = std::pin::pin!(self.shared.bot.updates(options));
         loop {
-            let updates = tokio::select! {
+            let next = tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
-                r = self.shared.api.get_updates(timeout) => r,
+                next = updates.next() => next,
             };
-            match updates {
-                Ok(updates) => {
-                    failures = 0;
-                    for update in &updates {
-                        self.shared.deliver(update).await;
-                    }
+            match next {
+                Some(Ok(update)) => self.shared.deliver(&update).await,
+                // The stream retries these itself, after a backoff.
+                Some(Err(error)) if error.is_retryable() => {
+                    tracing::warn!(channel = %self.shared.id, %error, "getUpdates failed; retrying");
                 }
-                Err(error @ ApiError::Unauthorized(_)) => return Err(channel_error(error)),
-                Err(error) => {
-                    let wait = backoff(failures);
-                    failures = failures.saturating_add(1);
-                    tracing::warn!(channel = %self.shared.id, %error, ?wait, "getUpdates failed");
-                    tokio::select! {
-                        () = shutdown.cancelled() => return Ok(()),
-                        () = tokio::time::sleep(wait) => {}
-                    }
-                }
+                Some(Err(error)) => return Err(channel_error(error)),
+                None => return Ok(()),
             }
         }
     }
@@ -194,13 +197,18 @@ impl ZaloChannel {
         url: &str,
         secret: &Secret<String>,
     ) -> Result<(), ChannelError> {
-        match self.shared.api.set_webhook(url, secret).await {
-            Ok(Some(check)) if !check.ok => tracing::warn!(
+        let set = self
+            .shared
+            .bot
+            .set_webhook(url, secret.expose().as_str())
+            .await
+            .map_err(channel_error)?;
+        match set.verification {
+            Some(check) if !check.ok => tracing::warn!(
                 channel = %self.shared.id, outcome = %check.outcome, hint = %check.hint,
                 "Zalo cannot reach the webhook yet"
             ),
-            Ok(_) => tracing::info!(channel = %self.shared.id, %url, "Zalo webhook registered"),
-            Err(error) => return Err(channel_error(error)),
+            _ => tracing::info!(channel = %self.shared.id, %url, "Zalo webhook registered"),
         }
         Ok(())
     }
@@ -241,22 +249,22 @@ impl Channel for ZaloChannel {
         to: &ReplyTarget,
         message: &RenderedMessage,
     ) -> Result<SentRef, ChannelError> {
-        let id = self
+        let sent = self
             .shared
-            .api
-            .send_message(&to.conversation.room, &message.text)
+            .bot
+            .send_markdown(to.conversation.room.as_str(), message.text.as_str())
             .await
             .map_err(channel_error)?;
         Ok(SentRef {
             target: to.clone(),
-            message_id: MessageId::new(id),
+            message_id: MessageId::new(sent.message_id),
         })
     }
 
     async fn typing(&self, to: &ReplyTarget) -> Result<(), ChannelError> {
         self.shared
-            .api
-            .typing(&to.conversation.room)
+            .bot
+            .send_chat_action(to.conversation.room.as_str(), ChatAction::Typing)
             .await
             .map_err(channel_error)
     }
@@ -278,10 +286,6 @@ struct Webhook {
     secret: Secret<String>,
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
 #[async_trait]
 impl WebhookHandler for Webhook {
     fn path(&self) -> String {
@@ -292,13 +296,18 @@ impl WebhookHandler for Webhook {
         if request.method != "POST" {
             return WebhookResponse::status(405);
         }
-        let presented = request.header("x-bot-api-secret-token").unwrap_or_default();
-        if !constant_time_eq(presented.as_bytes(), self.secret.expose().as_bytes()) {
+        let presented = request.header(zalo_bot::webhook::SECRET_HEADER);
+        if !zalo_bot::webhook::verify_secret(presented.map(str::as_bytes), self.secret.expose()) {
             tracing::warn!(channel = %self.shared.id, "webhook call with a wrong secret");
             return WebhookResponse::status(403);
         }
-        let Ok(update) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
-            return WebhookResponse::status(400);
+        let update = match zalo_bot::webhook::parse_update(&request.body) {
+            Ok(update) => update,
+            Err(error) => {
+                // A malformed body or an event shape this version does not know.
+                tracing::debug!(channel = %self.shared.id, %error, "unreadable Zalo update");
+                return WebhookResponse::json(&serde_json::json!({ "message": "ignored" }));
+            }
         };
         // Delivering only enqueues the event; the agent runs later, so Zalo gets a fast 200.
         self.shared.deliver(&update).await;
@@ -309,13 +318,6 @@ impl WebhookHandler for Webhook {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn backoff_grows_and_caps() {
-        assert!(backoff(0) >= Duration::from_secs(1) && backoff(0) < Duration::from_secs(2));
-        assert!(backoff(3) >= Duration::from_secs(8));
-        assert!(backoff(30) <= Duration::from_secs(75));
-    }
 
     #[test]
     fn caps_match_the_platform() {

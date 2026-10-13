@@ -484,7 +484,7 @@ async fn verify_zalo_token(dir: &Path, token_env: &str) -> anyhow::Result<()> {
     let token = token.with_context(|| format!("{token_env} is not set"))?;
     let base = std::env::var("OKBOT_ZALO_API_BASE")
         .unwrap_or_else(|_| okbot_channel_zalo::DEFAULT_API_BASE.to_string());
-    let api = okbot_channel_zalo::ZaloApi::new(&base, okbot_core::Secret::new(token));
+    let api = okbot_channel_zalo::client(&base, &okbot_core::Secret::new(token));
     let me = api
         .get_me()
         .await

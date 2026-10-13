@@ -15,6 +15,13 @@ okbot builds on [agent-core](https://github.com/tidusvn05/agent-core) and
 - Distribute okbot as release binaries and a container image until both dependencies are published.
 - Ask agent-core to choose a publishable crate name before okbot 1.0 ([agent-core#6](https://github.com/tidusvn05/agent-core/issues/6)).
 
+## Amendment (2026-10-13)
+The Zalo Bot API client moved out of `okbot-channel-zalo` into the standalone, unofficial
+[`zalo-bot`](https://github.com/tidusvn05/zalo-bot) crate. It is a third allowed git source, pinned by
+commit until `zalo-bot` 0.1.0 is on crates.io, after which okbot depends on the registry version.
+okbot uses it with `default-features = false` and installs the ring provider, so no second crypto
+provider is linked.
+
 ## Consequences
 okbot crates cannot be published to crates.io until the dependencies are; third-party adapters
 depend on `okbot-core` by git tag in the meantime.

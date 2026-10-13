@@ -19,11 +19,11 @@ pub struct WebhookRequest {
 }
 
 impl WebhookRequest {
-    /// The first value of a header (`name` in lower case).
+    /// The first value of a header; `name` is matched case-insensitively.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
-            .find(|(k, _)| k == name)
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
 }
