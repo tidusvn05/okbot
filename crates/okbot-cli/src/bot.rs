@@ -168,6 +168,7 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
                 RoomRule {
                     tool_policy: room.tool_policy,
                     internal: room.internal,
+                    personal: room.personal,
                 },
             );
         }

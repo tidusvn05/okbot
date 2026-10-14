@@ -555,6 +555,10 @@ pub struct RoomSection {
     /// The room may see `audience: private` knowledge.
     #[serde(default)]
     pub internal: bool,
+    /// A group where answers may use the asker's personal memory, tasks and notes (for example
+    /// a family group). Off by default: everyone in a group reads the answers.
+    #[serde(default)]
+    pub personal: bool,
 }
 
 fn default_true() -> bool {

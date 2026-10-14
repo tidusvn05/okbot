@@ -261,6 +261,7 @@ async fn room_rules_choose_the_tool_policy() {
             okbot_runtime::config::RoomRule {
                 tool_policy: Some(ToolPolicy::McpOnly),
                 internal: false,
+                personal: false,
             },
         );
     });
@@ -452,6 +453,16 @@ async fn personal_bot_answers_only_paired_owner_accounts() {
         sent.last().unwrap().contains("owner of this assistant"),
         "{sent:?}"
     );
+
+    // In a group, others who mention the bot get no notice (it would repeat on every mention);
+    // the owner is answered there too, with the same paired account.
+    let before = h.channel.sent_texts().len();
+    say_as("bob", "@bot hi", false).await;
+    h.settle().await;
+    assert_eq!(h.channel.sent_texts().len(), before);
+    say_as("ana", "@bot hi", false).await;
+    h.settle().await;
+    assert_eq!(h.agent.calls(), 2);
     h.stop().await;
 }
 

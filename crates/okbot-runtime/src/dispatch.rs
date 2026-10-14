@@ -121,7 +121,10 @@ impl Dispatcher {
         let Some(Command::Pair(code)) = Command::parse(&event.text) else {
             if !is_owner {
                 s.metrics.ignored();
-                turn::reply(s, event, &s.config.replies.private).await;
+                // Explain in a direct chat only: in a group every mention would get the notice.
+                if event.is_direct {
+                    turn::reply(s, event, &s.config.replies.private).await;
+                }
             }
             return is_owner;
         };

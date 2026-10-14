@@ -456,6 +456,12 @@ person (`[people.<person>] accounts = ["zalo:shop/…", "discord:shop/…"]`, or
 scope also allows the pre-link folders of every linked account, so nothing is lost when linking.
 Linking is operator-only: chat users cannot claim another account.
 
+**Groups.** Everyone in a group reads the answer, so in a group the asker's profile is not put in the
+system prompt and a `privacy` rule tells the agent not to bring up personal memory, tasks or notes
+unless asked in that message. The personal scope itself stays allowed, so "what are my tasks?" asked
+in a group still works. A room marked `personal = true` (a family group) is treated like a direct
+chat. A personal bot ignores non-owners in groups silently.
+
 ### 5.4 Writing memory
 
 okbot serves a second MCP server, `/mcp/bot` (rmcp, same RunToken mechanism):

@@ -170,6 +170,7 @@ async fn answer_batch(
         now,
         timezone: shared.config.timezone.as_deref(),
         history_tokens: shared.config.history_tokens,
+        personal: event.is_direct || room.personal,
     };
     let prompt = context::build(&input);
     let resume = resume_for(shared, event, &input, new_count).await;

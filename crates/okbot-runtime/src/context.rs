@@ -11,6 +11,7 @@ use okbot_core::{
 const RULES: &str = include_str!("../prompts/rules.md");
 const WEB: &str = include_str!("../prompts/web.md");
 const MCP_ONLY: &str = include_str!("../prompts/mcp-only.md");
+const GROUP: &str = include_str!("../prompts/group.md");
 /// Persona used when the knowledge bundle has none.
 pub(crate) const DEFAULT_PERSONA: &str = include_str!("../prompts/persona.md");
 
@@ -36,6 +37,9 @@ pub(crate) struct PromptInput<'a> {
     pub(crate) now: Timestamp,
     pub(crate) timezone: Option<&'a str>,
     pub(crate) history_tokens: usize,
+    /// The answer may use the asker's personal profile and data: a one-to-one chat, or a group
+    /// the operator marked `personal`.
+    pub(crate) personal: bool,
 }
 
 /// The system prompt and the conversation prompt.
@@ -132,8 +136,14 @@ pub(crate) fn build(input: &PromptInput<'_>) -> Prompt {
     if let Some(excerpts) = input.excerpts {
         section(&mut system, "excerpts", excerpts);
     }
-    if let Some(profile) = &input.knowledge.user_profile {
+    // In a group everyone reads the answer: the asker's profile stays out of the prompt.
+    if input.personal
+        && let Some(profile) = &input.knowledge.user_profile
+    {
         section(&mut system, "user", profile);
+    }
+    if !input.personal {
+        section(&mut system, "privacy", GROUP);
     }
     let kind = if input.event.is_direct {
         "a one-to-one chat"
@@ -222,6 +232,7 @@ mod tests {
             now: "2026-03-01T03:04:00Z".parse().unwrap(),
             timezone: Some("Asia/Ho_Chi_Minh"),
             history_tokens: 6000,
+            personal: event.is_direct,
         }
     }
 
@@ -263,6 +274,34 @@ mod tests {
         assert!(!p.system.contains("<knowledge>"));
         assert!(p.system.contains("a group chat"));
         assert!(!p.prompt.contains("Earlier messages"));
+    }
+
+    #[test]
+    fn groups_keep_the_personal_profile_out() {
+        let caps = ChannelCaps::basic();
+        let knowledge = KnowledgeContext {
+            user_profile: Some("Takes insulin at 8pm.".into()),
+            ..KnowledgeContext::default()
+        };
+        let history = vec![msg(MessageRole::User, "Ana", "hi")];
+        let group = event("hi", false, true);
+        let p = build(&input(&caps, &knowledge, &history, &group, ToolPolicy::Web));
+        assert!(!p.system.contains("insulin"), "{}", p.system);
+        assert!(p.system.contains("everyone in it reads your answer"));
+        // A group the operator marked `personal` (a family group) behaves like a direct chat.
+        let mut family = input(&caps, &knowledge, &history, &group, ToolPolicy::Web);
+        family.personal = true;
+        let p = build(&family);
+        assert!(p.system.contains("insulin") && !p.system.contains("<privacy>"));
+        let direct = event("hi", true, false);
+        let p = build(&input(
+            &caps,
+            &knowledge,
+            &history,
+            &direct,
+            ToolPolicy::Web,
+        ));
+        assert!(p.system.contains("insulin") && !p.system.contains("<privacy>"));
     }
 
     #[test]
