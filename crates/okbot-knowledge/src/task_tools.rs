@@ -366,6 +366,7 @@ mod tests {
                     ("discord:main".parse().unwrap(), "d1".into()),
                 ],
             }),
+            personal: true,
         };
         (dir, k, who)
     }

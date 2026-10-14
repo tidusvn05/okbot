@@ -133,6 +133,7 @@ mod tests {
                 },
                 internal: false,
                 person: None,
+                personal: true,
             },
             policy: "web",
             attachments: Vec::new(),

@@ -78,10 +78,10 @@ Pairing belongs to your account, not to a chat: once paired, the bot knows you i
 that platform too. In a group it answers only you, when you mention it or reply to it; it ignores
 others silently (in a direct chat they get a short "private assistant" notice).
 
-Everyone in a group reads the answers, so there the bot keeps your profile out of its prompt and
-does not bring up your memory, tasks, reminders or notes unless you ask for them in that message.
-"Remember …" in a group saves to the group's memory unless you say it is personal. A reminder set in
-a group is sent to that group.
+Everyone in a group reads the answers, so in a group the bot cannot reach your personal memory,
+tasks, reminders or notes at all: not to read them, not to write them. Ask for those in a direct
+chat. In a group, "remember …", `/remember` and `/note` save to the group's memory, `/tasks` shows the
+group's tasks, and a reminder set there is sent to that group.
 
 For a group where personal context is welcome (a family group), mark it in `okbot.toml`; `/whoami`
 in the group shows its id:

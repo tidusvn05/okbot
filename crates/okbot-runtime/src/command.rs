@@ -135,7 +135,8 @@ async fn whoami(s: &Shared, event: &InboundEvent) -> String {
     reply
 }
 
-async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
+/// Who is asking, and what they may reach from this conversation.
+pub(crate) async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
     let room = s
         .config
         .room(&event.conversation.channel, &event.conversation.room);
@@ -144,6 +145,8 @@ async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
         user: event.author.clone(),
         internal: room.internal,
         person: s.person_of(event).await,
+        // Everyone in a group reads the answers: personal data only in direct or personal rooms.
+        personal: event.is_direct || room.personal,
     }
 }
 
@@ -367,6 +370,16 @@ async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
     }
 }
 
+/// Where `/remember` and `/note` write: the person's own memory, or the group's in a group chat
+/// (personal data is out of reach there).
+fn own_scope(who: &okbot_core::Requester) -> okbot_core::MemoryScope {
+    if who.personal {
+        okbot_core::MemoryScope::User
+    } else {
+        okbot_core::MemoryScope::Room
+    }
+}
+
 async fn note(s: &Shared, text: &str, event: &InboundEvent) -> String {
     let Some(memory) = &s.memory else {
         return "Notes are not enabled for this bot.".into();
@@ -375,7 +388,7 @@ async fn note(s: &Shared, text: &str, event: &InboundEvent) -> String {
         return "What should I note? For example `/note call the bank on Monday`.".into();
     }
     let who = requester(s, event).await;
-    match memory.note(&who, okbot_core::MemoryScope::User, text).await {
+    match memory.note(&who, own_scope(&who), text).await {
         Ok(_) => "Noted.".into(),
         Err(okbot_core::MemoryError::Backend(error)) => {
             tracing::error!(%error, "writing a note failed");
@@ -399,7 +412,7 @@ async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
             .save(
                 &who,
                 okbot_core::MemoryNote {
-                    scope: okbot_core::MemoryScope::User,
+                    scope: own_scope(&who),
                     title: None,
                     text,
                 },

@@ -553,6 +553,7 @@ async fn snooze_ignores_planted_lines_and_routines() {
         },
         internal: false,
         person: None,
+        personal: true,
     };
     okbot_core::TaskStore::delete(tasks.as_ref(), &who, "t-9")
         .await

@@ -34,6 +34,10 @@ pub struct Requester {
     /// The person this account belongs to, when the operator linked several accounts
     /// (`[people.<id>]`): they share one profile and personal memory.
     pub person: Option<Person>,
+    /// The requester's personal data (profile, memory, tasks, notes) is reachable: a one-to-one
+    /// chat, a room the operator marked personal, or the terminal. In other group chats everyone
+    /// reads the answer, so only the room's and shared data are.
+    pub personal: bool,
 }
 
 /// Several platform accounts of one human, linked by the operator.

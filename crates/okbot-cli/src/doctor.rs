@@ -154,6 +154,7 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
         },
         internal: false,
         person: None,
+        personal: true,
     };
     let result = async {
         let grant = knowledge

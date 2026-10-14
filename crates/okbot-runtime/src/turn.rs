@@ -136,12 +136,7 @@ async fn answer_batch(
         .config
         .room(&event.conversation.channel, &event.conversation.room);
     let tools = room.tool_policy.unwrap_or(shared.config.tool_policy);
-    let requester = Requester {
-        conversation: event.conversation.clone(),
-        user: event.author.clone(),
-        internal: room.internal,
-        person: shared.person_of(event).await,
-    };
+    let requester = crate::command::requester(shared, event).await;
     let timeout = shared.config.agent_timeout;
 
     let admin = shared.is_admin(event).await;
@@ -170,7 +165,7 @@ async fn answer_batch(
         now,
         timezone: shared.config.timezone.as_deref(),
         history_tokens: shared.config.history_tokens,
-        personal: event.is_direct || room.personal,
+        personal: requester.personal,
     };
     let prompt = context::build(&input);
     let resume = resume_for(shared, event, &input, new_count).await;

@@ -127,6 +127,7 @@ fn requester(config: &Config, person: Option<&str>) -> anyhow::Result<Requester>
         },
         internal: true,
         person: Some(Person { id, accounts }),
+        personal: true,
     })
 }
 

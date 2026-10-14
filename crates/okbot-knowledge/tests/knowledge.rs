@@ -20,6 +20,7 @@ fn who(user: &str, room: &str) -> Requester {
         },
         internal: false,
         person: None,
+        personal: true,
     }
 }
 
