@@ -32,11 +32,12 @@ pub(crate) enum MemoryCommand {
     },
 }
 
-async fn open(name: Option<&str>) -> anyhow::Result<(Config, Arc<Knowledge>)> {
+pub(crate) async fn open(name: Option<&str>) -> anyhow::Result<(Config, Arc<Knowledge>)> {
     let dir = crate::registry::resolve(name)?;
     let config = Config::load(&dir)?;
     let mut options = KnowledgeOptions::new(config.kb_dir());
     options.index_dir = Some(config.state_dir().join("index"));
+    options.timezone.clone_from(&config.bot.timezone);
     let knowledge = tokio::task::spawn_blocking(move || Knowledge::open(options))
         .await?
         .with_context(|| format!("cannot open {}", config.kb_dir().display()))?;

@@ -16,6 +16,7 @@ mod http;
 mod live;
 mod metrics;
 mod policy;
+mod schedule;
 #[cfg(test)]
 mod test_support;
 mod turn;
@@ -27,11 +28,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use okbot_core::{
     AgentBackend, CancellationToken, Channel, ChannelId, Clock, ConversationStore, InboundEvent,
-    InboundSink, KnowledgeProvider, MemoryStore, Renderer, SinkClosed, SystemClock, async_trait,
+    InboundSink, KnowledgeProvider, MemoryStore, Renderer, SinkClosed, SystemClock, TaskStore,
+    async_trait,
 };
 use tokio::sync::{Notify, mpsc};
 
-pub use config::{OWNER, RuntimeConfig};
+pub use config::{OWNER, RuntimeConfig, ScheduleConfig};
 pub use http::HttpOptions;
 
 /// Building the runtime failed.
@@ -101,6 +103,7 @@ pub(crate) struct Shared {
     pub(crate) agent: Arc<dyn AgentBackend>,
     pub(crate) knowledge: Option<Arc<dyn KnowledgeProvider>>,
     pub(crate) memory: Option<Arc<dyn MemoryStore>>,
+    pub(crate) tasks: Option<Arc<dyn TaskStore>>,
     pub(crate) renderer: Arc<dyn Renderer>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) channels: HashMap<ChannelId, Arc<dyn Channel>>,
@@ -155,6 +158,7 @@ pub struct RuntimeBuilder {
     agent: Option<Arc<dyn AgentBackend>>,
     knowledge: Option<Arc<dyn KnowledgeProvider>>,
     memory: Option<Arc<dyn MemoryStore>>,
+    tasks: Option<Arc<dyn TaskStore>>,
     renderer: Option<Arc<dyn Renderer>>,
     clock: Arc<dyn Clock>,
     channels: Vec<Arc<dyn Channel>>,
@@ -183,6 +187,12 @@ impl RuntimeBuilder {
     /// Sets the memory store (optional; enables `/remember`, `/forget`, `/memories`).
     pub fn memory(mut self, memory: Arc<dyn MemoryStore>) -> Self {
         self.memory = Some(memory);
+        self
+    }
+
+    /// Sets the task store (optional; enables `/tasks` and `/done`).
+    pub fn tasks(mut self, tasks: Arc<dyn TaskStore>) -> Self {
+        self.tasks = Some(tasks);
         self
     }
 
@@ -230,6 +240,7 @@ impl RuntimeBuilder {
             agent: self.agent.ok_or(BuildError::Missing("agent backend"))?,
             knowledge: self.knowledge,
             memory: self.memory,
+            tasks: self.tasks,
             renderer: self.renderer.ok_or(BuildError::Missing("renderer"))?,
             clock: self.clock,
             channels,
@@ -300,6 +311,7 @@ impl Runtime {
             agent: None,
             knowledge: None,
             memory: None,
+            tasks: None,
             renderer: None,
             clock: Arc::new(SystemClock),
             channels: Vec::new(),
@@ -345,6 +357,9 @@ impl Runtime {
             tasks.spawn(server);
         }
         drop(sink);
+        if shared.tasks.is_some() && shared.config.schedule.enabled {
+            tasks.spawn(schedule::run(shared.clone(), channel_stop.clone()));
+        }
 
         let work_stop = CancellationToken::new();
         dispatch::Dispatcher::new(shared.clone(), work_stop.clone())

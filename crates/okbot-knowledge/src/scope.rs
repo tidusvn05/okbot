@@ -15,8 +15,11 @@ pub(crate) fn for_requester(who: &Requester) -> Scope {
         .iter()
         .map(|d| (*d).to_string())
         .collect();
-    patterns.push(paths::room_dir(channel, &who.conversation.room));
-    patterns.extend(paths::personal_dirs(who));
+    let mut owned = vec![paths::room_dir(channel, &who.conversation.room)];
+    owned.extend(paths::personal_dirs(who));
+    let tasks: Vec<String> = owned.iter().map(|d| paths::in_area("tasks", d)).collect();
+    patterns.extend(tasks);
+    patterns.extend(owned);
     build(&patterns, who.internal)
 }
 
@@ -82,6 +85,10 @@ mod tests {
         );
         assert!(!s.permits_path("memory/rooms/zalo-shop/r2/notes"));
         assert!(!s.permits_path("secrets/x"));
+        assert!(s.permits_path("tasks/users/zalo-shop/u1/t-abc123"));
+        assert!(s.permits_path("tasks/rooms/zalo-shop/r1/t-abc123"));
+        assert!(!s.permits_path("tasks/users/zalo-shop/u2/t-abc123"));
+        assert!(!s.permits_path("tasks/rooms/zalo-shop/r2/t-abc123"));
     }
 
     #[test]
@@ -101,6 +108,8 @@ mod tests {
         assert!(s.permits_path("memory/users/zalo-shop/u1/old-note"));
         assert!(s.permits_path("memory/users/discord-main/d9/old-note"));
         assert!(!s.permits_path("memory/people/minh"));
+        assert!(s.permits_path("tasks/people/luan/t-abc123"));
+        assert!(!s.permits_path("tasks/people/minh/t-abc123"));
         assert!(
             !s.permits_path("memory/people/luana"),
             "prefix must not leak"

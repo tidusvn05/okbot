@@ -11,7 +11,10 @@
 
 use std::time::Duration;
 
-use okbot_core::{AgentRunRecord, Clock, ConversationStore, MessageRole, RunId, ToolPolicy};
+use okbot_core::{
+    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, MessageRole, RunId,
+    ToolPolicy, UserId,
+};
 
 use crate::{ManualClock, bot_message, conversation, user_message};
 
@@ -24,6 +27,7 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     let b = conversation("zalo:shop", "room-b");
     dedupe(store, clock).await;
     pairing(store, clock).await;
+    fires_and_direct_chats(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -238,6 +242,63 @@ pub async fn channel_stops(
         .expect("run returns within 10 s of shutdown")
         .expect("run does not panic")
         .expect("run returns Ok on shutdown");
+}
+
+async fn fires_and_direct_chats(store: &dyn ConversationStore, clock: &ManualClock) {
+    use okbot_core::FireState;
+    let at = clock.now();
+    let first = store.claim_fire("tasks/x/t-1", at).await.expect("claim");
+    assert_eq!((first.state, first.attempts), (FireState::Sending, 0));
+    store
+        .set_fire("tasks/x/t-1", at, FireState::Sending, 2)
+        .await
+        .expect("set_fire");
+    let again = store.claim_fire("tasks/x/t-1", at).await.expect("claim");
+    assert_eq!(again.attempts, 2, "a claim keeps the existing record");
+    store
+        .set_fire("tasks/x/t-1", at, FireState::Sent, 3)
+        .await
+        .expect("set_fire");
+    let sent = store.claim_fire("tasks/x/t-1", at).await.expect("claim");
+    assert_eq!(sent.state, FireState::Sent, "a sent firing stays sent");
+    let other = store
+        .claim_fire("tasks/x/t-1", at + jiff::SignedDuration::from_hours(24))
+        .await
+        .expect("claim");
+    assert_eq!(
+        other.state,
+        FireState::Sending,
+        "each firing time is its own record"
+    );
+    let recent = store.recent_fires(10).await.expect("recent_fires");
+    assert_eq!(recent.len(), 2);
+
+    let channel: ChannelId = "discord:main".parse().expect("valid id");
+    let user = UserId::new("u1");
+    assert_eq!(
+        store
+            .direct_chat(&channel, &user)
+            .await
+            .expect("direct_chat"),
+        None
+    );
+    let dm = ConversationKey::room(channel.clone(), "dm-1");
+    store
+        .set_direct_chat(&channel, &user, &dm)
+        .await
+        .expect("set_direct_chat");
+    let newer = ConversationKey::room(channel.clone(), "dm-2");
+    store
+        .set_direct_chat(&channel, &user, &newer)
+        .await
+        .expect("set_direct_chat");
+    assert_eq!(
+        store
+            .direct_chat(&channel, &user)
+            .await
+            .expect("direct_chat"),
+        Some(newer)
+    );
 }
 
 async fn pairing(store: &dyn ConversationStore, clock: &ManualClock) {

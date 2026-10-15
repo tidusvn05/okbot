@@ -417,3 +417,92 @@ fn personal_profile_and_pairing_codes() {
     assert_eq!(code, 0, "{json}");
     assert_eq!(json["profile"], "team");
 }
+
+#[test]
+fn tasks_from_the_terminal() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "me",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--profile",
+        "personal",
+        "--timezone",
+        "Asia/Ho_Chi_Minh",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    let run = |args: &[&str]| {
+        let out = env.okbot().args(args).write_stdin("").output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let (code, out, err) = run(&[
+        "task",
+        "add",
+        "Buy milk",
+        "--bot",
+        "me",
+        "--due",
+        "2099-01-02",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("tasks/people/owner/t-"), "{out}");
+    assert!(out.contains("due 2099-01-02 09:00"), "{out}");
+    let (code, _, err) = run(&[
+        "task",
+        "add",
+        "Standup",
+        "--bot",
+        "me",
+        "--repeat",
+        "weekdays 09:00",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let (_, _, err) = run(&[
+        "task",
+        "add",
+        "Late",
+        "--bot",
+        "me",
+        "--remind",
+        "2001-01-01 08:00",
+    ]);
+    assert!(err.contains("in the past"), "{err}");
+
+    let (_, out, _) = run(&["task", "list", "me"]);
+    assert!(out.contains("[todo, open] Buy milk"), "{out}");
+    assert!(out.contains("[reminder, open] Standup"), "{out}");
+    assert!(out.contains("(weekdays 09:00)"), "{out}");
+    let id = out
+        .lines()
+        .find(|l| l.contains("Buy milk"))
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    let (code, out, err) = run(&["task", "done", &id, "--bot", "me"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("done: Buy milk"), "{out}");
+    let (_, out, _) = run(&["task", "list", "me"]);
+    assert!(!out.contains("Buy milk"), "{out}");
+    let (code, _, err) = run(&["task", "rm", &id, "--bot", "me"]);
+    assert_eq!(code, 0, "{err}");
+    let (_, out, _) = run(&["task", "list", "me", "--all"]);
+    assert!(!out.contains("Buy milk"), "{out}");
+
+    let kb = env.root().join("me/kb");
+    let index = std::fs::read_to_string(kb.join("tasks/people/owner/index.md")).unwrap();
+    assert!(index.contains("Standup"), "{index}");
+    // Written tasks keep the bundle lint-clean.
+    let (code, out, err) = run(&["kb", "lint", "me"]);
+    assert_eq!(code, 0, "{out}{err}");
+}

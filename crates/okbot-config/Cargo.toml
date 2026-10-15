@@ -15,6 +15,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+jiff.workspace = true
 okbot-core.workspace = true
 serde.workspace = true
 thiserror.workspace = true

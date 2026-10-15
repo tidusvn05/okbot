@@ -14,6 +14,7 @@ mod people;
 mod registry;
 mod run;
 mod service;
+mod task;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -66,6 +67,9 @@ enum Command {
     /// Review and undo what a bot remembers.
     #[command(subcommand)]
     Memory(memory::MemoryCommand),
+    /// To-dos, reminders and routines.
+    #[command(subcommand, alias = "tasks")]
+    Task(task::TaskCommand),
     /// Show or set who the bot serves: `personal` (only you) or `team`.
     Profile(owner::ProfileArgs),
     /// Personal assistants: get a code to pair one of your chat accounts (`/pair <code>`).
@@ -155,6 +159,7 @@ async fn main() -> ExitCode {
         Command::Doctor(args) => doctor::run(args).await,
         Command::Kb(command) => kb::run(command),
         Command::Memory(command) => memory::run(command).await,
+        Command::Task(command) => task::run(command).await,
         Command::Channel(command) => channel::run(command).await,
         Command::Profile(args) => owner::profile(&args),
         Command::Pair(args) => owner::pair(&args).await,

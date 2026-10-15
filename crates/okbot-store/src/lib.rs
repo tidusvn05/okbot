@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, MessageRole, NewMessage,
-    StoreError, StoredMessage, SystemClock, UserId, async_trait,
+    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, Fire, FireState,
+    MessageRole, NewMessage, StoreError, StoredMessage, SystemClock, UserId, async_trait,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -397,6 +397,123 @@ impl ConversationStore for SqliteStore {
         .await
     }
 
+    async fn claim_fire(&self, task_id: &str, fire_at: Timestamp) -> Result<Fire, StoreError> {
+        let task_id = task_id.to_string();
+        self.with(move |conn, now| {
+            conn.execute(
+                "INSERT OR IGNORE INTO task_fires (task_id, fire_at, state, attempts, updated_at)
+                 VALUES (?1, ?2, 'sending', 0, ?3)",
+                params![task_id, millis(fire_at), millis(now)],
+            )?;
+            conn.query_row(
+                "SELECT state, attempts, updated_at FROM task_fires WHERE task_id = ?1 AND fire_at = ?2",
+                params![task_id, millis(fire_at)],
+                |row| {
+                    Ok(Fire {
+                        task_id: task_id.clone(),
+                        fire_at,
+                        state: FireState::parse(&row.get::<_, String>(0)?)
+                            .unwrap_or(FireState::Failed),
+                        attempts: row.get(1)?,
+                        updated_at: from_millis(row.get(2)?),
+                    })
+                },
+            )
+        })
+        .await
+    }
+
+    async fn set_fire(
+        &self,
+        task_id: &str,
+        fire_at: Timestamp,
+        state: FireState,
+        attempts: u32,
+    ) -> Result<(), StoreError> {
+        let task_id = task_id.to_string();
+        self.with(move |conn, now| {
+            conn.execute(
+                "INSERT INTO task_fires (task_id, fire_at, state, attempts, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(task_id, fire_at) DO UPDATE SET
+                    state = excluded.state, attempts = excluded.attempts,
+                    updated_at = excluded.updated_at",
+                params![
+                    task_id,
+                    millis(fire_at),
+                    state.as_str(),
+                    attempts,
+                    millis(now)
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn recent_fires(&self, limit: usize) -> Result<Vec<Fire>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.with(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT task_id, fire_at, state, attempts, updated_at FROM task_fires
+                 ORDER BY updated_at DESC, fire_at DESC LIMIT ?1",
+            )?;
+            stmt.query_map(params![limit], |row| {
+                Ok(Fire {
+                    task_id: row.get(0)?,
+                    fire_at: from_millis(row.get(1)?),
+                    state: FireState::parse(&row.get::<_, String>(2)?).unwrap_or(FireState::Failed),
+                    attempts: row.get(3)?,
+                    updated_at: from_millis(row.get(4)?),
+                })
+            })?
+            .collect()
+        })
+        .await
+    }
+
+    async fn set_direct_chat(
+        &self,
+        channel: &ChannelId,
+        user: &UserId,
+        conversation: &ConversationKey,
+    ) -> Result<(), StoreError> {
+        let (channel, user) = (channel.to_string(), user.as_str().to_string());
+        let key =
+            serde_json::to_string(conversation).map_err(|e| StoreError::Backend(Box::new(e)))?;
+        self.with(move |conn, now| {
+            conn.execute(
+                "INSERT INTO direct_chats (channel, user_id, conversation, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(channel, user_id) DO UPDATE SET
+                    conversation = excluded.conversation, updated_at = excluded.updated_at",
+                params![channel, user, key, millis(now)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn direct_chat(
+        &self,
+        channel: &ChannelId,
+        user: &UserId,
+    ) -> Result<Option<ConversationKey>, StoreError> {
+        let (channel, user) = (channel.to_string(), user.as_str().to_string());
+        let key: Option<String> = self
+            .with(move |conn, _| {
+                conn.query_row(
+                    "SELECT conversation FROM direct_chats WHERE channel = ?1 AND user_id = ?2",
+                    params![channel, user],
+                    |row| row.get(0),
+                )
+                .optional()
+            })
+            .await?;
+        // Rows were written from valid keys; an unreadable one counts as unknown.
+        Ok(key.and_then(|k| serde_json::from_str(&k).ok()))
+    }
+
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError> {
         self.with(move |conn, now| {
             let tx = conn.transaction()?;
@@ -407,6 +524,10 @@ impl ConversationStore for SqliteStore {
             removed += tx.execute(
                 "DELETE FROM inbound_dedupe WHERE expires_at <= ?1",
                 params![millis(now)],
+            )?;
+            removed += tx.execute(
+                "DELETE FROM task_fires WHERE updated_at < ?1 AND state <> 'sending'",
+                params![cutoff],
             )?;
             removed += tx.execute(
                 "DELETE FROM conversations WHERE updated_at < ?1

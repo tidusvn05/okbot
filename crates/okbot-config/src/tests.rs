@@ -50,6 +50,8 @@ fn initial_config_snapshot_and_round_trip() {
     );
     let zalo = &config.channels.zalo["shop"];
     assert_eq!(zalo.delivery, Delivery::Webhook);
+    assert!(config.schedule.enabled);
+    assert_eq!(config.schedule.late_grace_minutes, 360);
     assert_eq!(config.kb_dir(), dir.path().join("kb"));
 }
 
@@ -93,6 +95,14 @@ fn rejects_bad_configs() {
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[channels.slack.a]\n",
             "slack",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\ntimezone = \"Mars/Base\"\n",
+            "IANA",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[schedule]\ndeliver_to = \"discord\"\n",
+            "deliver_to",
         ),
     ];
     for (text, expected) in cases {

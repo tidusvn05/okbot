@@ -87,9 +87,13 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
         .with_context(|| format!("cannot open the database in {}", args.state_dir.display()))?;
 
     let stop = CancellationToken::new();
+    // Inside a bot directory, chat as that bot: its profile, time zone and linked people apply.
+    let bot = okbot_config::Config::load(Path::new(".")).ok();
+    let timezone = bot.as_ref().and_then(|b| b.bot.timezone.clone());
     let knowledge = if args.kb.is_dir() {
         let mut options = KnowledgeOptions::new(&args.kb);
         options.index_dir = Some(args.state_dir.join("index"));
+        options.timezone.clone_from(&timezone);
         let knowledge = Arc::new(
             tokio::task::spawn_blocking(move || Knowledge::open(options))
                 .await?
@@ -108,8 +112,8 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let closed = console.closed();
     let mut config = RuntimeConfig::new(&args.name, args.state_dir.join("work"));
     config.access.rate_limit.messages = 0;
-    // Inside a bot directory, chat as that bot: its profile and linked people apply.
-    if let Ok(bot) = okbot_config::Config::load(Path::new(".")) {
+    config.timezone = timezone;
+    if let Some(bot) = bot {
         config.personal = bot.bot.profile == okbot_config::BotProfile::Personal;
         for (id, person) in &bot.people {
             let accounts = person
@@ -128,7 +132,8 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     if let Some(knowledge) = knowledge {
         builder = builder
             .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
-            .memory(knowledge as Arc<dyn okbot_core::MemoryStore>);
+            .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
+            .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
     }
     let runtime = builder.build()?;
     let handle = runtime.handle();

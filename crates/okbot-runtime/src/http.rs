@@ -222,6 +222,7 @@ mod tests {
             agent: Arc::new(FakeAgent::echo("fake")),
             knowledge: None,
             memory: None,
+            tasks: None,
             renderer: Arc::new(PlainRenderer),
             clock: Arc::new(SystemClock),
             channels: HashMap::from([(channel.id().clone(), channel)]),

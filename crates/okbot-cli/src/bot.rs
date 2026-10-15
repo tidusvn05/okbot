@@ -128,6 +128,14 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     rc.tool_policy = config.agent.tool_policy;
     rc.timezone.clone_from(&config.bot.timezone);
     rc.personal = config.bot.profile == okbot_config::BotProfile::Personal;
+    rc.schedule.enabled = config.schedule.enabled;
+    rc.schedule.late_grace = Duration::from_secs(config.schedule.late_grace_minutes * 60);
+    rc.schedule.deliver_to = config
+        .schedule
+        .deliver_to
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
     for admin in &config.bot.admins {
         rc.access.admins.insert(parse_admin(admin)?);
     }
@@ -377,6 +385,7 @@ pub(crate) async fn knowledge(
     }
     let mut options = KnowledgeOptions::new(&kb);
     options.index_dir = Some(config.state_dir().join("index"));
+    options.timezone.clone_from(&config.bot.timezone);
     let knowledge = Arc::new(
         tokio::task::spawn_blocking(move || Knowledge::open(options))
             .await?
@@ -413,7 +422,8 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
         .agent(Arc::new(chain))
         .renderer(Arc::new(MarkdownRenderer))
         .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
-        .memory(knowledge as Arc<dyn okbot_core::MemoryStore>);
+        .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
+        .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
     let needs_http = config
         .channels
         .zalo

@@ -95,6 +95,62 @@ pub struct AgentRunRecord {
     pub started_at: Timestamp,
 }
 
+/// Where one firing of a task is (design §5.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FireState {
+    /// Claimed; being delivered or waiting for a retry.
+    Sending,
+    /// Delivered.
+    Sent,
+    /// Gave up after retries.
+    Failed,
+    /// Too late to deliver (the bot was down).
+    Missed,
+}
+
+impl FireState {
+    /// The name stored and shown.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sending => "sending",
+            Self::Sent => "sent",
+            Self::Failed => "failed",
+            Self::Missed => "missed",
+        }
+    }
+
+    /// Parses [`FireState::as_str`].
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "sending" => Some(Self::Sending),
+            "sent" => Some(Self::Sent),
+            "failed" => Some(Self::Failed),
+            "missed" => Some(Self::Missed),
+            _ => None,
+        }
+    }
+
+    /// No more delivery attempts follow.
+    pub fn is_final(self) -> bool {
+        !matches!(self, Self::Sending)
+    }
+}
+
+/// One firing of a task: the task id and its planned time identify it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fire {
+    /// Task id (`tasks/people/owner/t-7k2m9q`).
+    pub task_id: String,
+    /// The planned time.
+    pub fire_at: Timestamp,
+    /// Where it is.
+    pub state: FireState,
+    /// Delivery attempts so far.
+    pub attempts: u32,
+    /// Last change.
+    pub updated_at: Timestamp,
+}
+
 /// Stores conversations, deduplication marks and the audit trail (design §6.1).
 #[async_trait]
 pub trait ConversationStore: Send + Sync {
@@ -158,6 +214,38 @@ pub trait ConversationStore: Send + Sync {
         user: &UserId,
     ) -> Result<bool, StoreError>;
 
-    /// Deletes messages, runs and dedupe marks older than `before`. Returns rows removed.
+    /// Claims a task firing: records it as [`FireState::Sending`] the first time and returns its
+    /// current record, so a firing that was already sent is never sent again.
+    async fn claim_fire(&self, task_id: &str, fire_at: Timestamp) -> Result<Fire, StoreError>;
+
+    /// Updates a claimed firing.
+    async fn set_fire(
+        &self,
+        task_id: &str,
+        fire_at: Timestamp,
+        state: FireState,
+        attempts: u32,
+    ) -> Result<(), StoreError>;
+
+    /// The newest `limit` firings, newest first (for `okbot doctor` and `okbot task`).
+    async fn recent_fires(&self, limit: usize) -> Result<Vec<Fire>, StoreError>;
+
+    /// Remembers the direct conversation of `user` on `channel` (reminders sent there).
+    async fn set_direct_chat(
+        &self,
+        channel: &ChannelId,
+        user: &UserId,
+        conversation: &ConversationKey,
+    ) -> Result<(), StoreError>;
+
+    /// The latest direct conversation of `user` on `channel`.
+    async fn direct_chat(
+        &self,
+        channel: &ChannelId,
+        user: &UserId,
+    ) -> Result<Option<ConversationKey>, StoreError>;
+
+    /// Deletes messages, runs, dedupe marks and finished firings older than `before`. Returns rows
+    /// removed.
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError>;
 }

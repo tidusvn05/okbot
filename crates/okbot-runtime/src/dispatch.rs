@@ -93,6 +93,15 @@ impl Dispatcher {
         if s.config.personal && !self.owner_or_pairing(&event).await {
             return;
         }
+        if event.is_direct
+            && let Err(error) = s
+                .store
+                .set_direct_chat(channel, &event.author.id, &event.conversation)
+                .await
+        {
+            // Only reminders need it; the message is still answered.
+            tracing::warn!(%error, "cannot remember the direct chat");
+        }
         if event.restricted {
             turn::reply(s, &event, &s.config.replies.restricted).await;
             return;

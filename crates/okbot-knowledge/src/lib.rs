@@ -16,6 +16,8 @@ mod mcp;
 mod memory;
 mod paths;
 mod scope;
+mod task_tools;
+mod tasks;
 mod template;
 mod tokens;
 
@@ -27,8 +29,8 @@ use std::time::Duration;
 use okbase::{Bundle, CatalogOptions, GetRequest, GrepRequest, OpenOptions, StateDir};
 use okbot_core::{
     CancellationToken, KnowledgeContext, KnowledgeError, KnowledgeProvider, McpServer, MemoryEntry,
-    MemoryError, MemoryNote, MemoryScope, MemoryStore, Requester, RunGrant, Secret, ToolPolicy,
-    async_trait,
+    MemoryError, MemoryNote, MemoryScope, MemoryStore, NewTask, Requester, RunGrant, Secret, Task,
+    TaskChange, TaskError, TaskStore, ToolPolicy, async_trait,
 };
 
 pub use template::{default_bundle_files, write_default_bundle};
@@ -47,6 +49,9 @@ pub struct KnowledgeOptions {
     pub catalog_tokens: usize,
     /// Changed files are picked up after at most this long.
     pub refresh_every: Duration,
+    /// IANA time zone for task times written without an offset (`Asia/Ho_Chi_Minh`); UTC if
+    /// unset or unknown.
+    pub timezone: Option<String>,
 }
 
 impl KnowledgeOptions {
@@ -57,6 +62,7 @@ impl KnowledgeOptions {
             index_dir: None,
             catalog_tokens: 3000,
             refresh_every: Duration::from_secs(5),
+            timezone: None,
         }
     }
 }
@@ -77,6 +83,7 @@ pub struct Knowledge {
     mcp_addr: Mutex<Option<SocketAddr>>,
     catalog: Mutex<Option<String>>,
     notes: memory::Notes,
+    tasks: tasks::Tasks,
     /// Serializes memory writes (one bot process owns its bundle).
     writes: tokio::sync::Mutex<()>,
 }
@@ -109,9 +116,21 @@ impl Knowledge {
         )
         .map_err(bundle_error)?;
         bundle.sync().map_err(bundle_error)?;
+        let tz = options
+            .timezone
+            .as_deref()
+            .and_then(|name| {
+                jiff::tz::TimeZone::get(name)
+                    .inspect_err(
+                        |error| tracing::warn!(%error, name, "unknown time zone; using UTC"),
+                    )
+                    .ok()
+            })
+            .unwrap_or(jiff::tz::TimeZone::UTC);
         Ok(Self {
             bundle,
             notes: memory::Notes::new(&options.root),
+            tasks: tasks::Tasks::new(&options.root, tz),
             options,
             tokens: Arc::new(tokens::RunTokens::default()),
             mcp_addr: Mutex::new(None),
@@ -233,6 +252,86 @@ impl Knowledge {
         Ok(entry)
     }
 
+    /// The time zone task times are read and written in.
+    pub fn timezone(&self) -> &jiff::tz::TimeZone {
+        self.tasks.tz()
+    }
+
+    /// Runs a task write on the blocking pool under the write lock, then re-indexes and commits.
+    async fn task_write<T: Send + 'static>(
+        &self,
+        what: impl FnOnce(&tasks::Tasks) -> Result<T, TaskError> + Send + 'static,
+        message: impl FnOnce(&T) -> String,
+    ) -> Result<T, TaskError> {
+        let _guard = self.writes.lock().await;
+        let tasks = self.tasks.clone();
+        let out = tokio::task::spawn_blocking(move || what(&tasks))
+            .await
+            .map_err(|e| TaskError::Backend(Box::new(e)))??;
+        self.after_write(message(&out)).await;
+        Ok(out)
+    }
+
+    /// Every task in the bundle (for operators and the scheduler), in display order.
+    pub async fn all_tasks(&self) -> Vec<Task> {
+        let tasks = self.tasks.clone();
+        tokio::task::spawn_blocking(move || tasks.all())
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Changes any task by id (for operators and the scheduler).
+    pub async fn change_task(&self, id: &str, change: TaskChange) -> Result<Task, TaskError> {
+        let id = id.to_string();
+        self.task_write(
+            move |t| {
+                let task = t
+                    .all()
+                    .into_iter()
+                    .find(|task| task.id == id || task.id.ends_with(&format!("/{id}")))
+                    .ok_or_else(|| TaskError::NotFound(id.clone()))?;
+                t.apply(task, change, jiff::Timestamp::now())
+            },
+            |task| format!("tasks: update {}", task.id),
+        )
+        .await
+    }
+
+    /// Removes any task by id (for operators).
+    pub async fn remove_task(&self, id: &str) -> Result<(), TaskError> {
+        let id = id.to_string();
+        let message = format!("tasks: remove {id} (operator)");
+        self.task_write(move |t| t.remove(&id), |()| message).await
+    }
+
+    /// Rewrites a visible note (the `memory_update` tool).
+    pub(crate) async fn update_note(
+        &self,
+        who: &Requester,
+        id: &str,
+        text: String,
+        title: Option<String>,
+    ) -> Result<MemoryEntry, MemoryError> {
+        let _guard = self.writes.lock().await;
+        let notes = self.notes.clone();
+        let requester = who.clone();
+        let id = id.to_string();
+        let entry = tokio::task::spawn_blocking(move || {
+            notes.update(
+                &requester,
+                &id,
+                &text,
+                title.as_deref(),
+                jiff::Timestamp::now(),
+            )
+        })
+        .await
+        .map_err(|e| MemoryError::Backend(Box::new(e)))??;
+        self.after_write(format!("memory: update {}", entry.id))
+            .await;
+        Ok(entry)
+    }
+
     /// Every note in the bundle (for operators).
     pub async fn all_notes(&self) -> Vec<MemoryEntry> {
         let notes = self.notes.clone();
@@ -276,8 +375,7 @@ impl Knowledge {
         .await
         .ok()
         .flatten();
-        let notes: Vec<String> = self
-            .list(who)
+        let notes: Vec<String> = MemoryStore::list(self, who)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -439,6 +537,64 @@ impl MemoryStore for Knowledge {
         self.after_write(format!("memory: forget {}", entry.id))
             .await;
         Ok(entry)
+    }
+}
+
+#[async_trait]
+impl TaskStore for Knowledge {
+    async fn add(&self, who: &Requester, task: NewTask) -> Result<Task, TaskError> {
+        let requester = who.clone();
+        self.task_write(
+            move |t| t.add(&requester, task, jiff::Timestamp::now()),
+            |task| format!("tasks: add {}", task.id),
+        )
+        .await
+    }
+
+    async fn list(&self, who: &Requester) -> Result<Vec<Task>, TaskError> {
+        let tasks = self.tasks.clone();
+        let requester = who.clone();
+        tokio::task::spawn_blocking(move || tasks.list(&requester))
+            .await
+            .map_err(|e| TaskError::Backend(Box::new(e)))
+    }
+
+    async fn update(
+        &self,
+        who: &Requester,
+        id: &str,
+        change: TaskChange,
+    ) -> Result<Task, TaskError> {
+        let requester = who.clone();
+        let id = id.to_string();
+        self.task_write(
+            move |t| t.update(&requester, &id, change, jiff::Timestamp::now()),
+            |task| format!("tasks: update {}", task.id),
+        )
+        .await
+    }
+
+    async fn delete(&self, who: &Requester, id: &str) -> Result<Task, TaskError> {
+        let requester = who.clone();
+        let id = id.to_string();
+        self.task_write(
+            move |t| t.delete(&requester, &id),
+            |task| format!("tasks: delete {}", task.id),
+        )
+        .await
+    }
+
+    async fn scheduled(&self) -> Result<Vec<Task>, TaskError> {
+        Ok(self
+            .all_tasks()
+            .await
+            .into_iter()
+            .filter(|t| t.status.is_active() && t.remind_at.is_some())
+            .collect())
+    }
+
+    async fn after_fire(&self, id: &str, change: TaskChange) -> Result<Task, TaskError> {
+        self.change_task(id, change).await
     }
 }
 

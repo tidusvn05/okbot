@@ -24,6 +24,10 @@ pub(crate) enum Command {
     Memories,
     /// `/pair <code>`: make this account the owner's, on a personal bot.
     Pair(String),
+    /// `/tasks [all]`: list to-dos and reminders.
+    Tasks(bool),
+    /// `/done <number|id>`: finish a task.
+    Done(String),
 }
 
 impl Command {
@@ -43,6 +47,8 @@ impl Command {
             "forget" => Some(Self::Forget(rest)),
             "memories" | "memory" => Some(Self::Memories),
             "pair" => Some(Self::Pair(rest)),
+            "tasks" | "todo" | "todos" => Some(Self::Tasks(rest.eq_ignore_ascii_case("all"))),
+            "done" => Some(Self::Done(rest)),
             _ => None,
         }
     }
@@ -72,6 +78,7 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
         Command::Remember(_) | Command::Forget(_) | Command::Memories => {
             memory(s, command, event).await
         }
+        Command::Tasks(_) | Command::Done(_) => tasks(s, command, event).await,
     }
 }
 
@@ -111,19 +118,111 @@ async fn whoami(s: &Shared, event: &InboundEvent) -> String {
     reply
 }
 
-async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
-    let Some(memory) = &s.memory else {
-        return "Memory is not enabled for this bot.".into();
-    };
+async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
     let room = s
         .config
         .room(&event.conversation.channel, &event.conversation.room);
-    let who = okbot_core::Requester {
+    okbot_core::Requester {
         conversation: event.conversation.clone(),
         user: event.author.clone(),
         internal: room.internal,
         person: s.person_of(event).await,
+    }
+}
+
+/// A task as one list line: title, then when it fires or is due.
+fn task_line(task: &okbot_core::Task, tz: &jiff::tz::TimeZone) -> String {
+    let local = |t: jiff::Timestamp| {
+        t.to_zoned(tz.clone())
+            .strftime("%a %d/%m %H:%M")
+            .to_string()
     };
+    let mut line = task.title.clone();
+    if let Some(at) = task.remind_at {
+        let _ = write!(line, " · ⏰ {}", local(at));
+    }
+    if let Some(repeat) = &task.repeat {
+        let _ = write!(line, " ({repeat})");
+    }
+    if let Some(due) = task.due {
+        let _ = write!(line, " · due {}", local(due));
+    }
+    if !task.status.is_active() {
+        let _ = write!(line, " · {}", task.status.as_str());
+    } else if task.status == okbot_core::TaskStatus::Paused {
+        line.push_str(" · paused");
+    }
+    let short = task.id.rsplit('/').next().unwrap_or(&task.id);
+    let _ = write!(line, " `{short}`");
+    line
+}
+
+async fn tasks(s: &Shared, command: Command, event: &InboundEvent) -> String {
+    let Some(store) = &s.tasks else {
+        return "Tasks are not enabled for this bot.".into();
+    };
+    let who = requester(s, event).await;
+    let tz = s.config.time_zone();
+    let listed = match store.list(&who).await {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            tracing::error!(%error, "listing tasks failed");
+            return s.config.replies.error.clone();
+        }
+    };
+    match command {
+        Command::Done(which) => {
+            let which = which.trim();
+            let active: Vec<&okbot_core::Task> =
+                listed.iter().filter(|t| t.status.is_active()).collect();
+            let target = which
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|i| active.get(i).copied())
+                .or_else(|| {
+                    listed
+                        .iter()
+                        .find(|t| !which.is_empty() && t.id.rsplit('/').next() == Some(which))
+                });
+            let Some(target) = target else {
+                return "Which task? `/tasks` lists them; use its number, like `/done 2`.".into();
+            };
+            let change = okbot_core::TaskChange {
+                status: Some(okbot_core::TaskStatus::Done),
+                ..okbot_core::TaskChange::default()
+            };
+            match store.update(&who, &target.id, change).await {
+                Ok(task) => format!("Done: {}", task.title),
+                Err(okbot_core::TaskError::Backend(error)) => {
+                    tracing::error!(%error, "finishing a task failed");
+                    s.config.replies.error.clone()
+                }
+                Err(other) => other.to_string(),
+            }
+        }
+        _ => {
+            let all = matches!(command, Command::Tasks(true));
+            let shown: Vec<String> = listed
+                .iter()
+                .filter(|t| all || t.status.is_active())
+                .enumerate()
+                .map(|(i, t)| format!("{}. {}", i + 1, task_line(t, &tz)))
+                .collect();
+            if shown.is_empty() {
+                "No tasks. Ask me to remind you of something or to add a to-do.".into()
+            } else {
+                format!("{}\n\n`/done <number>` finishes one.", shown.join("\n"))
+            }
+        }
+    }
+}
+
+async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
+    let Some(memory) = &s.memory else {
+        return "Memory is not enabled for this bot.".into();
+    };
+    let who = requester(s, event).await;
     let result = match command {
         Command::Remember(text) if text.trim().is_empty() => {
             return "Tell me what to remember, for example `/remember I prefer short answers`."
@@ -179,6 +278,8 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/remember <text>`: remember something about you\n\
          - `/memories`: show what I remember here\n\
          - `/forget <id>`: forget a note (ids are listed by `/memories`)\n\
+         - `/tasks`: your to-dos and reminders (`/tasks all` includes finished ones)\n\
+         - `/done <number>`: mark a task as done\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/help`: this message"
     )
@@ -202,6 +303,9 @@ mod tests {
             Some(Command::Forget("memory/x".into()))
         );
         assert_eq!(Command::parse("/memories"), Some(Command::Memories));
+        assert_eq!(Command::parse("/tasks"), Some(Command::Tasks(false)));
+        assert_eq!(Command::parse("/todo ALL"), Some(Command::Tasks(true)));
+        assert_eq!(Command::parse("/done 2"), Some(Command::Done("2".into())));
         assert_eq!(Command::parse("help"), None);
         assert_eq!(Command::parse("/unknown"), None);
         assert_eq!(Command::parse(""), None);

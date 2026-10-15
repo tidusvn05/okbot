@@ -2478,6 +2478,7 @@ name = "okbot-config"
 version = "0.1.0-dev"
 dependencies = [
  "insta",
+ "jiff",
  "okbot-core",
  "serde",
  "tempfile",
@@ -2563,6 +2564,7 @@ dependencies = [
  "okbot-core",
  "okbot-testkit",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
