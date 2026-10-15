@@ -1,5 +1,5 @@
 [package]
-name = "okbot-cli"
+name = "okbot"
 description = "The okbot command line: create, run and manage chat bots backed by agent CLIs and okbase."
 version.workspace = true
 edition.workspace = true

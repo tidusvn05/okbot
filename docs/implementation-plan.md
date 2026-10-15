@@ -49,7 +49,7 @@
 | Concern | Standard |
 |---|---|
 | Errors in libraries | `thiserror`, one `Error` enum per crate, `#[non_exhaustive]`; never `anyhow` in libraries |
-| Errors in the binary | `anyhow` with context in `okbot-cli` only; user-facing messages say what to do next |
+| Errors in the binary | `anyhow` with context in `okbot` only; user-facing messages say what to do next |
 | Panics | No `unwrap`/`expect` on runtime data; `expect` only for invariants, with the invariant in the message |
 | Logging | `tracing` everywhere; JSON output in services, pretty output in the terminal; span per inbound event and per agent run (`conversation`, `run_id`) |
 | Secrets | A `Secret<String>` newtype (no `Debug`/`Display` of the value); a redaction layer in the tracing subscriber removes known secrets and the `bot<TOKEN>` URL pattern |
@@ -63,7 +63,7 @@
   `ConversationStore`) use `#[async_trait]` so they stay object-safe. Internal traits may use native
   `async fn` in traits. (ADR-0002.)
 - Cancellation: `tokio_util::sync::CancellationToken` passed down from the runtime; every long task observes it.
-- No global state: everything is constructed in `okbot-cli` and injected (§2.4).
+- No global state: everything is constructed in `okbot` and injected (§2.4).
 
 ### 1.5 Quality gates (every pull request)
 
@@ -91,8 +91,9 @@ cargo +1.89 check --workspace                      # MSRV
   `x86_64/aarch64-unknown-linux-gnu` (+ musl), `x86_64/aarch64-apple-darwin`; `SHA256SUMS`;
   GitHub Release; `install.sh`; container image `ghcr.io/<owner>/okbot`.
 - **crates.io**: every dependency is on crates.io (agent-core was renamed agent-call; okbase 0.2.3
-  was published on 2026-10-14), so nothing blocks `cargo publish`. okbot crates are published from
-  v1.0.0, when the `okbot-core` API is frozen. The names `okbot` and `okbot-*` are free today.
+  was published on 2026-10-14). From v0.5.0 every release also publishes all crates (the binary as
+  `okbot`, so `cargo install okbot`); while okbot is `0.x` a minor version may break the API, and v1.0.0
+  freezes `okbot-core`. Procedure: `docs/releasing.md`.
 
 ---
 
@@ -101,7 +102,7 @@ cargo +1.89 check --workspace                      # MSRV
 ### 2.1 Style: ports and adapters
 
 ```
-                     ┌──────────────────────────────── okbot-cli (composition root) ─────────────────────────────┐
+                     ┌────────────────────────────────── okbot (composition root) ───────────────────────────────┐
                      │ parses config, builds every adapter, injects them into the runtime, owns process lifetime │
                      └───────────────┬───────────────────────────────────────────────────────────────────────────┘
                                      ▼
@@ -130,13 +131,13 @@ cargo +1.89 check --workspace                      # MSRV
 | `okbot-runtime` | Pipeline, dedupe, access policy, rate limits, conversation queues, commands, `ContextBuilder`, shared HTTP server assembly, health | core (ports only) |
 | `okbot-channel-*` | One platform each: console, zalo, gchat, discord, slack | core (+ render types via core) |
 | `okbot-testkit` | Fakes: `FakeChannel`, `FakeAgent`, `MemoryStore`, fake CLI scripts, fake Zalo/GChat servers, fixtures | core (dev-dependency only) |
-| `okbot-cli` | Binary `okbot`: commands, wizard, bot registry, service management, composition root | all |
+| `okbot` (`crates/okbot-cli`) | Binary `okbot`: commands, wizard, bot registry, service management, composition root | all |
 
 Rules, enforced by review and a CI check (`cargo metadata` script):
 1. `okbot-core` has no I/O and no dependency on Tokio beyond `tokio-util` cancellation types and `async-trait`.
 2. `okbot-runtime` depends only on ports from `okbot-core`, never on a concrete adapter crate.
 3. Adapter crates never depend on each other.
-4. Only `okbot-cli` knows every crate; it is the only place that turns config into objects.
+4. Only `okbot` knows every crate; it is the only place that turns config into objects.
 5. External crates that cross a port boundary (agent-core, okbase, rmcp, platform SDKs) never appear
    in `okbot-core` types; adapters convert at the edge.
 
@@ -144,7 +145,7 @@ Rules, enforced by review and a CI check (`cargo metadata` script):
 
 | To add | Implement | Register |
 |---|---|---|
-| A chat platform | `Channel` (+ a `MarkdownDialect` if needed) in a new `okbot-channel-<name>` crate | a feature in `okbot-cli`, a `[channels.<name>.*]` config section, a wizard step, a doc page (`docs/platforms/<name>.md`) |
+| A chat platform | `Channel` (+ a `MarkdownDialect` if needed) in a new `okbot-channel-<name>` crate | a feature in `okbot`, a `[channels.<name>.*]` config section, a wizard step, a doc page (`docs/platforms/<name>.md`) |
 | An agent backend (e.g. a direct API) | `AgentBackend` | `[agent.providers.<name>] kind = "<name>"` |
 | A store (e.g. Postgres) | `ConversationStore` | `[store] kind = …` |
 | A chat command | `Command` trait in runtime | command registry |
@@ -157,7 +158,7 @@ a conformance test suite in `okbot-testkit` that every `Channel` implementation 
 ### 2.4 Runtime composition
 
 ```rust
-// okbot-cli, simplified
+// okbot, simplified
 let config  = okbot_config::load(dir)?;
 let store   = Arc::new(okbot_store::Sqlite::open(&config.state_dir)?);
 let kb      = okbot_knowledge::Knowledge::open(&config.kb, &config.memory)?;
@@ -207,7 +208,7 @@ runtime.run(shutdown_token).await
 | **v0.3.0** | P11 | **Discord** and **Slack** |
 | **v0.4.0** | P12–P13 | Session resume, progressive replies, fallback metrics, attachments |
 | **v0.5.0** | P15–P20 | Personal assistant: tasks, reminders, snooze, routines, notes, saving documents; **Telegram** |
-| **v1.0.0** | P14 | Stable `okbot-core` SDK and bridge protocol, crates.io publication |
+| **v1.0.0** | P14 | Stable `okbot-core` SDK and bridge protocol (crates are on crates.io from v0.5.0) |
 
 ---
 
@@ -343,7 +344,7 @@ Exit criteria (**M2**): with every installed CLI, `web` rooms browse and cite UR
 
 Split into three tracks that can run in parallel once P5–P7 are done.
 
-**P8a — `okbot` CLI and onboarding (`okbot-cli`)**
+**P8a — `okbot` CLI and onboarding (crate `okbot` in `crates/okbot-cli`)**
 1. Commands (design §6.3, §6.5): `new`, `init`, `run`, `chat`, `list`, `doctor`, `kb sync|lint|upgrade`, `config migrate`, `help --agent`.
 2. Bot registry `~/.config/okbot/bots.toml` (name → directory), name resolution from the current directory.
 3. Wizard (design §6.6) with three front-ends over one step engine: interactive, flags, and `--json` `ask`/`run`/`tell` steps (okbase onboard contract); exit codes 0/1/3/4 as in okbase.
@@ -448,7 +449,7 @@ depth). Verified with the real Claude CLI describing an image sent through a fak
 1. Freeze `okbot-core` API; semver checks (`cargo semver-checks`) in CI.
 2. Bridge protocol (design §3.4): JSON-RPC over stdio, spec in `docs/bridge.md`, conformance tests, a reference adapter in TypeScript.
 3. Channel template and conformance suite published; "add a platform" guide.
-4. Publish crates to crates.io once agent-core (renamed) and okbase are published.
+4. Publish crates to crates.io: from v0.5.0, by the release workflow (`scripts/release.py`).
 5. Candidates driven by users: Telegram (done, P20), Zalo OA, MS Teams, direct-API agent backend (reminders moved to P15–P18).
 
 Status (2026-10-13): items 2 and 3 done. `okbot-channel-bridge` implements protocol 1

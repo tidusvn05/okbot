@@ -13,7 +13,7 @@ memory. The agent behind it can search the web and read that knowledge, but neve
 touch your files.
 
 > **Status: alpha, unreleased.** Every feature below is implemented and tested against fake platform
-> APIs and real agent CLIs; real-platform testing and the first release (v0.1) are in progress. Expect
+> APIs and real agent CLIs; real-platform testing and the first release (v0.5.0) are in progress. Expect
 > breaking changes until v1.0.
 
 ## Features
@@ -56,11 +56,14 @@ Read [docs/design.md](docs/design.md) for the architecture and the reasons behin
 
 ## Quick start
 
-Requirements: Linux, Rust 1.89+, and at least one agent CLI installed and logged in
+Requirements: Linux or macOS, and at least one agent CLI installed and logged in
 (`claude`, `codex`, `opencode` or `devin`).
 
 ```sh
-cargo install --locked --git https://github.com/tidusvn05/okbot okbot-cli
+# a prebuilt binary (Linux, macOS) from the latest GitHub release, checksum verified
+curl -fsSL https://raw.githubusercontent.com/tidusvn05/okbot/main/install.sh | sh
+# or from crates.io (compiles, Rust 1.89+)
+cargo install --locked okbot
 
 okbot new shop          # wizard: picks the agent CLI, asks for the platform token, writes kb/
 cd shop
@@ -69,7 +72,7 @@ okbot doctor            # check agent, knowledge and platform credentials
 okbot start shop        # run as a service; `okbot logs shop -f` to follow
 ```
 
-Prebuilt binaries, `install.sh` and a container image arrive with the first release.
+Each release also ships a container image, `ghcr.io/tidusvn05/okbot` (see [docs/deploy.md](docs/deploy.md)).
 Coding agents can run `okbot help-agent` for the non-interactive setup contract.
 
 A bot directory looks like this:

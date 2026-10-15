@@ -10,7 +10,7 @@ import sys
 
 CORE = "okbot-core"
 TESTKIT = "okbot-testkit"
-CLI = "okbot-cli"
+CLI = "okbot"
 
 # crate -> okbot crates it may depend on (normal and build dependencies).
 ALLOWED = {

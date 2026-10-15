@@ -11,7 +11,7 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release --locked -p okbot-cli
+RUN cargo build --release --locked -p okbot
 
 FROM debian:bookworm-slim
 ARG AGENT_CLIS=""

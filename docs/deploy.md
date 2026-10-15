@@ -8,7 +8,7 @@ curl -fsSL https://raw.githubusercontent.com/tidusvn05/okbot/main/install.sh | s
 
 The installer checks the archive against the release's `SHA256SUMS` and puts `okbot` in
 `~/.local/bin`. Before the first release, build from source: `cargo install --locked --git
-https://github.com/tidusvn05/okbot okbot-cli`.
+https://github.com/tidusvn05/okbot okbot`.
 
 Install and log in to at least one agent CLI that can restrict its tools: Claude Code
 (`claude`, then log in) or Codex (`codex login`). `okbot doctor` checks both.

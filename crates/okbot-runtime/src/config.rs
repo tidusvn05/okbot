@@ -1,4 +1,4 @@
-//! Runtime settings. `okbot-cli` builds these from `okbot.toml`.
+//! Runtime settings. `okbot` builds these from `okbot.toml`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

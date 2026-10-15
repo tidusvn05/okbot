@@ -58,7 +58,7 @@ if [ "$VERSION" = "latest" ]; then
   VERSION="${url##*/}"
   case "$VERSION" in
     v[0-9]*) ;;
-    *) fail "no release found at https://github.com/$REPO/releases; before the first release, install from source (Rust 1.89+, takes a few minutes): cargo install --locked --git https://github.com/$REPO okbot-cli" ;;
+    *) fail "no release found at https://github.com/$REPO/releases; before the first release, install from source (Rust 1.89+, takes a few minutes): cargo install --locked --git https://github.com/$REPO okbot" ;;
   esac
 fi
 case "$VERSION" in v*) ;; *) VERSION="v$VERSION" ;; esac

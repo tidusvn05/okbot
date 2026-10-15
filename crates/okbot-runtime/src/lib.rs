@@ -6,7 +6,7 @@
 //!            channel ◄── render ◄── agent turn ◄── context (persona, knowledge, history)
 //! ```
 //!
-//! The runtime depends only on ports from `okbot-core`; `okbot-cli` provides the adapters.
+//! The runtime depends only on ports from `okbot-core`; `okbot` provides the adapters.
 
 mod command;
 pub mod config;

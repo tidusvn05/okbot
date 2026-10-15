@@ -93,7 +93,7 @@ okbot/
 │   ├── okbot-channel-zalo/     # feature "zalo"    (Zalo Bot Platform: getUpdates or webhook, own small HTTP client)
 │   ├── okbot-channel-discord/  # feature "discord" (twilight-gateway + twilight-http)
 │   ├── okbot-channel-slack/    # feature "slack"   (Socket Mode; Events API over HTTP optional)
-│   └── okbot-cli/              # the `okbot` binary: init, run, chat, doctor, kb, memory
+│   └── okbot-cli/          # crate `okbot`: the binary: init, run, chat, doctor, kb, memory
 ├── templates/default-bundle/   # default knowledge, embedded in the binary (include_dir)
 └── docs/
 ```
@@ -191,7 +191,7 @@ pub struct ChannelCaps {
 ```
 
 The core depends only on `Channel` and `ChannelCaps`. A new platform needs: an adapter crate, a
-`MarkdownDialect` if none fits, a `[channels.<platform>.*]` config section, and a feature in `okbot-cli`.
+`MarkdownDialect` if none fits, a `[channels.<platform>.*]` config section, and a feature in `okbot`.
 
 ### 3.3 Platform notes
 
