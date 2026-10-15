@@ -154,6 +154,7 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
         },
         internal: false,
         person: None,
+        personal: true,
     };
     let result = async {
         let grant = knowledge
@@ -328,6 +329,83 @@ async fn check_discord(config: &Config, r: &mut Report) {
 #[cfg(not(feature = "discord"))]
 async fn check_discord(_: &Config, _: &mut Report) {}
 
+#[cfg(feature = "telegram")]
+async fn check_telegram(config: &Config, r: &mut Report) {
+    use okbot_channel_telegram::{API_BASE, TelegramApi};
+    for (instance, t) in &config.channels.telegram {
+        let label = format!("telegram:{instance}");
+        let token = match config.secret(&t.token_env) {
+            Ok(token) => token,
+            Err(error) => {
+                r.add(&label, Status::Fail, error.to_string());
+                continue;
+            }
+        };
+        let base = std::env::var("OKBOT_TELEGRAM_API_BASE").unwrap_or_else(|_| API_BASE.into());
+        let api = TelegramApi::new(&base, token);
+        let me = match api.get_me().await {
+            Ok(me) => me,
+            Err(error) => {
+                r.add(&label, Status::Fail, error.to_string());
+                continue;
+            }
+        };
+        r.add(
+            &label,
+            Status::Ok,
+            format!("bot @{}, {:?} delivery", me.username, t.delivery).to_lowercase(),
+        );
+        let reads_all = t.reply_on.contains(&okbot_config::ReplyOn::All);
+        if reads_all && !me.can_read_all_group_messages {
+            r.add(
+                format!("{label} groups"),
+                Status::Warn,
+                "reply_on includes \"all\" but privacy mode is on: turn it off in @BotFather \
+                 (/setprivacy), then re-add the bot to its groups",
+            );
+        }
+        if t.delivery == okbot_config::Delivery::Webhook {
+            if let Some(secret_env) = &t.secret_env
+                && let Ok(secret) = config.secret(secret_env)
+                && !okbot_channel_telegram::valid_secret(secret.expose())
+            {
+                r.add(
+                    format!("{label} webhook"),
+                    Status::Fail,
+                    format!("{secret_env} may only hold A-Z, a-z, 0-9, `_` and `-` (1–256)"),
+                );
+            }
+            match api.webhook_info().await {
+                Ok(info) if info.url.is_empty() => r.add(
+                    format!("{label} webhook"),
+                    Status::Warn,
+                    "not registered yet; it is set when the bot starts",
+                ),
+                Ok(info) => {
+                    let expected = t.public_url.clone().unwrap_or_default();
+                    let (status, note) = match &info.last_error_message {
+                        Some(e) => (Status::Warn, format!("; last error: {e}")),
+                        None if info.url != expected => (
+                            Status::Warn,
+                            format!("; okbot.toml says {expected}, restart the bot"),
+                        ),
+                        None => (Status::Ok, String::new()),
+                    };
+                    r.add(
+                        format!("{label} webhook"),
+                        status,
+                        format!("{} ({} pending){note}", info.url, info.pending_update_count),
+                    );
+                }
+                Err(error) => r.add(format!("{label} webhook"), Status::Warn, error.to_string()),
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "telegram"))]
+async fn check_telegram(_: &Config, _: &mut Report) {}
+
 #[cfg(feature = "slack")]
 async fn check_slack(config: &Config, r: &mut Report) {
     use okbot_channel_slack::{SLACK_API, SlackWeb};
@@ -430,6 +508,7 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     check_gchat(&config, &mut r).await;
     check_discord(&config, &mut r).await;
     check_slack(&config, &mut r).await;
+    check_telegram(&config, &mut r).await;
     check_bridge(&config, &mut r);
     let state = config.state_dir();
     match std::fs::create_dir_all(&state).and_then(|()| {

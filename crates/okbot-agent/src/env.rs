@@ -26,6 +26,7 @@ impl Default for EnvScrub {
                 "SLACK_".into(),
                 "DISCORD_".into(),
                 "GCHAT_".into(),
+                "TELEGRAM_".into(),
             ],
         }
     }

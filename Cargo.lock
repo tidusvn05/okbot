@@ -2113,7 +2113,8 @@ dependencies = [
 [[package]]
 name = "okbase"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "789c8c53dbcdfcf0e616196478de1f79e41f08a4ac4d07d8142d185983b217c9"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2137,7 +2138,8 @@ dependencies = [
 [[package]]
 name = "okbase-analyze"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c2bea15c9703fc8c333bddafee60aba1200939bdde5a940ea328d2bba23113a"
 dependencies = [
  "flate2",
  "lindera",
@@ -2154,7 +2156,8 @@ dependencies = [
 [[package]]
 name = "okbase-convert"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3597ccaf7e41dec69457f715dba12ebfc09707a1fe63e0fe50fbb0a529ac2ea4"
 dependencies = [
  "anydoc",
  "crc32fast",
@@ -2171,7 +2174,8 @@ dependencies = [
 [[package]]
 name = "okbase-core"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c27a0f7ec42a0dba9c4f4ec5c549f32788c8553628611e5ea0db39abad69ea14"
 dependencies = [
  "ignore",
  "pulldown-cmark",
@@ -2186,7 +2190,8 @@ dependencies = [
 [[package]]
 name = "okbase-data"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66fd44010d2267ab06e4c68b7aaa05d51a2af9bb337ee52b4689772012f392dd"
 dependencies = [
  "blake3",
  "calamine",
@@ -2202,7 +2207,8 @@ dependencies = [
 [[package]]
 name = "okbase-embed"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c692dd529264b9882b259b6d6569fb513cda3f0a44e3a156dc59f48d9219a235"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2215,7 +2221,8 @@ dependencies = [
 [[package]]
 name = "okbase-index"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "822bc15db1da9db8f8f28273d067bbd9811aae528220e977229859e966dfb296"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2231,7 +2238,8 @@ dependencies = [
 [[package]]
 name = "okbase-lint"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "916d0ca297cc670a044c49a2f261bb33890f4ed32bbbdc7c668012b5e8b72e20"
 dependencies = [
  "okbase-analyze",
  "okbase-core",
@@ -2244,7 +2252,8 @@ dependencies = [
 [[package]]
 name = "okbase-mcp"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2ba57293b5434264aa31e84f045963847c45d25b6a3f7357502929dae7b227e"
 dependencies = [
  "axum",
  "http",
@@ -2259,7 +2268,8 @@ dependencies = [
 [[package]]
 name = "okbase-query"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "209afa4c4561a4dd9d358c1970733309ece4020908ff33ab42c76bc2c3d31aad"
 dependencies = [
  "okbase-analyze",
  "okbase-core",
@@ -2275,7 +2285,8 @@ dependencies = [
 [[package]]
 name = "okbase-search"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d102873591cee8d21cd223c6ec5848d19df3edd28b5828cc9289614edfb430f"
 dependencies = [
  "okbase-analyze",
  "okbase-embed",
@@ -2289,7 +2300,8 @@ dependencies = [
 [[package]]
 name = "okbase-standard"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "213f3284bc1c9b78488e4ab7398b80b7bc3a9e9ecc28ccdeaa81457e97ebea8a"
 dependencies = [
  "okbase-core",
  "serde",
@@ -2300,7 +2312,8 @@ dependencies = [
 [[package]]
 name = "okbase-tune"
 version = "0.2.3"
-source = "git+https://github.com/tidusvn05/okbase?tag=v0.2.3#8427774e30c5e2ce95965611ceccea44fe093574"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b3d4bccf60744e2cf9a16584845fdbb9711da0ca594a1afe4df9fd37c4ffb75"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2420,6 +2433,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "okbot-channel-telegram"
+version = "0.1.0-dev"
+dependencies = [
+ "axum",
+ "jiff",
+ "okbot-core",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "okbot-channel-zalo"
 version = "0.1.0-dev"
 dependencies = [
@@ -2453,6 +2483,7 @@ dependencies = [
  "okbot-channel-discord",
  "okbot-channel-gchat",
  "okbot-channel-slack",
+ "okbot-channel-telegram",
  "okbot-channel-zalo",
  "okbot-config",
  "okbot-core",
@@ -3380,7 +3411,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
 dependencies = [
  "annotate-snippets",
- "base64 0.23.1",
+ "base64 0.22.1",
  "encoding_rs_io",
  "granit-parser",
  "nohash-hasher",

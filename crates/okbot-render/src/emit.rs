@@ -14,12 +14,16 @@ enum LinkStyle {
     Angle,
     /// `text (url)`
     Plain,
+    /// `<a href="url">text</a>`
+    Html,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum CodeBlockStyle {
     Fenced,
     Indented,
+    /// `<pre><code>` with the code escaped.
+    Html,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,22 +39,31 @@ enum Escape {
     MarkdownLite,
     /// Backslash before Discord's markup characters.
     Discord,
-    /// `& < >` as entities (Slack).
+    /// `& < >` as entities (Slack, Telegram HTML).
     Entities,
+}
+
+/// Opening and closing markup around a span.
+type Marker = Option<(&'static str, &'static str)>;
+
+/// The same markup on both sides (`**bold**`).
+const fn same(m: &'static str) -> (&'static str, &'static str) {
+    (m, m)
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Style {
-    strong: Option<&'static str>,
-    emphasis: Option<&'static str>,
-    strike: Option<&'static str>,
-    code: Option<&'static str>,
+    strong: Marker,
+    emphasis: Marker,
+    strike: Marker,
+    code: Marker,
     link: LinkStyle,
     /// Headings as `#` lines (true) or as strong text (false).
     heading_hashes: bool,
     code_block: CodeBlockStyle,
     table: TableStyle,
     bullet: &'static str,
+    /// Prefix of every quoted line; empty for `<blockquote>`.
     quote: &'static str,
     escape: Escape,
 }
@@ -59,10 +72,10 @@ impl Style {
     fn of(dialect: MarkdownDialect) -> Self {
         match dialect {
             MarkdownDialect::ZaloMd => Self {
-                strong: Some("**"),
-                emphasis: Some("_"),
-                strike: Some("~~"),
-                code: Some("`"),
+                strong: Some(same("**")),
+                emphasis: Some(same("_")),
+                strike: Some(same("~~")),
+                code: Some(same("`")),
                 link: LinkStyle::Plain,
                 heading_hashes: false,
                 code_block: CodeBlockStyle::Indented,
@@ -72,10 +85,10 @@ impl Style {
                 escape: Escape::MarkdownLite,
             },
             MarkdownDialect::GChatText => Self {
-                strong: Some("*"),
-                emphasis: Some("_"),
-                strike: Some("~"),
-                code: Some("`"),
+                strong: Some(same("*")),
+                emphasis: Some(same("_")),
+                strike: Some(same("~")),
+                code: Some(same("`")),
                 link: LinkStyle::Angle,
                 heading_hashes: false,
                 code_block: CodeBlockStyle::Fenced,
@@ -85,10 +98,10 @@ impl Style {
                 escape: Escape::None,
             },
             MarkdownDialect::SlackMrkdwn => Self {
-                strong: Some("*"),
-                emphasis: Some("_"),
-                strike: Some("~"),
-                code: Some("`"),
+                strong: Some(same("*")),
+                emphasis: Some(same("_")),
+                strike: Some(same("~")),
+                code: Some(same("`")),
                 link: LinkStyle::Angle,
                 heading_hashes: false,
                 code_block: CodeBlockStyle::Fenced,
@@ -98,10 +111,10 @@ impl Style {
                 escape: Escape::Entities,
             },
             MarkdownDialect::DiscordMd => Self {
-                strong: Some("**"),
-                emphasis: Some("_"),
-                strike: Some("~~"),
-                code: Some("`"),
+                strong: Some(same("**")),
+                emphasis: Some(same("_")),
+                strike: Some(same("~~")),
+                code: Some(same("`")),
                 link: LinkStyle::Markdown,
                 heading_hashes: true,
                 code_block: CodeBlockStyle::Fenced,
@@ -109,6 +122,19 @@ impl Style {
                 bullet: "- ",
                 quote: "> ",
                 escape: Escape::Discord,
+            },
+            MarkdownDialect::TelegramHtml => Self {
+                strong: Some(("<b>", "</b>")),
+                emphasis: Some(("<i>", "</i>")),
+                strike: Some(("<s>", "</s>")),
+                code: Some(("<code>", "</code>")),
+                link: LinkStyle::Html,
+                heading_hashes: false,
+                code_block: CodeBlockStyle::Html,
+                table: TableStyle::List,
+                bullet: "• ",
+                quote: "",
+                escape: Escape::Entities,
             },
             MarkdownDialect::Plain => Self {
                 strong: None,
@@ -125,10 +151,10 @@ impl Style {
             },
             // CommonMark and dialects added later fall back to CommonMark.
             _ => Self {
-                strong: Some("**"),
-                emphasis: Some("_"),
-                strike: Some("~~"),
-                code: Some("`"),
+                strong: Some(same("**")),
+                emphasis: Some(same("_")),
+                strike: Some(same("~~")),
+                code: Some(same("`")),
                 link: LinkStyle::Markdown,
                 heading_hashes: true,
                 code_block: CodeBlockStyle::Fenced,
@@ -145,10 +171,11 @@ impl Style {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Chunk {
     Text(String),
-    /// A fenced code block: the splitter re-wraps each part in the same fences.
+    /// A fenced code block: the splitter re-wraps each part in the same `open` and `close`.
     Fenced {
         open: String,
         body: String,
+        close: String,
     },
 }
 
@@ -158,12 +185,24 @@ pub(crate) fn emit(blocks: &[Block], dialect: MarkdownDialect) -> Vec<Chunk> {
     blocks
         .iter()
         .filter_map(|block| {
-            if let (Block::Code { lang, text }, CodeBlockStyle::Fenced) = (block, style.code_block)
-            {
-                return Some(Chunk::Fenced {
-                    open: format!("```{}", lang.as_deref().unwrap_or("")),
-                    body: text.clone(),
-                });
+            if let Block::Code { lang, text } = block {
+                match style.code_block {
+                    CodeBlockStyle::Fenced => {
+                        return Some(Chunk::Fenced {
+                            open: format!("```{}\n", lang.as_deref().unwrap_or("")),
+                            body: text.clone(),
+                            close: "\n```".into(),
+                        });
+                    }
+                    CodeBlockStyle::Html => {
+                        return Some(Chunk::Fenced {
+                            open: html_pre(lang.as_deref()),
+                            body: escape(text, Escape::Entities),
+                            close: "</code></pre>".into(),
+                        });
+                    }
+                    CodeBlockStyle::Indented => {}
+                }
             }
             let text = block_text(block, &style, "");
             (!text.trim().is_empty()).then_some(Chunk::Text(text))
@@ -213,19 +252,31 @@ fn block_text(block: &Block, style: &Style, indent: &str) -> String {
             }
             lines.join("\n")
         }
-        Block::Quote(blocks) => blocks
-            .iter()
-            .map(|b| block_text(b, style, ""))
-            .collect::<Vec<_>>()
-            .join("\n\n")
-            .lines()
-            .map(|line| format!("{}{line}", style.quote))
-            .collect::<Vec<_>>()
-            .join("\n"),
+        Block::Quote(blocks) => {
+            let inner = blocks
+                .iter()
+                .map(|b| block_text(b, style, ""))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if style.quote.is_empty() {
+                format!("<blockquote>{inner}</blockquote>")
+            } else {
+                inner
+                    .lines()
+                    .map(|line| format!("{}{line}", style.quote))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
         Block::Code { lang, text } => match style.code_block {
             CodeBlockStyle::Fenced => {
                 format!("```{}\n{text}\n```", lang.as_deref().unwrap_or(""))
             }
+            CodeBlockStyle::Html => format!(
+                "{}{}</code></pre>",
+                html_pre(lang.as_deref()),
+                escape(text, Escape::Entities)
+            ),
             CodeBlockStyle::Indented => text
                 .lines()
                 .map(|line| format!("  {}", escape(line, style.escape)))
@@ -233,8 +284,8 @@ fn block_text(block: &Block, style: &Style, indent: &str) -> String {
                 .join("\n"),
         },
         Block::Table { header, rows } => table_text(header, rows, style),
-        Block::Rule => match style.escape {
-            Escape::MarkdownLite => "———".to_string(),
+        Block::Rule => match (style.escape, style.link) {
+            (Escape::MarkdownLite, _) | (_, LinkStyle::Html) => "———".to_string(),
             _ => "---".to_string(),
         },
     }
@@ -275,10 +326,21 @@ fn table_text(header: &[Vec<Inline>], rows: &[Vec<Vec<Inline>>], style: &Style) 
     }
 }
 
-fn wrap(text: &str, marker: Option<&str>) -> String {
+fn wrap(text: &str, marker: Marker) -> String {
     match marker {
-        Some(m) if !text.trim().is_empty() => format!("{m}{text}{m}"),
+        Some((open, close)) if !text.trim().is_empty() => format!("{open}{text}{close}"),
         _ => text.to_string(),
+    }
+}
+
+/// `<pre><code>` opening an HTML code block, with the language as a class when it is safe.
+fn html_pre(lang: Option<&str>) -> String {
+    match lang.filter(|l| {
+        l.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '#'))
+    }) {
+        Some(lang) if !lang.is_empty() => format!("<pre><code class=\"language-{lang}\">"),
+        _ => "<pre><code>".to_string(),
     }
 }
 
@@ -288,8 +350,12 @@ fn inline_text(inlines: &[Inline], style: &Style) -> String {
         match inline {
             Inline::Text(t) => out.push_str(&escape(t, style.escape)),
             Inline::Code(c) => match style.code {
-                Some(m) => {
-                    let _ = write!(out, "{m}{c}{m}");
+                // Markdown code spans show their content verbatim; HTML still needs entities.
+                Some((open, close)) if matches!(style.link, LinkStyle::Html) => {
+                    let _ = write!(out, "{open}{}{close}", escape(c, Escape::Entities));
+                }
+                Some((open, close)) => {
+                    let _ = write!(out, "{open}{c}{close}");
                 }
                 None => out.push_str(c),
             },
@@ -299,11 +365,29 @@ fn inline_text(inlines: &[Inline], style: &Style) -> String {
             Inline::Link { url, text } => {
                 let label = inline_text(text, style);
                 let bare = plain(text);
+                // Only web and mail links: Slack reads `<!channel|x>` as a mention of everyone.
+                let web = ["https://", "http://", "mailto:"]
+                    .iter()
+                    .any(|p| url.to_ascii_lowercase().starts_with(p));
+                // URLs are written as-is in Markdown dialects; entity dialects need `&` escaped.
+                let shown = match style.escape {
+                    Escape::Entities => escape(url, Escape::Entities),
+                    _ => url.clone(),
+                };
                 let _ = match style.link {
-                    _ if bare.is_empty() || bare == *url => write!(out, "{url}"),
+                    _ if !web && bare.is_empty() => write!(out, "{}", escape(url, style.escape)),
+                    _ if !web => write!(out, "{label}"),
+                    _ if bare.is_empty() || bare == *url => write!(out, "{shown}"),
                     LinkStyle::Markdown => write!(out, "[{label}]({url})"),
-                    LinkStyle::Angle => write!(out, "<{url}|{bare}>"),
+                    LinkStyle::Angle => {
+                        write!(out, "<{shown}|{}>", bare.replace(['<', '>', '|'], ""))
+                    }
                     LinkStyle::Plain => write!(out, "{label} ({url})"),
+                    LinkStyle::Html => write!(
+                        out,
+                        "<a href=\"{}\">{label}</a>",
+                        shown.replace('"', "&quot;")
+                    ),
                 };
             }
             Inline::Break => out.push('\n'),

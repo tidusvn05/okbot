@@ -19,7 +19,7 @@ pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
     DiscordSection, GChatDelivery, GChatSection, HttpSection, PersonSection, ProviderSection,
-    ReplyOn, RoomSection, ScheduleSection, SlackSection, ZaloSection,
+    ReplyOn, RoomSection, ScheduleSection, SlackSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -75,7 +75,8 @@ pub enum ConfigError {
 }
 
 /// Platforms with a native adapter; bridge adapters must use other names.
-pub const BUILT_IN_PLATFORMS: &[&str] = &["console", "zalo", "gchat", "discord", "slack"];
+pub const BUILT_IN_PLATFORMS: &[&str] =
+    &["console", "zalo", "gchat", "discord", "slack", "telegram"];
 
 /// Parses an account written `platform:instance/user-id` (`zalo:shop/6ede9afa…`), as `/whoami`
 /// shows it and `[bot] admins` and `[people]` use it.
@@ -204,6 +205,21 @@ impl Config {
                 }
             }
         }
+        for (instance, t) in &self.channels.telegram {
+            if let Delivery::Webhook = t.delivery {
+                let url = t.public_url.as_deref().unwrap_or_default();
+                if !url.starts_with("https://") {
+                    return invalid(format!(
+                        "[channels.telegram.{instance}] webhook delivery needs public_url = \"https://…\""
+                    ));
+                }
+                if t.secret_env.is_none() {
+                    return invalid(format!(
+                        "[channels.telegram.{instance}] webhook delivery needs secret_env"
+                    ));
+                }
+            }
+        }
         for (instance, b) in &self.channels.bridge {
             if BUILT_IN_PLATFORMS.contains(&b.platform.as_str()) {
                 return invalid(format!(
@@ -309,6 +325,10 @@ impl Config {
             names.push(s.app_token_env.clone());
             names.push(s.bot_token_env.clone());
         }
+        for t in self.channels.telegram.values() {
+            names.push(t.token_env.clone());
+            names.extend(t.secret_env.clone());
+        }
         for b in self.channels.bridge.values() {
             names.extend(b.env.iter().cloned());
         }
@@ -339,6 +359,11 @@ impl Config {
                 "slack",
                 vec![s.app_token_env.clone(), s.bot_token_env.clone()],
             ));
+        }
+        for (i, t) in &c.telegram {
+            let mut names = vec![t.token_env.clone()];
+            names.extend(t.secret_env.clone());
+            out.push((format!("telegram:{i}"), "telegram", names));
         }
         for (i, b) in &c.bridge {
             out.push((format!("{}:{i}", b.platform), "bridge", b.env.clone()));

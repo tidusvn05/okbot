@@ -47,6 +47,11 @@ fn discord() {
 }
 
 #[test]
+fn telegram() {
+    insta::assert_snapshot!(render(MarkdownDialect::TelegramHtml, 4096));
+}
+
+#[test]
 fn plain() {
     insta::assert_snapshot!(render(MarkdownDialect::Plain, 4000));
 }
@@ -54,4 +59,20 @@ fn plain() {
 #[test]
 fn zalo_split_small() {
     insta::assert_snapshot!(render(MarkdownDialect::ZaloMd, 120));
+}
+
+#[test]
+fn only_web_links_become_links() {
+    let caps = ChannelCaps {
+        max_message_len: 4000,
+        dialect: MarkdownDialect::SlackMrkdwn,
+        ..ChannelCaps::basic()
+    };
+    let text = |md: &str| MarkdownRenderer.render(md, &caps)[0].text.clone();
+    // Slack reads `<!channel|…>` as a mention of everyone.
+    assert_eq!(text("[hi](!channel)"), "hi");
+    assert_eq!(
+        text("[a](https://x.example/?a=1&b=2)"),
+        "<https://x.example/?a=1&amp;b=2|a>"
+    );
 }

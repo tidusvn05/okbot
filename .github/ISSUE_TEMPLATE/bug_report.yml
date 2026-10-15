@@ -26,7 +26,7 @@ body:
     attributes:
       label: Platform
       multiple: true
-      options: [Zalo, Google Chat, Discord, Slack, Bridge adapter, Console, Not platform-specific]
+      options: [Zalo, Telegram, Google Chat, Discord, Slack, Bridge adapter, Console, Not platform-specific]
   - type: dropdown
     id: agent
     attributes:

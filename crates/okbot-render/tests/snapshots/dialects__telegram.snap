@@ -1,0 +1,29 @@
+---
+source: crates/okbot-render/tests/dialects.rs
+expression: "render(MarkdownDialect::TelegramHtml, 4096)"
+---
+===== part 1 =====
+<b>Chính sách đổi trả</b>
+
+Khách hàng được <b>đổi trả trong 7 ngày</b> nếu sản phẩm <i>còn nguyên tem</i>. Xem chi tiết tại <a href="https://shop.example.com/doi-tra">trang chính sách</a> hoặc https://shop.example.com.
+
+<b>Các bước</b>
+
+1. Mang hóa đơn đến cửa hàng.
+2. Nhân viên kiểm tra:
+   • tem bảo hành
+   • phụ kiện đi kèm
+3. Nhận phiếu đổi trả.
+
+<blockquote>Lưu ý: hàng giảm giá <s>không</s> vẫn được đổi.</blockquote>
+
+• Gói: Cơ bản; Giá: 100k; Ghi chú: <i>phổ biến</i>
+• Gói: Nâng cao; Giá: 250k; Ghi chú: <code>PRO</code>
+
+<pre><code class="language-rust">fn main() {
+    println!("x * y_z");
+}</code></pre>
+
+Ký tự đặc biệt: a*b_c~d <code>inline * code</code> &lt;tag&gt; &amp; more.
+
+———

@@ -7,7 +7,7 @@
 **A multi-platform chat assistant that thinks with the agent CLI you already use and knows what your
 [okbase](https://github.com/tidusvn05/okbase) knowledge base knows.**
 
-okbot connects Zalo, Google Chat, Discord and Slack (and any other platform, through a small bridge
+okbot connects Zalo, Telegram, Google Chat, Discord and Slack (and any other platform, through a small bridge
 protocol) to Claude Code, Codex, OpenCode or Devin. Every bot has its own markdown knowledge base and
 memory. The agent behind it can search the web and read that knowledge, but never run a shell or
 touch your files.
@@ -18,8 +18,8 @@ touch your files.
 
 ## Features
 
-- **Many platforms, one bot.** Zalo Bot (polling or webhook), Google Chat (HTTP or Pub/Sub), Discord,
-  Slack (Socket Mode) and a terminal console. Adapters in any language via the
+- **Many platforms, one bot.** Zalo Bot and Telegram (polling or webhook), Google Chat (HTTP or
+  Pub/Sub), Discord, Slack (Socket Mode) and a terminal console. Adapters in any language via the
   [bridge protocol](docs/bridge.md).
 - **Agent CLIs as the brain.** Claude Code, Codex, OpenCode or Devin through
   [agent-call](https://github.com/tidusvn05/agent-call), using the CLI's own login: no API key. Fallback
@@ -40,8 +40,8 @@ touch your files.
 ## How it works
 
 ```
- Zalo   Google Chat   Discord   Slack   bridge adapters
-   └─────────┴───────────┼────────┴──────────┘
+ Zalo   Telegram   Google Chat   Discord   Slack   bridge adapters
+   └────────┴────────────┼──────────┴────────┴────────────┘
                   channel adapters ── per-platform rendering (Markdown dialects, splitting)
                          │
                   okbot runtime ── access rules, dedupe, per-conversation queue, history (SQLite)
@@ -87,6 +87,7 @@ shop/
 | Platform | Delivery | Guide |
 |---|---|---|
 | Zalo Bot | long polling or webhook | [docs/platforms/zalo.md](docs/platforms/zalo.md) |
+| Telegram | long polling or webhook | [docs/platforms/telegram.md](docs/platforms/telegram.md) |
 | Google Chat | HTTP endpoint or Pub/Sub | [docs/platforms/google-chat.md](docs/platforms/google-chat.md) |
 | Discord | gateway | [docs/platforms/discord.md](docs/platforms/discord.md) |
 | Slack | Socket Mode | [docs/platforms/slack.md](docs/platforms/slack.md) |

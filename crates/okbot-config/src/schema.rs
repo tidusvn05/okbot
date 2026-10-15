@@ -220,6 +220,9 @@ pub struct ChannelsSection {
     /// Slack apps by instance name.
     #[serde(default)]
     pub slack: BTreeMap<String, SlackSection>,
+    /// Telegram bots by instance name.
+    #[serde(default)]
+    pub telegram: BTreeMap<String, TelegramSection>,
     /// Adapters in other languages (bridge protocol), by instance name.
     #[serde(default)]
     pub bridge: BTreeMap<String, BridgeSection>,
@@ -232,6 +235,7 @@ impl ChannelsSection {
             && self.gchat.is_empty()
             && self.discord.is_empty()
             && self.slack.is_empty()
+            && self.telegram.is_empty()
             && self.bridge.is_empty()
     }
 
@@ -267,6 +271,9 @@ impl ChannelsSection {
         }
         for (instance, sl) in &self.slack {
             out.push(("slack", instance.as_str(), sl.access()));
+        }
+        for (instance, t) in &self.telegram {
+            out.push(("telegram", instance.as_str(), t.access()));
         }
         for (instance, b) in &self.bridge {
             out.push((b.platform.as_str(), instance.as_str(), b.access()));
@@ -393,6 +400,7 @@ fn default_bridge_dialect() -> okbot_core::MarkdownDialect {
 access!(BridgeSection);
 access!(DiscordSection);
 access!(SlackSection);
+access!(TelegramSection);
 
 /// The access settings every channel section has.
 #[derive(Debug, Clone, Copy)]
@@ -502,6 +510,35 @@ pub struct ZaloSection {
     pub rooms: Vec<RoomSection>,
 }
 
+/// `[channels.telegram.<instance>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TelegramSection {
+    /// Variable holding the bot token from @BotFather.
+    pub token_env: String,
+    /// Receiving mode.
+    #[serde(default)]
+    pub delivery: Delivery,
+    /// Public HTTPS URL for webhook delivery.
+    #[serde(default)]
+    pub public_url: Option<String>,
+    /// Variable holding the webhook secret (`A-Z a-z 0-9 _ -`, 1–256 characters).
+    #[serde(default)]
+    pub secret_env: Option<String>,
+    /// When to answer.
+    #[serde(default = "default_reply_on")]
+    pub reply_on: Vec<ReplyOn>,
+    /// Only these user ids are answered (all when empty).
+    #[serde(default)]
+    pub allow_users: Vec<String>,
+    /// Never answered.
+    #[serde(default)]
+    pub blocked_users: Vec<String>,
+    /// Per-chat settings (`room` is the chat id, negative for groups).
+    #[serde(default)]
+    pub rooms: Vec<RoomSection>,
+}
+
 fn default_reply_on() -> Vec<ReplyOn> {
     vec![ReplyOn::Dm, ReplyOn::Mention]
 }
@@ -518,6 +555,10 @@ pub struct RoomSection {
     /// The room may see `audience: private` knowledge.
     #[serde(default)]
     pub internal: bool,
+    /// A group where answers may use the asker's personal memory, tasks and notes (for example
+    /// a family group). Off by default: everyone in a group reads the answers.
+    #[serde(default)]
+    pub personal: bool,
 }
 
 fn default_true() -> bool {

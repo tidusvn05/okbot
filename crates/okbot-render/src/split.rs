@@ -33,7 +33,7 @@ pub(crate) fn pack(chunks: Vec<Chunk>, max: usize, unit: LengthUnit) -> Vec<Stri
                     split_text(&text, max, unit)
                 }
             }
-            Chunk::Fenced { open, body } => fenced(&open, &body, max, unit),
+            Chunk::Fenced { open, body, close } => fenced(&open, &body, &close, max, unit),
         };
         for piece in pieces {
             if current.is_empty() {
@@ -56,19 +56,19 @@ pub(crate) fn pack(chunks: Vec<Chunk>, max: usize, unit: LengthUnit) -> Vec<Stri
 }
 
 /// Splits a code block into parts that each carry the opening and closing fence.
-fn fenced(open: &str, body: &str, max: usize, unit: LengthUnit) -> Vec<String> {
-    let whole = format!("{open}\n{body}\n```");
+fn fenced(open: &str, body: &str, close: &str, max: usize, unit: LengthUnit) -> Vec<String> {
+    let whole = format!("{open}{body}{close}");
     if measure(&whole, unit) <= max {
         return vec![whole];
     }
-    let overhead = measure(open, unit) + 1 + 1 + 3;
+    let overhead = measure(open, unit) + measure(close, unit);
     if overhead >= max {
         // The fences alone do not fit: send the code as plain text.
         return split_text(body, max, unit);
     }
     split_text(body, max - overhead, unit)
         .into_iter()
-        .map(|part| format!("{open}\n{part}\n```"))
+        .map(|part| format!("{open}{part}{close}"))
         .collect()
 }
 
@@ -168,8 +168,9 @@ mod tests {
             .join("\n");
         let parts = pack(
             vec![Chunk::Fenced {
-                open: "```rust".into(),
+                open: "```rust\n".into(),
                 body,
+                close: "\n```".into(),
             }],
             60,
             LengthUnit::Chars,

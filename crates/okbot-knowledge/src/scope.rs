@@ -69,6 +69,7 @@ mod tests {
             },
             internal: false,
             person: None,
+            personal: true,
         }
     }
 
@@ -119,6 +120,29 @@ mod tests {
             "prefix must not leak"
         );
         assert!(!s.permits_path("memory/users/zalo-shop/u2"));
+    }
+
+    #[test]
+    fn group_chats_reach_no_personal_folder() {
+        let mut group = who("u1", "g1");
+        group.personal = false;
+        group.person = Some(okbot_core::Person {
+            id: "owner".into(),
+            accounts: vec![(group.conversation.channel.clone(), "u1".into())],
+        });
+        let s = for_requester(&group);
+        assert!(s.permits_path("memory/rooms/zalo-shop/g1/notes"));
+        assert!(s.permits_path("tasks/rooms/zalo-shop/g1/t-abc123"));
+        assert!(s.permits_path("memory/global/team-lunch"));
+        for personal in [
+            "memory/people/owner",
+            "memory/people/owner/coffee",
+            "memory/users/zalo-shop/u1/coffee",
+            "tasks/people/owner/t-abc123",
+            "notes/people/owner/2026/2026-10-14",
+        ] {
+            assert!(!s.permits_path(personal), "{personal}");
+        }
     }
 
     #[test]

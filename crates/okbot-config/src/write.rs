@@ -23,6 +23,8 @@ pub struct InitOptions {
     pub discord: Option<(String, String)>,
     /// A Slack app: `(instance, app-token variable, bot-token variable)`.
     pub slack: Option<(String, String, String)>,
+    /// A Telegram bot (long polling): `(instance, token variable)`.
+    pub telegram: Option<(String, String)>,
     /// HTTP listen address (webhooks).
     pub http_listen: Option<String>,
     /// IANA timezone.
@@ -164,6 +166,15 @@ pub fn render_channels(o: &InitOptions) -> String {
         let _ = writeln!(s, "\n[channels.slack.{instance}]");
         let _ = writeln!(s, "app_token_env = {}", quoted(app));
         let _ = writeln!(s, "bot_token_env = {}", quoted(bot));
+        let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
+    }
+    if let Some((instance, token)) = &o.telegram {
+        let _ = writeln!(s, "\n[channels.telegram.{instance}]");
+        let _ = writeln!(s, "token_env = {}", quoted(token));
+        let _ = writeln!(
+            s,
+            "delivery = \"polling\"               # or \"webhook\" with public_url and secret_env"
+        );
         let _ = writeln!(s, "reply_on = [\"dm\", \"mention\"]");
     }
     s

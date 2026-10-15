@@ -72,6 +72,26 @@ images only.
 Terminal: `okbot kb add <file|https://…> [--title …]`, `okbot kb inbox` (what was saved, to move into
 the right folder later).
 
+## In groups
+
+Pairing belongs to your account, not to a chat: once paired, the bot knows you in every group of
+that platform too. In a group it answers only you, when you mention it or reply to it; it ignores
+others silently (in a direct chat they get a short "private assistant" notice).
+
+Everyone in a group reads the answers, so in a group the bot cannot reach your personal memory,
+tasks, reminders or notes at all: not to read them, not to write them. Ask for those in a direct
+chat. In a group, "remember …", `/remember` and `/note` save to the group's memory, `/tasks` shows the
+group's tasks, and a reminder set there is sent to that group.
+
+For a group where personal context is welcome (a family group), mark it in `okbot.toml`; `/whoami`
+in the group shows its id:
+
+```toml
+[[channels.zalo.me.rooms]]
+room = "zgr-…"
+personal = true
+```
+
 ## Settings
 
 ```toml

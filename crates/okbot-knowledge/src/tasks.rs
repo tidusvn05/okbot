@@ -48,6 +48,7 @@ fn new_id() -> String {
 /// The folder holding `scope` tasks for `who`.
 fn folder(scope: MemoryScope, who: &Requester) -> Result<String, TaskError> {
     match scope {
+        MemoryScope::User if !who.personal => Err(TaskError::Invalid(paths::NOT_HERE.into())),
         MemoryScope::User => Ok(paths::in_area("tasks", &paths::owner_dir(who))),
         MemoryScope::Room => Ok(paths::in_area(
             "tasks",
@@ -467,6 +468,7 @@ mod tests {
             },
             internal: false,
             person: None,
+            personal: true,
         }
     }
 
@@ -505,6 +507,14 @@ mod tests {
         let listed = tasks.list(&ana);
         assert_eq!(listed, vec![task.clone()]);
         assert_eq!(tasks.list(&who("bob", "dm-bob")), Vec::<Task>::new());
+        // In a group, Ana's personal tasks are out of reach, for reading and for writing.
+        let mut ana_in_group = who("ana", "group");
+        ana_in_group.personal = false;
+        assert_eq!(tasks.list(&ana_in_group), Vec::<Task>::new());
+        let err = tasks
+            .add(&ana_in_group, NewTask::todo("x"), now())
+            .unwrap_err();
+        assert!(err.to_string().contains("one-to-one"), "{err}");
 
         let short = task.id.rsplit('/').next().unwrap();
         let done = tasks

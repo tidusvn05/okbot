@@ -29,6 +29,7 @@ async fn main() {
         },
         internal: false,
         person: None,
+        personal: true,
     };
     let grant = knowledge
         .grant(

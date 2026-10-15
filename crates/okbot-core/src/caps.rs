@@ -17,6 +17,9 @@ pub enum MarkdownDialect {
     DiscordMd,
     /// Slack mrkdwn.
     SlackMrkdwn,
+    /// Telegram `parse_mode = "HTML"`: `<b>`, `<i>`, `<s>`, `<code>`, `<pre>`, `<a>`,
+    /// `<blockquote>`; no tables or headings.
+    TelegramHtml,
     /// No formatting at all.
     Plain,
 }

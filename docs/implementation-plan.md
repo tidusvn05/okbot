@@ -90,10 +90,9 @@ cargo +1.89 check --workspace                      # MSRV
 - Releases (same model as okbase): tag `vX.Y.Z` → CI builds `okbot` for
   `x86_64/aarch64-unknown-linux-gnu` (+ musl), `x86_64/aarch64-apple-darwin`; `SHA256SUMS`;
   GitHub Release; `install.sh`; container image `ghcr.io/<owner>/okbot`.
-- **crates.io**: okbot depends on agent-core and okbase by git tag, which `cargo publish` rejects.
-  okbot crates are published only after both are on crates.io. Note: the name **`agent-core` is
-  already taken on crates.io by another project**, so agent-core needs a new crate name before it can
-  be published (to be raised as an agent-core issue in P0). The names `okbot` and `okbot-*` are free today.
+- **crates.io**: every dependency is on crates.io (agent-core was renamed agent-call; okbase 0.2.3
+  was published on 2026-10-14), so nothing blocks `cargo publish`. okbot crates are published from
+  v1.0.0, when the `okbot-core` API is frozen. The names `okbot` and `okbot-*` are free today.
 
 ---
 
@@ -207,7 +206,7 @@ runtime.run(shutdown_token).await
 | **v0.2.0** | P9–P10 | **Google Chat** (HTTP or Pub/Sub), personal/room/global **memory** |
 | **v0.3.0** | P11 | **Discord** and **Slack** |
 | **v0.4.0** | P12–P13 | Session resume, progressive replies, fallback metrics, attachments |
-| **v0.5.0** | P15–P19 | Personal assistant: tasks, reminders, snooze, routines, notes, saving documents |
+| **v0.5.0** | P15–P20 | Personal assistant: tasks, reminders, snooze, routines, notes, saving documents; **Telegram** |
 | **v1.0.0** | P14 | Stable `okbot-core` SDK and bridge protocol, crates.io publication |
 
 ---
@@ -450,7 +449,7 @@ depth). Verified with the real Claude CLI describing an image sent through a fak
 2. Bridge protocol (design §3.4): JSON-RPC over stdio, spec in `docs/bridge.md`, conformance tests, a reference adapter in TypeScript.
 3. Channel template and conformance suite published; "add a platform" guide.
 4. Publish crates to crates.io once agent-core (renamed) and okbase are published.
-5. Candidates driven by users: Telegram (reuses most of the Zalo adapter), Zalo OA, MS Teams, direct-API agent backend (reminders moved to P15–P18).
+5. Candidates driven by users: Telegram (done, P20), Zalo OA, MS Teams, direct-API agent backend (reminders moved to P15–P18).
 
 Status (2026-10-13): items 2 and 3 done. `okbot-channel-bridge` implements protocol 1
 ([`docs/bridge.md`](bridge.md)): `[channels.bridge.<instance>]` in `okbot.toml`, restart with backoff,
@@ -459,7 +458,7 @@ The reference adapter is plain JavaScript (`examples/bridge/echo-channel.mjs`, n
 than TypeScript. `okbot-testkit` has `conformance::channel`/`channel_stops` and `CollectSink`;
 `templates/channel/` is a compiled, tested workspace member; guides are in `docs/extending/`. Verified
 end to end: `okbot run` answering through the Node adapter with a fake `claude`. Items 1 and 4 wait for
-a first release (no semver baseline yet) and for agent-core and okbase on crates.io.
+a first release (no semver baseline yet); agent-call and okbase are on crates.io since 2026-10-14.
 
 ### P15 — Tasks (to-dos without notifications)
 
@@ -493,8 +492,9 @@ Status (2026-10-14): done in code and tests (fake clock: on time, repeats, misse
 send, terminal tasks routed to the owner's direct chat, give-up after 5 attempts; a pipeline test
 runs the real loop). The scheduler re-reads task files every 30 s instead of being notified.
 `[schedule]` holds `enabled`, `deliver_to` and `late_grace_minutes`; `doctor` warns when
-`[bot] timezone` is unset and lists undelivered firings. Whether Zalo accepts a message long after
-the user's last one is checked on the real bot.
+`[bot] timezone` is unset and lists undelivered firings. On the real bot (2026-10-14), Zalo accepted a
+`sendMessage` to a private chat about 11 hours after the user's last message; a reminder through the
+scheduler reached the owner's Zalo chat on time; a gap longer than 24 hours is still to be checked.
 
 ### P17 — Snooze and repeats
 
@@ -541,6 +541,19 @@ PDF, Word, PowerPoint, OpenDocument, RTF, EPUB, HTML and images). Discord now de
 attachments as files, numbered with images; Zalo's Bot API delivers images only, so the exit check
 runs on Discord. `okbot memory edit` opens the file in `$EDITOR`. User guide: `docs/assistant.md`.
 
+### P20 — Telegram (`okbot-channel-telegram`)
+
+1. Bot API client on reqwest (token only in URLs that are never logged), long polling with offsets and
+   webhook with the `secret_token` header.
+2. `MarkdownDialect::TelegramHtml` in `okbot-render` (code blocks re-wrapped in `<pre>` when split);
+   a plain-text resend when Telegram rejects the markup.
+3. Groups (mentions, replies, `/cmd@bot`), forum topics as threads, photos and documents through
+   `getFile`; config, wizard, `okbot channel add telegram`, `doctor` (token, privacy mode against
+   `reply_on`, `getWebhookInfo`).
+
+Status (2026-10-14): done in code and tests against a fake Bot API; real-bot smoke test pending
+(release checklist).
+
 ---
 
 ## Part 5 — Release checklist (every release)
@@ -561,5 +574,5 @@ runs on Discord. `okbot memory edit` opens the file in `$EDITOR`. User guide: `d
 | Zalo Bot API changes (young platform, groups in beta) | Typed client isolated in one crate; fake server tests; `doctor` surfaces API errors clearly |
 | Prompt injection through chat or the web | No shell/file tools in any policy, scope-limited MCP, `mcp-only` rooms, tagged memory writes (design §4.4) |
 | CLI quota shared by many bots | Machine-wide concurrency limit; per-bot `[agent].home` |
-| Publishing to crates.io blocked by git dependencies and the `agent-core` name | Ship binaries first; rename/publish upstream before v1.0 |
+| Publishing to crates.io blocked by git dependencies and the `agent-core` name | Resolved 2026-10-14: agent-call and okbase are on crates.io |
 | okbase write API never lands | okbot's own writer is complete on its own; switching is an internal change |

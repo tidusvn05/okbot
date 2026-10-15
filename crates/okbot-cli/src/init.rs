@@ -26,6 +26,8 @@ pub(crate) enum Platform {
     Discord,
     /// Slack app (Socket Mode).
     Slack,
+    /// Telegram bot (long polling).
+    Telegram,
     /// No platform yet (use `okbot chat` to try the bot).
     None,
 }
@@ -119,6 +121,9 @@ pub(crate) struct PlatformArgs {
     /// Slack: environment variable that already holds the bot token (`xoxb-…`).
     #[arg(long)]
     slack_bot_token_env: Option<String>,
+    /// Telegram: environment variable that already holds the bot token from @BotFather.
+    #[arg(long)]
+    telegram_token_env: Option<String>,
     /// HTTP listen address for webhooks (default: the first free port from 127.0.0.1:8787).
     #[arg(long)]
     listen: Option<String>,
@@ -516,7 +521,13 @@ async fn verify_gchat(_: &str) -> anyhow::Result<()> {
 
 /// Writes a secret file readable by its owner only.
 fn write_private(path: &Path, text: &str) -> anyhow::Result<()> {
-    std::fs::write(path, text)?;
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // Created 0600, never readable by others even for a moment.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(text.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -525,19 +536,27 @@ fn write_private(path: &Path, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A variable from the process environment or the bot's `.env`, for checking a token.
+#[cfg(any(feature = "zalo", feature = "telegram"))]
+fn env_value(dir: &Path, name: &str) -> anyhow::Result<String> {
+    std::env::var(name)
+        .ok()
+        .or_else(|| {
+            std::fs::read_to_string(dir.join(ENV_FILE))
+                .ok()
+                .and_then(|text| {
+                    text.lines().find_map(|l| {
+                        l.strip_prefix(&format!("{name}="))
+                            .map(|v| v.trim_matches(['"', '\'']).to_string())
+                    })
+                })
+        })
+        .with_context(|| format!("{name} is not set"))
+}
+
 #[cfg(feature = "zalo")]
 async fn verify_zalo_token(dir: &Path, token_env: &str) -> anyhow::Result<()> {
-    let token = std::env::var(token_env).ok().or_else(|| {
-        std::fs::read_to_string(dir.join(ENV_FILE))
-            .ok()
-            .and_then(|text| {
-                text.lines().find_map(|l| {
-                    l.strip_prefix(&format!("{token_env}="))
-                        .map(|v| v.trim_matches(['"', '\'']).to_string())
-                })
-            })
-    });
-    let token = token.with_context(|| format!("{token_env} is not set"))?;
+    let token = env_value(dir, token_env)?;
     let base = std::env::var("OKBOT_ZALO_API_BASE")
         .unwrap_or_else(|_| okbot_channel_zalo::DEFAULT_API_BASE.to_string());
     let api = okbot_channel_zalo::client(&base, &okbot_core::Secret::new(token));
@@ -552,6 +571,25 @@ async fn verify_zalo_token(dir: &Path, token_env: &str) -> anyhow::Result<()> {
 #[cfg(not(feature = "zalo"))]
 async fn verify_zalo_token(_: &Path, _: &str) -> anyhow::Result<()> {
     bail!("this okbot build has no Zalo support")
+}
+
+#[cfg(feature = "telegram")]
+async fn verify_telegram_token(dir: &Path, token_env: &str) -> anyhow::Result<()> {
+    let token = env_value(dir, token_env)?;
+    let base = std::env::var("OKBOT_TELEGRAM_API_BASE")
+        .unwrap_or_else(|_| okbot_channel_telegram::API_BASE.to_string());
+    let api = okbot_channel_telegram::TelegramApi::new(&base, okbot_core::Secret::new(token));
+    let me = api
+        .get_me()
+        .await
+        .context("Telegram did not accept the token (use --no-verify to skip this check)")?;
+    eprintln!("✓ Telegram bot @{}", me.username);
+    Ok(())
+}
+
+#[cfg(not(feature = "telegram"))]
+async fn verify_telegram_token(_: &Path, _: &str) -> anyhow::Result<()> {
+    bail!("this okbot build has no Telegram support")
 }
 
 /// Step 2b: personal assistant or team bot. Without a terminal the default is `team`.
@@ -588,11 +626,12 @@ fn choose_platform(w: &Wizard<'_>, given: Option<Platform>) -> anyhow::Result<Pl
         "Google Chat",
         "Discord",
         "Slack",
+        "Telegram",
         "none for now (try it with `okbot chat`)",
     ];
     let choice = w.ask_or_fail(
         "--platform",
-        "Which messaging platform (zalo, gchat, discord, slack or none)",
+        "Which messaging platform (zalo, gchat, discord, slack, telegram or none)",
         || inquire::Select::new("Which messaging platform?", options.clone()).raw_prompt(),
     )?;
     Ok(match choice.index {
@@ -600,6 +639,7 @@ fn choose_platform(w: &Wizard<'_>, given: Option<Platform>) -> anyhow::Result<Pl
         1 => Platform::Gchat,
         2 => Platform::Discord,
         3 => Platform::Slack,
+        4 => Platform::Telegram,
         _ => Platform::None,
     })
 }
@@ -660,6 +700,21 @@ pub(crate) async fn setup_channel(
                 "xoxb-",
             )?;
             options.slack = Some((instance.to_string(), app, bot));
+        }
+        Platform::Telegram => {
+            let env = token(
+                w,
+                dir,
+                args.telegram_token_env.as_ref(),
+                "--telegram-token-env",
+                "Telegram bot token (from @BotFather: /newbot)",
+                &fresh_env_name(w, dir, "TELEGRAM_BOT_TOKEN", instance),
+                "",
+            )?;
+            if !args.no_verify {
+                verify_telegram_token(dir, &env).await?;
+            }
+            options.telegram = Some((instance.to_string(), env));
         }
         Platform::None => {}
     }

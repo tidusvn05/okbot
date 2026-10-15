@@ -115,6 +115,11 @@ fn detail(config: &Config, id: &str) -> String {
             .get(instance)
             .map(|g| format!("{:?} delivery", g.delivery).to_lowercase())
             .unwrap_or_default(),
+        "telegram" => c
+            .telegram
+            .get(instance)
+            .map(|t| format!("{:?} delivery", t.delivery).to_lowercase())
+            .unwrap_or_default(),
         "discord" | "slack" => String::new(),
         _ => c
             .bridge
@@ -137,7 +142,8 @@ fn platform_name(platform: Platform) -> anyhow::Result<&'static str> {
         Platform::Gchat => "gchat",
         Platform::Discord => "discord",
         Platform::Slack => "slack",
-        Platform::None => bail!("choose a platform: zalo, gchat, discord or slack"),
+        Platform::Telegram => "telegram",
+        Platform::None => bail!("choose a platform: zalo, gchat, discord, slack or telegram"),
     })
 }
 

@@ -10,10 +10,13 @@ okbase knowledge bundle. One bot = one directory with `okbot.toml`, `.env` (secr
 2. Exit code 3 means an answer is missing. The JSON has `error.flag` and `error.message`: ask the
    user the message verbatim, then re-run with that flag. Never invent secrets.
    - `--agent claude,codex`: which agent CLIs, in fallback order (only logged-in ones).
-   - `--platform zalo|gchat|discord|slack|none`.
+   - `--platform zalo|telegram|gchat|discord|slack|none`.
    - `--zalo-token-env NAME`: a variable that already holds the Zalo bot token. Otherwise the
      user must run the wizard in a terminal to paste the token (it goes to `.env`, never argv).
-   - `--delivery polling|webhook`; webhook also needs `--public-url https://…`.
+   - `--telegram-token-env NAME`, `--discord-token-env NAME`, `--slack-app-token-env NAME` and
+     `--slack-bot-token-env NAME` work the same way for those platforms.
+   - `--delivery polling|webhook` (Zalo); webhook also needs `--public-url https://…`. Telegram
+     starts with polling; webhook is set in `okbot.toml` (`docs/platforms/telegram.md`).
 3. `okbot doctor <name> --json`: exit 0 when ready, 4 when checks failed (each failed check has
    a `detail` telling what to fix).
 4. `okbot run <name>` runs the bot in the foreground.

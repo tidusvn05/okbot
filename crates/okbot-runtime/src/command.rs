@@ -135,7 +135,8 @@ async fn whoami(s: &Shared, event: &InboundEvent) -> String {
     reply
 }
 
-async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
+/// Who is asking, and what they may reach from this conversation.
+pub(crate) async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
     let room = s
         .config
         .room(&event.conversation.channel, &event.conversation.room);
@@ -144,6 +145,8 @@ async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::Requester {
         user: event.author.clone(),
         internal: room.internal,
         person: s.person_of(event).await,
+        // Everyone in a group reads the answers: personal data only in direct or personal rooms.
+        personal: event.is_direct || room.personal,
     }
 }
 
@@ -312,14 +315,19 @@ pub(crate) fn snooze_until(
     okbot_core::parse_time(&text, tz).ok().filter(|t| *t > now)
 }
 
-/// The task id of the newest reminder sent in this conversation (the scheduler writes
-/// "(reminder `t-…`" into the history).
+/// The task id of the newest reminder sent in this conversation: the scheduler ends its history
+/// line with "(reminder `t-…`; …)". Users write user messages, so only bot lines count.
 async fn last_reminder(s: &Shared, event: &InboundEvent) -> Option<String> {
     let history = s.store.recent(&event.conversation, 40).await.ok()?;
-    history.iter().rev().find_map(|m| {
-        let rest = m.text.split("(reminder `").nth(1)?;
-        Some(rest.split('`').next()?.to_string())
-    })
+    history
+        .iter()
+        .rev()
+        .filter(|m| m.role == okbot_core::MessageRole::Bot)
+        .find_map(|m| {
+            let (_, rest) = m.text.rsplit_once("\n\n(reminder `")?;
+            let (id, tail) = rest.split_once('`')?;
+            (tail == "; the user may snooze it or mark it done)").then(|| id.to_string())
+        })
 }
 
 async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
@@ -334,6 +342,15 @@ async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
         return "There is no reminder in this chat to snooze.".into();
     };
     let who = requester(s, event).await;
+    // An agent's answer could imitate the scheduler's line; a routine only starts with `/resume`.
+    let is_routine = store.list(&who).await.is_ok_and(|tasks| {
+        tasks.iter().any(|t| {
+            t.kind == okbot_core::TaskKind::Routine && t.id.rsplit('/').next() == Some(id.as_str())
+        })
+    });
+    if is_routine {
+        return "Routines cannot be snoozed; use `/pause` and `/resume`.".into();
+    }
     let change = okbot_core::TaskChange {
         status: Some(okbot_core::TaskStatus::Open),
         remind_at: Some(Some(until)),
@@ -353,6 +370,16 @@ async fn snooze(s: &Shared, when: &str, event: &InboundEvent) -> String {
     }
 }
 
+/// Where `/remember` and `/note` write: the person's own memory, or the group's in a group chat
+/// (personal data is out of reach there).
+fn own_scope(who: &okbot_core::Requester) -> okbot_core::MemoryScope {
+    if who.personal {
+        okbot_core::MemoryScope::User
+    } else {
+        okbot_core::MemoryScope::Room
+    }
+}
+
 async fn note(s: &Shared, text: &str, event: &InboundEvent) -> String {
     let Some(memory) = &s.memory else {
         return "Notes are not enabled for this bot.".into();
@@ -361,7 +388,7 @@ async fn note(s: &Shared, text: &str, event: &InboundEvent) -> String {
         return "What should I note? For example `/note call the bank on Monday`.".into();
     }
     let who = requester(s, event).await;
-    match memory.note(&who, okbot_core::MemoryScope::User, text).await {
+    match memory.note(&who, own_scope(&who), text).await {
         Ok(_) => "Noted.".into(),
         Err(okbot_core::MemoryError::Backend(error)) => {
             tracing::error!(%error, "writing a note failed");
@@ -385,7 +412,7 @@ async fn memory(s: &Shared, command: Command, event: &InboundEvent) -> String {
             .save(
                 &who,
                 okbot_core::MemoryNote {
-                    scope: okbot_core::MemoryScope::User,
+                    scope: own_scope(&who),
                     title: None,
                     text,
                 },

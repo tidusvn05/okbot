@@ -20,6 +20,7 @@ fn who(user: &str, room: &str) -> Requester {
         },
         internal: false,
         person: None,
+        personal: true,
     }
 }
 
@@ -127,6 +128,43 @@ async fn notes_are_scoped_and_keep_the_bundle_clean() {
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(json["errors"], 0, "{json:#}");
     assert_eq!(json["warnings"], 0, "{json:#}");
+}
+
+#[tokio::test]
+async fn group_chats_neither_read_nor_write_personal_memory() {
+    let (_dir, k) = open(false);
+    let lan = who("u1", "dm");
+    k.save(&lan, note(MemoryScope::User, "Lan takes insulin at 8 pm"))
+        .await
+        .unwrap();
+    let mut lan_in_group = who("u1", "group");
+    lan_in_group.personal = false;
+    let seen: Vec<String> = k
+        .list(&lan_in_group)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert!(!seen.iter().any(|t| t.contains("insulin")), "{seen:?}");
+    assert!(
+        k.context(&lan_in_group)
+            .await
+            .unwrap()
+            .user_profile
+            .is_none()
+    );
+    let err = k
+        .save(&lan_in_group, note(MemoryScope::User, "secret"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, MemoryError::Forbidden(_)), "{err}");
+    k.save(
+        &lan_in_group,
+        note(MemoryScope::Room, "Group trip on Saturday"),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -286,6 +324,7 @@ async fn linked_accounts_share_personal_memory() {
         },
         internal: false,
         person: Some(person),
+        personal: true,
     };
 
     let saved = k

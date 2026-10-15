@@ -160,6 +160,9 @@ impl Notes {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map_or_else(|| truncate(text, 60), |t| truncate(t, 80));
+        if note.scope == MemoryScope::User && !who.personal {
+            return Err(MemoryError::Forbidden(paths::NOT_HERE.into()));
+        }
         let folder = folder(note.scope, who);
         let dir = self.dir(&folder);
         std::fs::create_dir_all(&dir).map_err(backend)?;
@@ -509,6 +512,7 @@ mod tests {
             },
             internal: false,
             person: None,
+            personal: true,
         };
         let now: Timestamp = "2026-10-13T07:00:00Z".parse().unwrap();
         let note = MemoryNote {

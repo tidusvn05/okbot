@@ -75,6 +75,8 @@ pub struct RoomRule {
     pub tool_policy: Option<ToolPolicy>,
     /// The room may see `audience: private` knowledge.
     pub internal: bool,
+    /// A group where answers may use the asker's personal profile and data.
+    pub personal: bool,
 }
 
 /// Fixed texts the bot sends without asking an agent.

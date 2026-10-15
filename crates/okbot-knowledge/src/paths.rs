@@ -2,6 +2,11 @@
 
 use okbot_core::{ChannelId, Requester, UserId};
 
+/// Why personal data is refused in a group chat (shown to the agent and in commands).
+pub(crate) const NOT_HERE: &str = "personal memory, tasks and notes are only available in a \
+    one-to-one chat with the bot, because everyone in this group reads the answers; save it for \
+    this group (scope `room`) or ask in a direct chat";
+
 /// Folders every requester may read.
 pub(crate) const SHARED_DIRS: [&str; 5] =
     ["persona", "system", "knowledge", "data", "memory/global"];
@@ -54,6 +59,9 @@ pub(crate) fn owner_dir(who: &Requester) -> String {
 /// Every personal folder `who` may read, the write folder first: a linked person also keeps the
 /// notes each of their accounts saved before the link.
 pub(crate) fn personal_dirs(who: &Requester) -> Vec<String> {
+    if !who.personal {
+        return Vec::new();
+    }
     let mut dirs = vec![owner_dir(who)];
     let accounts = who.person.as_ref().map_or_else(
         || vec![(who.conversation.channel.clone(), who.user.id.clone())],

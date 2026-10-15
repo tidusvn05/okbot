@@ -48,6 +48,9 @@ impl Journal {
             )));
         }
         let owner = match scope {
+            MemoryScope::User if !who.personal => {
+                return Err(MemoryError::Forbidden(paths::NOT_HERE.into()));
+            }
             MemoryScope::User => paths::owner_dir(who),
             MemoryScope::Room => paths::room_dir(&who.conversation.channel, &who.conversation.room),
             MemoryScope::Global => {
@@ -129,6 +132,7 @@ mod tests {
             },
             internal: false,
             person: None,
+            personal: true,
         };
         let now: Timestamp = "2026-10-14T02:05:00Z".parse().unwrap();
         let id = journal
