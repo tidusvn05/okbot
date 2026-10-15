@@ -129,14 +129,21 @@ pub(crate) fn to_inbound(
         attachments: message
             .attachments
             .iter()
-            .filter(|a| {
-                a.content_type
+            .map(|a| {
+                if a.content_type
                     .as_deref()
                     .is_some_and(|t| t.starts_with("image/"))
-            })
-            .map(|a| okbot_core::Attachment::Image {
-                url: a.url.clone(),
-                caption: None,
+                {
+                    okbot_core::Attachment::Image {
+                        url: a.url.clone(),
+                        caption: None,
+                    }
+                } else {
+                    okbot_core::Attachment::File {
+                        url: a.url.clone(),
+                        name: Some(a.filename.clone()),
+                    }
+                }
             })
             .collect(),
         mentions_bot: mentioned,

@@ -503,6 +503,11 @@ the user's last one is checked on the real bot.
 
 Exit criteria: "remind me again in 10 minutes" after a reminder brings it back once.
 
+Status (2026-10-14): done. `/snooze` (alias `/later`) takes `10m`, `2h`, `1d`, Vietnamese units
+(`10 phút`, `2 giờ`), bare minutes, a clock time (`15:30`, today or tomorrow) or a date-time, and finds
+the last reminder from the history line the scheduler writes; it reopens a one-shot reminder. Repeats
+were already done in P15–P16.
+
 ### P18 — Routines (scheduled agent turns)
 
 1. `InboundEvent.source` (`Platform` | `Schedule { task_id }`); worker path that skips dedupe and
@@ -513,6 +518,13 @@ Exit criteria: "remind me again in 10 minutes" after a reminder brings it back o
 Exit criteria: a daily 7:00 summary routine runs with real Codex and Claude; a team member cannot
 create one; the daily cap holds.
 
+Status (2026-10-14): done. Instead of `InboundEvent.source`, the scheduler sends the prompt (with a
+preamble) to the inbound sink as the author's message, so no SDK type changed; `RunInfo.admin` tells
+the tools who may create routines. Every routine the agent creates starts paused (not only after web
+use): the agent cannot tell which text in its turn came from the web. Verified with real Codex: a
+daily routine created in chat, resumed with `/resume`, ran at its time and answered from `task_list`.
+Not yet tried with Claude.
+
 ### P19 — Notes and saving documents
 
 1. `note_add`, `/note`; `notes/<owner>/<yyyy>/<date>.md`.
@@ -520,7 +532,14 @@ create one; the daily cap holds.
    converters); `okbot kb add|inbox`.
 3. `okbot memory edit`; docs: `docs/assistant.md` (user guide for personal bots).
 
-Exit criteria: a PDF sent in Zalo with "save this" is answered from in a later turn.
+Exit criteria: a PDF sent in chat with "save this" is answered from in a later turn.
+
+Status (2026-10-14): done. The journal is one OKF file per owner and day; `MemoryStore::note` (a
+default method, so other stores keep compiling) serves `/note` and `note_add`. `knowledge_add` keeps
+the original file next to a markdown document and lets okbase index it (okbot's okbase build reads
+PDF, Word, PowerPoint, OpenDocument, RTF, EPUB, HTML and images). Discord now delivers non-image
+attachments as files, numbered with images; Zalo's Bot API delivers images only, so the exit check
+runs on Discord. `okbot memory edit` opens the file in `$EDITOR`. User guide: `docs/assistant.md`.
 
 ---
 

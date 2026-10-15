@@ -588,18 +588,19 @@ direct chat or the current room, never another user.
 A routine is a task whose firing runs the agent ("every morning at 7, summarise today's tasks and the
 weather"):
 
-- The scheduler delivers an `InboundEvent` with `source: Schedule { task_id }` into the routine's
-  conversation queue, authored by the routine's author. It goes through the normal worker (history,
-  session, scope, tool policy, renderer), skipping only dedupe and commands.
-- The prompt states that the turn is a scheduled routine, when it was created and that the user is not
-  waiting for a live answer.
+- The scheduler delivers the routine's prompt to the runtime's inbound sink as a message of the
+  author's account in the routine's chat, so it goes through the normal pipeline (access, history,
+  session, scope, tool policy, renderer) and the public `InboundEvent` stays unchanged.
+- The message starts with a preamble saying it is a scheduled routine set up earlier and that nobody
+  is waiting for a live answer.
 - **Who.** Only the owner of a personal bot and `[bot] admins` of a team bot may create routines.
   The check is repeated at every firing: if the author lost the role, the routine is paused.
 - **Cost.** `[schedule] max_agent_runs_per_day` (default 24) per bot; routines repeat at most hourly;
-  a failed run is reported once in the conversation, not retried.
-- **Visibility.** Creating a routine always makes the bot answer with what will run and when; `/tasks`
-  lists routines first. A routine created during a turn that used web tools is created `paused` and
-  must be confirmed with `/tasks resume <id>`, so a web page cannot plant a recurring job.
+  a failed run is reported once in the conversation, not retried. Runs over the cap are marked missed.
+- **Confirmation.** A routine the agent creates starts `paused`, and the reply tells the user to send
+  `/resume <id>`, so text the agent read (a web page) cannot plant a recurring job. The agent cannot
+  resume a routine, and changing its prompt pauses it again. `okbot task add --routine` (the operator)
+  starts at once; `/pause`, `/resume` and `okbot task pause|resume` stop and start any task.
 
 ### 5.8 Saving documents to knowledge
 
@@ -609,12 +610,14 @@ weather"):
 - **Who.** The owner on a personal bot; admins on a team bot. Everything in `knowledge/` is visible
   to every user of the bot, which is why members cannot add to it.
 - **What.** Text the agent extracted (a web page the user linked, a pasted text), or an attachment of
-  the current message: images and PDFs are kept under `knowledge/inbox/files/` next to the generated
-  markdown; okbase's converters produce the text where they support the format, otherwise the agent's
-  transcription is stored.
+  the current message (Discord delivers files, Zalo images only): the original file is kept next to
+  a markdown document with the agent's summary, and okbase indexes PDF, Word, PowerPoint, HTML and
+  images itself. Only the inbox index is rewritten; `knowledge/index.md` belongs to the operator and
+  only gets an `inbox` link.
 - **Limits.** 2 MiB of text, 20 MiB per file, the same HTTPS-only fetch rules as `attachment_view`.
 - `okbot kb add <file|url>` does the same from the terminal; `okbot kb inbox` lists recent additions so
-  an operator can move them into the right folder.
+  an operator can move them into the right folder. `okbot memory edit <id>` opens any memory, task,
+  note or knowledge file in `$EDITOR`.
 
 ### 5.9 Quick notes and journal
 

@@ -75,4 +75,16 @@ pub trait MemoryStore: Send + Sync {
     /// Removes a note by id. Personal and room notes can be removed by anyone who sees them;
     /// team notes by their author (operators use `okbot memory forget`).
     async fn forget(&self, who: &Requester, id: &str) -> Result<MemoryEntry, MemoryError>;
+
+    /// Appends a quick note to today's journal of `who` (`User`) or of the room (`Room`) and
+    /// returns the journal's id (design §5.9). Stores without a journal refuse.
+    async fn note(
+        &self,
+        who: &Requester,
+        scope: MemoryScope,
+        text: &str,
+    ) -> Result<String, MemoryError> {
+        let _ = (who, scope, text);
+        Err(MemoryError::Invalid("this bot keeps no journal".into()))
+    }
 }

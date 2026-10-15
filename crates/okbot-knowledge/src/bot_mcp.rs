@@ -23,6 +23,10 @@ note, in the user's language. Never save passwords, payment data or other secret
 - memory_list: what you remember here (use it before saving to avoid duplicates).\n\
 - memory_forget: when the user asks you to forget something; pass the note id from memory_list.\n\
 - memory_update: when a remembered fact changed; pass the note id and the new text.\n\
+- note_add: quick notes and journal entries the user dictates (\"note: …\", \"ghi lại …\"); they are \
+found later with the knowledge tools (folder notes/). Memory is for lasting facts, notes for a log.\n\
+- knowledge_add: save a document, a page or an attached file to the knowledge base when the owner \
+asks (\"lưu tài liệu này\").\n\
 - task_add: to-dos and reminders the user asks for (\"remind me…\", \"add … to my list\"). Times are \
 local (`YYYY-MM-DD HH:MM`, the bot's time zone, from the current time in your instructions). A \
 reminder is sent by the bot at that time, even if nobody writes. Confirm the stored time in your answer.\n\
@@ -102,6 +106,7 @@ fn tools() -> Vec<Tool> {
         ),
     ];
     tools.extend(crate::task_tools::tools());
+    tools.extend(crate::inbox::tools());
     tools
 }
 
@@ -116,6 +121,75 @@ pub(crate) fn scope(value: &str) -> Option<MemoryScope> {
         "global" => Some(MemoryScope::Global),
         _ => None,
     }
+}
+
+/// A downloaded attachment.
+pub(crate) struct Fetched {
+    /// The content.
+    pub(crate) bytes: Vec<u8>,
+    /// Media type from the response (`image/png`), without parameters.
+    pub(crate) mime: String,
+}
+
+/// Downloads `url` over HTTPS (redirects only to HTTPS, so internal hosts stay out of reach), up
+/// to `max` bytes. `allow_http` is for tests against a local server.
+pub(crate) async fn fetch(url: &str, allow_http: bool, max: usize) -> Result<Fetched, String> {
+    if !(url.starts_with("https://") || allow_http && url.starts_with("http://")) {
+        return Err("attachment URL is not HTTPS".into());
+    }
+    let policy = reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= 5 {
+            attempt.error("too many redirects")
+        } else if attempt.url().scheme() == "https" || allow_http {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    let _ = rustls::crypto::ring::default_provider().install_default(); // see okbot-cli main
+    let client = reqwest::Client::builder()
+        .redirect(policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("cannot download the file: {}", e.without_url()))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "cannot download the file: HTTP {}",
+            response.status()
+        ));
+    }
+    let mime = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if response
+        .content_length()
+        .is_some_and(|n| usize::try_from(n).map_or(true, |n| n > max))
+    {
+        return Err("the file is too large".into());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("cannot download the file: {}", e.without_url()))?;
+    if bytes.len() > max {
+        return Err("the file is too large".into());
+    }
+    Ok(Fetched {
+        bytes: bytes.to_vec(),
+        mime,
+    })
 }
 
 /// Fetches attachment `index` (1-based) of the run: only URLs the platform delivered, over
@@ -133,59 +207,18 @@ async fn fetch_image(
     let okbot_core::Attachment::Image { url, .. } = attachment else {
         return Err(format!("attachment {index} is not an image"));
     };
-    if !(url.starts_with("https://") || allow_http && url.starts_with("http://")) {
-        return Err("attachment URL is not HTTPS".into());
-    }
-    // Follow redirects only to HTTPS (never to plain HTTP, which could reach internal hosts).
-    let policy = reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() >= 5 {
-            attempt.error("too many redirects")
-        } else if attempt.url().scheme() == "https" || allow_http {
-            attempt.follow()
-        } else {
-            attempt.stop()
-        }
-    });
-    let _ = rustls::crypto::ring::default_provider().install_default(); // see okbot-cli main
-    let client = reqwest::Client::builder()
-        .redirect(policy)
-        .build()
-        .map_err(|e| e.to_string())?;
-    let response = client
-        .get(url)
-        .timeout(std::time::Duration::from_secs(20))
-        .send()
+    let fetched = fetch(url, allow_http, MAX_ATTACHMENT_BYTES)
         .await
-        .map_err(|e| format!("cannot download the image: {}", e.without_url()))?;
-    let mime = response
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if !mime.starts_with("image/") {
-        return Err(format!("attachment {index} is not an image ({mime})"));
-    }
-    if response
-        .content_length()
-        .is_some_and(|n| usize::try_from(n).map_or(true, |n| n > MAX_ATTACHMENT_BYTES))
-    {
-        return Err("the image is too large".into());
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("cannot download the image: {}", e.without_url()))?;
-    if bytes.len() > MAX_ATTACHMENT_BYTES {
-        return Err("the image is too large".into());
+        .map_err(|e| e.replace("the file", "the image"))?;
+    if !fetched.mime.starts_with("image/") {
+        return Err(format!(
+            "attachment {index} is not an image ({})",
+            fetched.mime
+        ));
     }
     Ok((
-        base64::engine::general_purpose::STANDARD.encode(&bytes),
-        mime,
+        base64::engine::general_purpose::STANDARD.encode(&fetched.bytes),
+        fetched.mime,
     ))
 }
 
@@ -257,8 +290,22 @@ impl BotServer {
                     .map_err(|e| e.to_string())?;
                 Ok(format!("Updated {}.", entry.id))
             }
+            "note_add" => {
+                let scope = match str_arg(args, "scope") {
+                    None => MemoryScope::User,
+                    Some(v) => scope(v)
+                        .filter(|s| *s != MemoryScope::Global)
+                        .ok_or("scope must be user or room")?,
+                };
+                let text = str_arg(args, "text").unwrap_or_default();
+                let id = MemoryStore::note(k.as_ref(), who, scope, text)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(format!("Noted in {id}."))
+            }
+            "knowledge_add" => crate::inbox::knowledge_add(k, &context, args).await,
             "task_add" | "task_list" | "task_update" | "task_done" | "task_delete" => {
-                crate::task_tools::call(k, who, name, args).await
+                crate::task_tools::call(k, who, context.admin, name, args).await
             }
             other => Err(format!("unknown tool {other}")),
         }

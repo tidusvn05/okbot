@@ -11,7 +11,10 @@
 //! Visibility (design §5.3): everyone sees `persona/`, `system/`, `knowledge/`, `data/` and
 //! `memory/global/`; a user additionally sees their own profile and notes, a room its own notes.
 
+mod areas;
 mod bot_mcp;
+mod inbox;
+mod journal;
 mod mcp;
 mod memory;
 mod paths;
@@ -33,6 +36,7 @@ use okbot_core::{
     TaskChange, TaskError, TaskStore, ToolPolicy, async_trait,
 };
 
+pub use inbox::{NewDocument, readable_extension};
 pub use template::{default_bundle_files, write_default_bundle};
 
 /// Name of the environment variable that carries the run token to the agent.
@@ -84,6 +88,7 @@ pub struct Knowledge {
     catalog: Mutex<Option<String>>,
     notes: memory::Notes,
     tasks: tasks::Tasks,
+    journal: journal::Journal,
     /// Serializes memory writes (one bot process owns its bundle).
     writes: tokio::sync::Mutex<()>,
 }
@@ -130,7 +135,8 @@ impl Knowledge {
         Ok(Self {
             bundle,
             notes: memory::Notes::new(&options.root),
-            tasks: tasks::Tasks::new(&options.root, tz),
+            tasks: tasks::Tasks::new(&options.root, tz.clone()),
+            journal: journal::Journal::new(&options.root, tz),
             options,
             tokens: Arc::new(tokens::RunTokens::default()),
             mcp_addr: Mutex::new(None),
@@ -332,6 +338,22 @@ impl Knowledge {
         Ok(entry)
     }
 
+    /// Saves a document into `knowledge/inbox/` and makes it searchable at once (`knowledge_add`,
+    /// `okbot kb add`). Returns its id.
+    pub async fn add_document(&self, doc: NewDocument) -> Result<String, KnowledgeError> {
+        let _guard = self.writes.lock().await;
+        let root = self.options.root.clone();
+        let tz = self.tasks.tz().clone();
+        let id = tokio::task::spawn_blocking(move || {
+            inbox::save(&root, &tz, &doc, jiff::Timestamp::now())
+        })
+        .await
+        .map_err(other_error)?
+        .map_err(|e| KnowledgeError::Other(e.into()))?;
+        self.after_write(format!("knowledge: add {id}")).await;
+        Ok(id)
+    }
+
     /// Every note in the bundle (for operators).
     pub async fn all_notes(&self) -> Vec<MemoryEntry> {
         let notes = self.notes.clone();
@@ -450,6 +472,7 @@ impl KnowledgeProvider for Knowledge {
                 "web"
             },
             attachments: run.attachments.to_vec(),
+            admin: run.admin,
         };
         let (token, guard) = self.tokens.issue(scope::for_requester(who), context, ttl);
         Ok(RunGrant::new(
@@ -524,6 +547,25 @@ impl MemoryStore for Knowledge {
         tokio::task::spawn_blocking(move || notes.list(&requester))
             .await
             .map_err(|e| MemoryError::Backend(Box::new(e)))
+    }
+
+    async fn note(
+        &self,
+        who: &Requester,
+        scope: MemoryScope,
+        text: &str,
+    ) -> Result<String, MemoryError> {
+        let _guard = self.writes.lock().await;
+        let journal = self.journal.clone();
+        let requester = who.clone();
+        let text = text.to_string();
+        let id = tokio::task::spawn_blocking(move || {
+            journal.add(&requester, scope, &text, jiff::Timestamp::now())
+        })
+        .await
+        .map_err(|e| MemoryError::Backend(Box::new(e)))??;
+        self.after_write(format!("notes: add to {id}")).await;
+        Ok(id)
     }
 
     async fn forget(&self, who: &Requester, id: &str) -> Result<MemoryEntry, MemoryError> {

@@ -130,6 +130,7 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     rc.personal = config.bot.profile == okbot_config::BotProfile::Personal;
     rc.schedule.enabled = config.schedule.enabled;
     rc.schedule.late_grace = Duration::from_secs(config.schedule.late_grace_minutes * 60);
+    rc.schedule.max_agent_runs_per_day = config.schedule.max_agent_runs_per_day;
     rc.schedule.deliver_to = config
         .schedule
         .deliver_to

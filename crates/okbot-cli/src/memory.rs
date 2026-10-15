@@ -22,6 +22,14 @@ pub(crate) enum MemoryCommand {
         #[arg(long, short = 'n', default_value_t = 20)]
         count: u32,
     },
+    /// Open a note, task or journal file in $VISUAL or $EDITOR (okbot re-reads it by itself).
+    Edit {
+        /// Id, as `okbot memory list` or `okbot task list` shows it.
+        id: String,
+        /// Bot name; default: the bot in the current directory.
+        #[arg(long)]
+        bot: Option<String>,
+    },
     /// Remove a note by id (operators may remove any note).
     Forget {
         /// Note id, as `okbot memory list` shows it.
@@ -86,6 +94,28 @@ pub(crate) async fn run(command: MemoryCommand) -> anyhow::Result<()> {
                 .status()?;
             anyhow::ensure!(status.success(), "git log failed");
             println!("undo a change: git -C {} revert <hash>", kb.display());
+        }
+        MemoryCommand::Edit { id, bot } => {
+            let dir = crate::registry::resolve(bot.as_deref())?;
+            let config = Config::load(&dir)?;
+            let id = id.trim().trim_start_matches('/').trim_end_matches(".md");
+            let writable = ["memory/", "tasks/", "notes/", "knowledge/"]
+                .iter()
+                .any(|area| id.starts_with(area));
+            anyhow::ensure!(
+                writable && !id.split('/').any(|s| s.is_empty() || s == ".."),
+                "`{id}` is not a memory, task, note or knowledge id"
+            );
+            let path = config.kb_dir().join(format!("{id}.md"));
+            anyhow::ensure!(path.is_file(), "no file {}", path.display());
+            let editor = std::env::var("VISUAL")
+                .or_else(|_| std::env::var("EDITOR"))
+                .unwrap_or_else(|_| "vi".into());
+            let status = std::process::Command::new(&editor)
+                .arg(&path)
+                .status()
+                .with_context(|| format!("cannot start the editor `{editor}`"))?;
+            anyhow::ensure!(status.success(), "the editor exited with {status}");
         }
         MemoryCommand::Forget { id, bot } => {
             let (_, k) = open(bot.as_deref()).await?;
