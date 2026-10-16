@@ -12,9 +12,9 @@ protocol) to Claude Code, Codex, OpenCode or Devin. Every bot has its own markdo
 memory. The agent behind it can search the web and read that knowledge, but never run a shell or
 touch your files.
 
-> **Status: alpha, unreleased.** Every feature below is implemented and tested against fake platform
-> APIs and real agent CLIs; real-platform testing and the first release (v0.5.0) are in progress. Expect
-> breaking changes until v1.0.
+> **Status: alpha (v0.5.0).** Every feature below is tested against fake platform APIs and real agent
+> CLIs, and runs daily on real Zalo and Discord bots; Telegram, Google Chat and Slack have not been
+> tried on real accounts yet. Expect breaking changes until v1.0.
 
 ## Features
 
