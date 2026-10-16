@@ -1,6 +1,6 @@
 [package]
 name = "okbot-agent"
-description = "Agent backends for okbot: agent CLIs through agent-core, fallback chains and CLI detection."
+description = "Agent backends for okbot: agent CLIs through agent-call, fallback chains and CLI detection."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
