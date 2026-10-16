@@ -62,7 +62,7 @@ differs from every existing dialect, add a `MarkdownDialect` variant in `okbot-c
 
 - Optional real-platform tests marked `#[ignore]`, reading tokens from the environment.
 
-## 5. Register in `okbot-cli`
+## 5. Register in `okbot`
 
 1. `crates/okbot-cli/Cargo.toml`: an optional dependency and a feature `<name>`, added to `default`.
 2. `okbot-config`: a `[channels.<name>.<instance>]` section (`schema.rs`), secret variable names in

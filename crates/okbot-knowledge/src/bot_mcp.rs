@@ -146,7 +146,7 @@ pub(crate) async fn fetch(url: &str, allow_http: bool, max: usize) -> Result<Fet
             attempt.stop()
         }
     });
-    let _ = rustls::crypto::ring::default_provider().install_default(); // see okbot-cli main
+    let _ = rustls::crypto::ring::default_provider().install_default(); // see crates/okbot-cli/src/main.rs
     let client = reqwest::Client::builder()
         .redirect(policy)
         .build()

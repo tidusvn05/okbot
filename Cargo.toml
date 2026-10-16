@@ -89,7 +89,7 @@ tokio-websockets = { version = "0.13", default-features = false, features = ["cl
 sha2 = "0.11"
 hex = "0.4"
 base64 = "0.23"
-# TLS: rustls with ring only (installed as the process default, see okbot-cli main).
+# TLS: rustls with ring only (installed as the process default, see crates/okbot-cli/src/main.rs).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # Already linked through rustls; used directly for Google service-account and ID-token JWTs.
 ring = "0.17"

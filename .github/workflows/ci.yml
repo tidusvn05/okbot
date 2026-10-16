@@ -51,11 +51,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p okbot-cli --no-default-features
+      - run: cargo check -p okbot --no-default-features
       - run: |
           for f in $(cargo metadata --no-deps --format-version 1 \
-              | python3 -c 'import json,sys; m=json.load(sys.stdin); print(" ".join(k for p in m["packages"] if p["name"]=="okbot-cli" for k in p["features"] if k!="default"))'); do
-            echo "::group::feature $f"; cargo check -p okbot-cli --no-default-features --features "$f"; echo "::endgroup::"
+              | python3 -c 'import json,sys; m=json.load(sys.stdin); print(" ".join(k for p in m["packages"] if p["name"]=="okbot" for k in p["features"] if k!="default"))'); do
+            echo "::group::feature $f"; cargo check -p okbot --no-default-features --features "$f"; echo "::endgroup::"
           done
 
   docs:
@@ -101,7 +101,7 @@ jobs:
         if: runner.os == 'Linux'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p okbot-cli
+      - run: cargo build --release --locked -p okbot
       - name: Install from a local release
         shell: bash
         run: |

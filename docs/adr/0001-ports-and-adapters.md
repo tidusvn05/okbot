@@ -12,11 +12,11 @@ core change and every core change a risk for every platform.
 - The application (`okbot-runtime`) depends only on ports.
 - Adapters (channels, agent backends, store, knowledge, render) implement ports and never depend on
   each other.
-- `okbot-cli` is the only composition root.
+- `okbot` is the only composition root.
 - `scripts/check-deps.py` enforces the allowed edges in CI.
 
 ## Consequences
-- A new platform is one crate plus registration in `okbot-cli`.
+- A new platform is one crate plus registration in `okbot`.
 - `okbot-core` becomes the public SDK and must be kept small and documented (`missing_docs = deny`).
 - Some conversions happen at crate edges (for example agent-call errors → `AgentError`), which is
   intentional: external types never leak into the core.

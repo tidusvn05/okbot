@@ -2327,6 +2327,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "okbot"
+version = "0.1.0-dev"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "clap",
+ "hex",
+ "inquire",
+ "jiff",
+ "okbase",
+ "okbot-agent",
+ "okbot-channel-bridge",
+ "okbot-channel-console",
+ "okbot-channel-discord",
+ "okbot-channel-gchat",
+ "okbot-channel-slack",
+ "okbot-channel-telegram",
+ "okbot-channel-zalo",
+ "okbot-config",
+ "okbot-core",
+ "okbot-knowledge",
+ "okbot-render",
+ "okbot-runtime",
+ "okbot-store",
+ "okbot-testkit",
+ "rand",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "okbot-agent"
 version = "0.1.0-dev"
 dependencies = [
@@ -2464,44 +2502,6 @@ dependencies = [
  "tokio",
  "tracing",
  "zalo-bot",
-]
-
-[[package]]
-name = "okbot-cli"
-version = "0.1.0-dev"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "clap",
- "hex",
- "inquire",
- "jiff",
- "okbase",
- "okbot-agent",
- "okbot-channel-bridge",
- "okbot-channel-console",
- "okbot-channel-discord",
- "okbot-channel-gchat",
- "okbot-channel-slack",
- "okbot-channel-telegram",
- "okbot-channel-zalo",
- "okbot-config",
- "okbot-core",
- "okbot-knowledge",
- "okbot-render",
- "okbot-runtime",
- "okbot-store",
- "okbot-testkit",
- "rand",
- "reqwest",
- "rustls",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

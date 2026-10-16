@@ -11,7 +11,7 @@ step test;         cargo test --workspace --all-features --quiet
 step docs;         RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --quiet
 step features
 for f in "" zalo gchat discord slack telegram bridge; do
-  RUSTFLAGS="-D warnings" cargo check --quiet -p okbot-cli --no-default-features ${f:+--features "$f"}
+  RUSTFLAGS="-D warnings" cargo check --quiet -p okbot --no-default-features ${f:+--features "$f"}
 done
 step architecture; python3 scripts/check-deps.py
 step deny;         cargo deny check
