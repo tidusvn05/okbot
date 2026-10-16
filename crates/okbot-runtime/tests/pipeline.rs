@@ -671,6 +671,7 @@ async fn configured_mcp_servers_reach_the_agent() {
         },
         token: okbot_core::Secret::new(format!("{name}-secret")),
         admins_only,
+        signed: false,
     };
     let caps = okbot_core::AgentCaps {
         mcp: true,

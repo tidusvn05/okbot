@@ -18,7 +18,7 @@ use okbot_core::Secret;
 pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
-    DiscordSection, GChatDelivery, GChatSection, HttpSection, McpSection, PersonSection,
+    DiscordSection, GChatDelivery, GChatSection, HttpSection, McpAuth, McpSection, PersonSection,
     ProviderSection, ReplyOn, RoomSection, ScheduleSection, SlackSection, TelegramSection,
     ZaloSection,
 };

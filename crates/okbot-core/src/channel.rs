@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::caps::ChannelCaps;
 use crate::id::ChannelId;
 use crate::message::{InboundEvent, RenderedMessage, ReplyTarget, SentRef};
+use crate::prompt::{Prompt, PromptAnswer};
 use crate::webhook::WebhookHandler;
 use crate::{BoxError, CancellationToken, async_trait};
 
@@ -50,6 +51,11 @@ pub struct SinkClosed;
 pub trait InboundSink: Send + Sync {
     /// Hands one event to the runtime. Returns quickly; processing happens elsewhere.
     async fn deliver(&self, event: InboundEvent) -> Result<(), SinkClosed>;
+
+    /// Hands over the answer to a [`Prompt`]. Returns quickly. Sinks without prompts ignore it.
+    async fn answer(&self, _answer: PromptAnswer) -> Result<(), SinkClosed> {
+        Ok(())
+    }
 }
 
 /// A chat platform adapter (design §3.2).
@@ -90,6 +96,23 @@ pub trait Channel: Send + Sync {
     /// Shows a typing indicator once. The runtime repeats it while an agent works.
     async fn typing(&self, _to: &ReplyTarget) -> Result<(), ChannelError> {
         Ok(())
+    }
+
+    /// Shows a prompt (a message with buttons) in a conversation. Answers come back through
+    /// [`InboundSink::answer`]. Platforms without buttons return [`ChannelError::Unsupported`].
+    async fn prompt(&self, _to: &ReplyTarget, _prompt: &Prompt) -> Result<SentRef, ChannelError> {
+        Err(ChannelError::Unsupported("prompt"))
+    }
+
+    /// Replaces a prompt's text and removes its buttons (answered, cancelled or expired). With
+    /// `keep_buttons`, only the text changes and the prompt can be answered again.
+    async fn close_prompt(
+        &self,
+        _sent: &SentRef,
+        _message: &RenderedMessage,
+        _keep_buttons: bool,
+    ) -> Result<(), ChannelError> {
+        Err(ChannelError::Unsupported("prompt"))
     }
 
     /// The webhook endpoint, for platforms that push events over HTTP.

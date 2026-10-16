@@ -101,6 +101,26 @@ pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
                 }
             }),
         );
+    if shared.config.mcp.iter().any(|m| m.signed) {
+        let state = shared.clone();
+        router = router.route(
+            "/interact",
+            axum::routing::post(
+                move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                    let state = state.clone();
+                    async move {
+                        let bearer = headers
+                            .get(header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.strip_prefix("Bearer "))
+                            .map(str::trim);
+                        let (status, body) = crate::interact::create(&state, bearer, &body).await;
+                        (status, axum::Json(body)).into_response()
+                    }
+                },
+            ),
+        );
+    }
     for channel in shared.channels.values() {
         if let Some(handler) = channel.webhook() {
             let path = format!("/{}", handler.path().trim_start_matches('/'));
@@ -134,6 +154,12 @@ pub(crate) async fn serve(
         .map_err(|e| (options.listen, e))?;
     let addr = listener.local_addr().unwrap_or(options.listen);
     tracing::info!(%addr, "HTTP server listening");
+    let local = if addr.ip().is_unspecified() {
+        SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), addr.port())
+    } else {
+        addr
+    };
+    let _ = shared.interact_url.set(format!("http://{local}/interact"));
     let app = router(&shared, options.max_body);
     Ok(async move {
         if let Err(error) = axum::serve(listener, app)
@@ -228,6 +254,8 @@ mod tests {
             channels: HashMap::from([(channel.id().clone(), channel)]),
             in_flight: Arc::new(InFlight::default()),
             metrics: crate::metrics::Metrics::default(),
+            prompts: crate::interact::Prompts::default(),
+            interact_url: std::sync::OnceLock::new(),
         })
     }
 

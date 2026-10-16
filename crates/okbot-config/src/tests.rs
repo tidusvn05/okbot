@@ -76,7 +76,16 @@ fn mcp_servers_load_and_their_tokens_are_secrets() {
     assert_eq!(config.mcp.len(), 1);
     assert_eq!(config.mcp[0].name, "ops");
     assert!(config.mcp[0].admins_only);
+    assert_eq!(config.mcp[0].auth, McpAuth::Bearer);
     assert!(config.secret_names().contains(&"OPS_MCP_TOKEN".to_string()));
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://127.0.0.1:8790/mcp\"\ntoken_env = \"T\"\nauth = \"signed\"\n",
+    );
+    assert_eq!(
+        Config::load(dir.path()).unwrap().mcp[0].auth,
+        McpAuth::Signed
+    );
 }
 
 #[test]

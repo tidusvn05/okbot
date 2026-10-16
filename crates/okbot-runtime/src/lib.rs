@@ -13,6 +13,8 @@ pub mod config;
 mod context;
 mod dispatch;
 mod http;
+pub mod identity;
+mod interact;
 mod live;
 mod metrics;
 mod policy;
@@ -110,6 +112,10 @@ pub(crate) struct Shared {
     pub(crate) gate: policy::Gate,
     pub(crate) in_flight: Arc<InFlight>,
     pub(crate) metrics: metrics::Metrics,
+    /// Prompts shown for `[[mcp]]` servers, waiting for answers.
+    pub(crate) prompts: interact::Prompts,
+    /// `http://<listen>/interact` once the HTTP server is up (for signed run tokens).
+    pub(crate) interact_url: std::sync::OnceLock<String>,
 }
 
 impl Shared {
@@ -246,10 +252,16 @@ impl RuntimeBuilder {
             channels,
             in_flight: in_flight.clone(),
             metrics: metrics::Metrics::default(),
+            prompts: interact::Prompts::default(),
+            interact_url: std::sync::OnceLock::new(),
         });
         Ok(Runtime {
-            shared,
-            sink: Arc::new(EventSink { tx, in_flight }),
+            shared: shared.clone(),
+            sink: Arc::new(EventSink {
+                tx,
+                in_flight,
+                shared: shared.clone(),
+            }),
             rx,
             http: self.http,
         })
@@ -260,6 +272,7 @@ impl RuntimeBuilder {
 struct EventSink {
     tx: mpsc::Sender<Tracked>,
     in_flight: Arc<InFlight>,
+    shared: Arc<Shared>,
 }
 
 #[async_trait]
@@ -267,6 +280,14 @@ impl InboundSink for EventSink {
     async fn deliver(&self, event: InboundEvent) -> Result<(), SinkClosed> {
         let guard = self.in_flight.enter();
         self.tx.send((event, guard)).await.map_err(|_| SinkClosed)
+    }
+
+    async fn answer(&self, answer: okbot_core::PromptAnswer) -> Result<(), SinkClosed> {
+        if self.tx.is_closed() {
+            return Err(SinkClosed);
+        }
+        tokio::spawn(interact::answer(self.shared.clone(), answer));
+        Ok(())
     }
 }
 
@@ -355,6 +376,7 @@ impl Runtime {
                 .await
                 .map_err(|(addr, source)| RunError::Http { addr, source })?;
             tasks.spawn(server);
+            tasks.spawn(interact::sweep(shared.clone(), channel_stop.clone()));
         }
         if shared.tasks.is_some() && shared.config.schedule.enabled {
             let sink: Arc<dyn InboundSink> = sink.clone();

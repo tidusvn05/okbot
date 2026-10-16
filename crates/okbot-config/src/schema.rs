@@ -39,6 +39,21 @@ pub struct McpSection {
     /// Offer the server only in turns of `[bot] admins`.
     #[serde(default)]
     pub admins_only: bool,
+    /// What the agent presents: the secret itself, or a token signed with it that names the
+    /// requester (and lets the server show prompts).
+    #[serde(default)]
+    pub auth: McpAuth,
+}
+
+/// How the agent authenticates to an `[[mcp]]` server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpAuth {
+    /// `Authorization: Bearer <secret>`.
+    #[default]
+    Bearer,
+    /// `Authorization: Bearer okbot1.<claims>.<signature>`: who asked, where, until when.
+    Signed,
 }
 
 /// `[schedule]`: reminders and routines (design §5.6).

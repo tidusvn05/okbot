@@ -200,6 +200,8 @@ pub struct FakeChannel {
     sink: Mutex<Option<std::sync::Arc<dyn okbot_core::InboundSink>>>,
     sent: Mutex<Vec<(okbot_core::ReplyTarget, String)>>,
     edits: Mutex<Vec<(String, String)>>,
+    prompts: Mutex<Vec<okbot_core::Prompt>>,
+    prompt_updates: Mutex<Vec<(String, String, bool)>>,
     typing: AtomicUsize,
     ready: tokio::sync::Notify,
 }
@@ -221,6 +223,8 @@ impl FakeChannel {
             sink: Mutex::new(None),
             sent: Mutex::new(Vec::new()),
             edits: Mutex::new(Vec::new()),
+            prompts: Mutex::new(Vec::new()),
+            prompt_updates: Mutex::new(Vec::new()),
             typing: AtomicUsize::new(0),
             ready: tokio::sync::Notify::new(),
         }
@@ -267,6 +271,33 @@ impl FakeChannel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Prompts shown so far, oldest first.
+    pub fn prompts(&self) -> Vec<okbot_core::Prompt> {
+        self.prompts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Prompt updates so far: `(message id, text, buttons kept)`.
+    pub fn prompt_updates(&self) -> Vec<(String, String, bool)> {
+        self.prompt_updates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Delivers an answer to a prompt, as a click would.
+    pub async fn answer(&self, answer: okbot_core::PromptAnswer) {
+        let sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("the runtime started this channel");
+        sink.answer(answer).await.expect("runtime accepts answers");
     }
 
     /// Typing indicators shown so far.
@@ -317,6 +348,39 @@ impl okbot_core::Channel for FakeChannel {
 
     async fn typing(&self, _to: &okbot_core::ReplyTarget) -> Result<(), okbot_core::ChannelError> {
         self.typing.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn prompt(
+        &self,
+        to: &okbot_core::ReplyTarget,
+        prompt: &okbot_core::Prompt,
+    ) -> Result<okbot_core::SentRef, okbot_core::ChannelError> {
+        let mut prompts = self
+            .prompts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        prompts.push(prompt.clone());
+        Ok(okbot_core::SentRef {
+            target: to.clone(),
+            message_id: okbot_core::MessageId::new(format!("prompt-{}", prompts.len())),
+        })
+    }
+
+    async fn close_prompt(
+        &self,
+        sent: &okbot_core::SentRef,
+        message: &okbot_core::RenderedMessage,
+        keep_buttons: bool,
+    ) -> Result<(), okbot_core::ChannelError> {
+        self.prompt_updates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((
+                sent.message_id.to_string(),
+                message.text.clone(),
+                keep_buttons,
+            ));
         Ok(())
     }
 

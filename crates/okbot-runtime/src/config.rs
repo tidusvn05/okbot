@@ -172,6 +172,9 @@ pub struct ExtraMcp {
     pub token: Secret<String>,
     /// Offered only to `[bot] admins`.
     pub admins_only: bool,
+    /// Give the agent a signed run token (who asked, where) instead of the secret itself; the
+    /// server verifies it with the secret and may show prompts through `POST /interact`.
+    pub signed: bool,
 }
 
 /// When and where reminders are sent (design §5.6).

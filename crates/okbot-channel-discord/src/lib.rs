@@ -6,8 +6,8 @@
 //! [`DiscordConfig::message_content`] asks for it. Replies never ping anyone: allowed mentions are
 //! always empty, whatever the agent writes.
 
-use std::collections::HashSet;
-use std::sync::{Arc, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use okbot_core::{
     CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, ConversationKey,
@@ -16,10 +16,11 @@ use okbot_core::{
 };
 use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_http::Client;
+use twilight_model::application::interaction::{Interaction, InteractionData};
 use twilight_model::channel::Message;
 use twilight_model::channel::message::AllowedMentions;
 use twilight_model::id::Id;
-use twilight_model::id::marker::{RoleMarker, UserMarker};
+use twilight_model::id::marker::{ApplicationMarker, RoleMarker, UserMarker};
 
 /// Settings of one Discord bot.
 #[derive(Debug, Clone)]
@@ -54,6 +55,9 @@ pub struct DiscordChannel {
     http: Arc<Client>,
     caps: ChannelCaps,
     me: OnceLock<Id<UserMarker>>,
+    app: OnceLock<Id<ApplicationMarker>>,
+    /// Prompts shown and not closed, by id (lost on restart: their buttons then say so).
+    prompts: Mutex<HashMap<String, okbot_core::Prompt>>,
 }
 
 impl std::fmt::Debug for DiscordChannel {
@@ -201,7 +205,120 @@ impl DiscordChannel {
                 typing: true,
             },
             me: OnceLock::new(),
+            app: OnceLock::new(),
+            prompts: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn open_prompt(&self, id: &str) -> Option<okbot_core::Prompt> {
+        self.prompts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .cloned()
+    }
+
+    async fn respond(
+        &self,
+        interaction: &Interaction,
+        response: &twilight_model::http::interaction::InteractionResponse,
+    ) {
+        let Some(app) = self.app.get() else { return };
+        if let Err(error) = self
+            .http
+            .interaction(*app)
+            .create_response(interaction.id, &interaction.token, response)
+            .await
+        {
+            tracing::warn!(channel = %self.id, %error, "cannot answer a Discord interaction");
+        }
+    }
+
+    /// A button press or a submitted modal on one of our prompts. `Err` when the runtime stopped.
+    async fn interaction(
+        &self,
+        sink: &Arc<dyn InboundSink>,
+        interaction: &Interaction,
+    ) -> Result<(), okbot_core::SinkClosed> {
+        let user = interaction
+            .member
+            .as_ref()
+            .and_then(|m| m.user.as_ref())
+            .or(interaction.user.as_ref());
+        let (Some(user), Some(channel_id), Some(message)) = (
+            user,
+            interaction.channel.as_ref().map(|c| c.id),
+            &interaction.message,
+        ) else {
+            return Ok(());
+        };
+        let (ids, values) = match &interaction.data {
+            Some(InteractionData::MessageComponent(d)) => {
+                (prompt::parse_id(&d.custom_id, false), None)
+            }
+            Some(InteractionData::ModalSubmit(d)) => (
+                prompt::parse_id(&d.custom_id, true),
+                Some(prompt::values(d)),
+            ),
+            _ => return Ok(()),
+        };
+        let Some((prompt_id, button_id)) = ids else {
+            return Ok(());
+        };
+        let Some(open) = self.open_prompt(prompt_id) else {
+            self.respond(
+                interaction,
+                &prompt::private_note("⌛ This prompt has expired."),
+            )
+            .await;
+            return Ok(());
+        };
+        let author = UserRef {
+            id: UserId::new(user.id.to_string()),
+            display_name: user
+                .global_name
+                .clone()
+                .unwrap_or_else(|| user.name.clone()),
+            is_bot: user.bot,
+        };
+        if !open.may_answer(&author.id) {
+            self.respond(
+                interaction,
+                &prompt::private_note("⛔ This is not yours to answer."),
+            )
+            .await;
+            return Ok(());
+        }
+        let Some(button) = open.button(button_id) else {
+            return Ok(());
+        };
+        if let (None, Some(form)) = (&values, &button.form) {
+            self.respond(interaction, &prompt::modal(prompt_id, button_id, form))
+                .await;
+            return Ok(());
+        }
+        self.respond(interaction, &prompt::deferred()).await;
+        let conversation = ConversationKey {
+            channel: self.id.clone(),
+            space: interaction.guild_id.map(|g| g.to_string()),
+            room: channel_id.to_string(),
+            thread: None,
+        };
+        sink.answer(okbot_core::PromptAnswer {
+            prompt: prompt_id.to_string(),
+            button: button_id.to_string(),
+            values: values.unwrap_or_default(),
+            user: author,
+            conversation: conversation.clone(),
+            sent: SentRef {
+                target: ReplyTarget {
+                    conversation,
+                    in_reply_to: None,
+                },
+                message_id: MessageId::new(message.id.to_string()),
+            },
+        })
+        .await
     }
 
     /// The bot's application id (its OAuth2 client id), for [`install_url`].
@@ -248,13 +365,15 @@ impl Channel for DiscordChannel {
     ) -> Result<(), ChannelError> {
         let (me, name) = self.current_user().await?;
         let _ = self.me.set(me);
+        let _ = self.app.set(Id::new(self.application_id().await?));
         tracing::info!(channel = %self.id, bot = %name, "connecting to the Discord gateway");
         let mut shard = Shard::new(ShardId::ONE, self.token.expose().clone(), self.intents);
         let mut roles = HashSet::new();
         let events = EventTypeFlags::MESSAGE_CREATE
             | EventTypeFlags::READY
             | EventTypeFlags::GUILD_CREATE
-            | EventTypeFlags::ROLE_CREATE;
+            | EventTypeFlags::ROLE_CREATE
+            | EventTypeFlags::INTERACTION_CREATE;
         loop {
             let item = tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
@@ -274,6 +393,11 @@ impl Channel for DiscordChannel {
                         guild.as_ref()
                     {
                         roles.extend(own_roles(&g.roles, me));
+                    }
+                }
+                Ok(Event::InteractionCreate(interaction)) => {
+                    if self.interaction(&sink, &interaction.0).await.is_err() {
+                        return Ok(());
                     }
                 }
                 Ok(Event::RoleCreate(role)) => roles.extend(own_roles([&role.role], me)),
@@ -326,6 +450,54 @@ impl Channel for DiscordChannel {
             .map_err(failed)
     }
 
+    async fn prompt(
+        &self,
+        to: &ReplyTarget,
+        prompt: &okbot_core::Prompt,
+    ) -> Result<SentRef, ChannelError> {
+        let channel = parse_id(&to.conversation.room)?;
+        let none = AllowedMentions::default();
+        let components = prompt::components(prompt);
+        let sent = self
+            .http
+            .create_message(channel)
+            .content(&prompt.text)
+            .components(&components)
+            .allowed_mentions(Some(&none))
+            .await
+            .map_err(failed)?
+            .model()
+            .await
+            .map_err(failed)?;
+        self.prompts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(prompt.id.clone(), prompt.clone());
+        Ok(SentRef {
+            target: to.clone(),
+            message_id: MessageId::new(sent.id.to_string()),
+        })
+    }
+
+    async fn close_prompt(
+        &self,
+        sent: &SentRef,
+        message: &RenderedMessage,
+        keep_buttons: bool,
+    ) -> Result<(), ChannelError> {
+        let channel = parse_id(&sent.target.conversation.room)?;
+        let none = AllowedMentions::default();
+        let mut request = self
+            .http
+            .update_message(channel, parse_id(sent.message_id.as_str())?)
+            .content(Some(&message.text))
+            .allowed_mentions(Some(&none));
+        if !keep_buttons {
+            request = request.components(Some(&[]));
+        }
+        request.await.map(drop).map_err(failed)
+    }
+
     async fn typing(&self, to: &ReplyTarget) -> Result<(), ChannelError> {
         let channel = parse_id(&to.conversation.room)?;
         self.http
@@ -335,6 +507,8 @@ impl Channel for DiscordChannel {
             .map_err(failed)
     }
 }
+
+mod prompt;
 
 #[cfg(test)]
 mod tests;

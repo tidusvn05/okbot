@@ -109,9 +109,11 @@ impl Drop for Typing {
 }
 
 /// The knowledge servers plus `[[mcp]]` servers this requester may use (agents with MCP only).
+/// Signed servers get a token naming the requester instead of their secret.
 fn with_extra_mcp(
     shared: &Shared,
     grant: &RunGrant,
+    event: &InboundEvent,
     admin: bool,
 ) -> (
     Vec<okbot_core::McpServer>,
@@ -121,7 +123,29 @@ fn with_extra_mcp(
     if shared.agent.caps().mcp {
         for extra in shared.config.mcp.iter().filter(|m| admin || !m.admins_only) {
             mcp.push(extra.server.clone());
-            env.push((extra.server.bearer_token_env.clone(), extra.token.clone()));
+            let token = if extra.signed {
+                let claims = crate::identity::Claims {
+                    bot: shared.config.bot_name.clone(),
+                    mcp: extra.server.name.clone(),
+                    user: format!("{}/{}", event.conversation.channel, event.author.id),
+                    name: event.author.display_name.clone(),
+                    conversation: event.conversation.clone(),
+                    admin,
+                    direct: event.is_direct,
+                    interact: shared.interact_url.get().cloned(),
+                    exp: shared.clock.now().as_second()
+                        + i64::try_from(shared.config.agent_timeout.as_secs()).unwrap_or(3600)
+                        + 60,
+                    jti: hex::encode(rand::random::<[u8; 8]>()),
+                };
+                okbot_core::Secret::new(crate::identity::sign(
+                    extra.token.expose().as_bytes(),
+                    &claims,
+                ))
+            } else {
+                extra.token.clone()
+            };
+            env.push((extra.server.bearer_token_env.clone(), token));
         }
     }
     (mcp, env)
@@ -201,7 +225,7 @@ async fn answer_batch(
         }
         None => (None, None),
     };
-    let (mcp, env) = with_extra_mcp(shared, &grant, admin);
+    let (mcp, env) = with_extra_mcp(shared, &grant, event, admin);
     let turn = AgentTurn {
         system: prompt.system,
         prompt: prompt.prompt,

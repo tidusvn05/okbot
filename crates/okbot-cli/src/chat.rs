@@ -125,6 +125,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
                 },
                 token: bot.secret(&m.token_env)?,
                 admins_only: false,
+                signed: m.auth == okbot_config::McpAuth::Signed,
             });
         }
         for (id, person) in &bot.people {

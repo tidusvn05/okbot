@@ -187,6 +187,7 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             },
             token,
             admins_only: m.admins_only,
+            signed: m.auth == okbot_config::McpAuth::Signed,
         });
     }
     Ok(rc)
@@ -517,6 +518,15 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
             builder = builder.http(HttpOptions::new(addr));
         }
         (None, true) => bail!("webhook delivery needs [http] listen = \"127.0.0.1:<port>\""),
+        // Signed MCP servers show prompts through POST /interact: a loopback port is enough.
+        (None, false)
+            if config
+                .mcp
+                .iter()
+                .any(|m| m.auth == okbot_config::McpAuth::Signed) =>
+        {
+            builder = builder.http(HttpOptions::new(SocketAddr::from(([127, 0, 0, 1], 0))));
+        }
         (None, false) => {}
     }
     for channel in channels {

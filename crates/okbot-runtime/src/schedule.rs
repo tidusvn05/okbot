@@ -452,6 +452,8 @@ mod tests {
             channels,
             in_flight: Arc::new(crate::InFlight::default()),
             metrics: crate::metrics::Metrics::default(),
+            prompts: crate::interact::Prompts::default(),
+            interact_url: std::sync::OnceLock::new(),
         };
         Setup {
             shared,
