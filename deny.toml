@@ -10,6 +10,11 @@ ignore = [
     # which okbase-mcp enables by default. Unmaintained, no known vulnerability; okbase ignores it
     # for the same reason. Drop this when okbase does.
     { id = "RUSTSEC-2026-0192", reason = "unmaintained font parser via okbase import; no known vulnerability" },
+    # zip yanked every 8.x release when 9.0.1 fixed several parsing bugs (no RUSTSEC advisory).
+    # It arrives through okbase-convert → anydoc, which requires `zip ^8.6.0`; okbot reads Word,
+    # PowerPoint and EPUB files only for `knowledge_add` (owner/admins). Drop this when anydoc moves
+    # to zip 9 and okbase follows.
+    { crate = "zip@8.6.0", reason = "yanked; anydoc (via okbase-convert) requires zip ^8.6.0" },
 ]
 
 [licenses]
