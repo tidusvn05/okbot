@@ -391,6 +391,11 @@ fn token(
             .prompt()
     })?;
     let value = value.trim();
+    if value.is_empty() {
+        bail!(
+            "no token was entered (if pasting did nothing, try the terminal's paste shortcut, e.g. Ctrl-Shift-V)"
+        );
+    }
     if !value.starts_with(prefix) {
         bail!("that does not look right (expected a token starting with `{prefix}`)");
     }
