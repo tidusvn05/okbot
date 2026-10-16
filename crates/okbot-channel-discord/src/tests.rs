@@ -31,7 +31,13 @@ fn channel() -> ChannelId {
 #[test]
 fn maps_direct_and_mentioned_messages() {
     let me = Id::new(42);
-    let dm = to_inbound(&channel(), &message(7, "hello", None, &[]), me).unwrap();
+    let dm = to_inbound(
+        &channel(),
+        &message(7, "hello", None, &[]),
+        me,
+        &HashSet::new(),
+    )
+    .unwrap();
     assert!(dm.is_direct && !dm.mentions_bot);
     assert_eq!(dm.conversation.room, "500");
     assert_eq!(dm.author.display_name, "Lan");
@@ -41,15 +47,57 @@ fn maps_direct_and_mentioned_messages() {
         &channel(),
         &message(7, "<@42> giá bao nhiêu?", Some(1), &[42]),
         me,
+        &HashSet::new(),
     )
     .unwrap();
     assert!(!mention.is_direct && mention.mentions_bot);
     assert_eq!(mention.text, "giá bao nhiêu?");
     assert_eq!(mention.conversation.space.as_deref(), Some("1"));
 
-    let other = to_inbound(&channel(), &message(7, "chatting", Some(1), &[]), me).unwrap();
+    let other = to_inbound(
+        &channel(),
+        &message(7, "chatting", Some(1), &[]),
+        me,
+        &HashSet::new(),
+    )
+    .unwrap();
     assert!(!other.mentions_bot);
-    assert!(to_inbound(&channel(), &message(42, "my own", None, &[]), me).is_none());
+    assert!(
+        to_inbound(
+            &channel(),
+            &message(42, "my own", None, &[]),
+            me,
+            &HashSet::new()
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn a_mention_of_the_bots_own_role_counts() {
+    let me = Id::new(42);
+    let role: twilight_model::guild::Role = serde_json::from_value(json!({
+        "id": "77", "name": "okbot", "color": 0, "colors": {"primary_color": 0, "secondary_color": null, "tertiary_color": null}, "hoist": false, "managed": true, "mentionable": false,
+        "permissions": "0", "position": 1, "flags": 0, "tags": {"bot_id": "42"}
+    }))
+    .unwrap();
+    let other: twilight_model::guild::Role = serde_json::from_value(json!({
+        "id": "78", "name": "staff", "color": 0, "colors": {"primary_color": 0, "secondary_color": null, "tertiary_color": null}, "hoist": false, "managed": false, "mentionable": true,
+        "permissions": "0", "position": 2, "flags": 0
+    }))
+    .unwrap();
+    let roles: HashSet<_> = own_roles([&role, &other], me).collect();
+    assert_eq!(roles, HashSet::from([Id::new(77)]));
+
+    let mut m = message(7, "<@&77> freach?", Some(1), &[]);
+    m.mention_roles = vec![Id::new(77)];
+    let event = to_inbound(&channel(), &m, me, &roles).unwrap();
+    assert!(event.mentions_bot);
+    assert_eq!(event.text, "freach?");
+
+    let mut m = message(7, "<@&78> hi", Some(1), &[]);
+    m.mention_roles = vec![Id::new(78)];
+    assert!(!to_inbound(&channel(), &m, me, &roles).unwrap().mentions_bot);
 }
 
 #[derive(Default)]

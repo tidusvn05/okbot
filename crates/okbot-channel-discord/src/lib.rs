@@ -6,6 +6,7 @@
 //! [`DiscordConfig::message_content`] asks for it. Replies never ping anyone: allowed mentions are
 //! always empty, whatever the agent writes.
 
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
 use okbot_core::{
@@ -18,7 +19,7 @@ use twilight_http::Client;
 use twilight_model::channel::Message;
 use twilight_model::channel::message::AllowedMentions;
 use twilight_model::id::Id;
-use twilight_model::id::marker::UserMarker;
+use twilight_model::id::marker::{RoleMarker, UserMarker};
 
 /// Settings of one Discord bot.
 #[derive(Debug, Clone)]
@@ -82,25 +83,43 @@ fn parse_id<T>(value: &str) -> Result<Id<T>, ChannelError> {
         .ok_or_else(|| ChannelError::Failed(format!("not a Discord id: {value}").into()))
 }
 
-/// Removes `<@id>` and `<@!id>` mentions of the bot.
-fn strip_mention(text: &str, me: u64) -> String {
-    text.replace(&format!("<@{me}>"), "")
-        .replace(&format!("<@!{me}>"), "")
-        .trim()
-        .to_string()
+/// Removes `<@id>` and `<@!id>` mentions of the bot, and `<@&id>` of its roles.
+fn strip_mention(text: &str, me: u64, roles: &HashSet<Id<RoleMarker>>) -> String {
+    let mut text = text
+        .replace(&format!("<@{me}>"), "")
+        .replace(&format!("<@!{me}>"), "");
+    for role in roles {
+        text = text.replace(&format!("<@&{role}>"), "");
+    }
+    text.trim().to_string()
 }
 
-/// Converts a gateway message. `None` for the bot's own messages.
+/// The roles Discord manages for the bot itself (one per server, named like the bot), from a
+/// guild's role list. Picking the bot in the `@` menu often inserts this role instead of the user.
+fn own_roles<'a>(
+    roles: impl IntoIterator<Item = &'a twilight_model::guild::Role>,
+    me: Id<UserMarker>,
+) -> impl Iterator<Item = Id<RoleMarker>> {
+    roles
+        .into_iter()
+        .filter(move |r| r.tags.as_ref().and_then(|t| t.bot_id) == Some(me))
+        .map(|r| r.id)
+}
+
+/// Converts a gateway message. `None` for the bot's own messages. `roles` are the bot's own
+/// managed roles: mentioning one counts as mentioning the bot.
 pub(crate) fn to_inbound(
     channel: &ChannelId,
     message: &Message,
     me: Id<UserMarker>,
+    roles: &HashSet<Id<RoleMarker>>,
 ) -> Option<InboundEvent> {
     if message.author.id == me {
         return None;
     }
     let direct = message.guild_id.is_none();
     let mentioned = message.mentions.iter().any(|m| m.id == me)
+        || message.mention_roles.iter().any(|r| roles.contains(r))
         || message
             .referenced_message
             .as_ref()
@@ -125,7 +144,7 @@ pub(crate) fn to_inbound(
                 .unwrap_or_else(|| message.author.name.clone()),
             is_bot: message.author.bot,
         },
-        text: strip_mention(&message.content, me.get()),
+        text: strip_mention(&message.content, me.get(), roles),
         attachments: message
             .attachments
             .iter()
@@ -163,7 +182,8 @@ impl DiscordChannel {
         if let Some(proxy) = config.http_proxy {
             builder = builder.proxy(proxy, true);
         }
-        let mut intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES;
+        // GUILDS (not privileged) brings each server's roles, to recognise the bot's own role.
+        let mut intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES;
         if config.message_content {
             intents |= Intents::MESSAGE_CONTENT;
         }
@@ -230,20 +250,33 @@ impl Channel for DiscordChannel {
         let _ = self.me.set(me);
         tracing::info!(channel = %self.id, bot = %name, "connecting to the Discord gateway");
         let mut shard = Shard::new(ShardId::ONE, self.token.expose().clone(), self.intents);
+        let mut roles = HashSet::new();
+        let events = EventTypeFlags::MESSAGE_CREATE
+            | EventTypeFlags::READY
+            | EventTypeFlags::GUILD_CREATE
+            | EventTypeFlags::ROLE_CREATE;
         loop {
             let item = tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
-                item = shard.next_event(EventTypeFlags::MESSAGE_CREATE | EventTypeFlags::READY) => item,
+                item = shard.next_event(events) => item,
             };
             let Some(item) = item else { return Ok(()) };
             match item {
                 Ok(Event::MessageCreate(message)) => {
-                    if let Some(event) = to_inbound(&self.id, &message.0, me)
+                    if let Some(event) = to_inbound(&self.id, &message.0, me, &roles)
                         && sink.deliver(event).await.is_err()
                     {
                         return Ok(());
                     }
                 }
+                Ok(Event::GuildCreate(guild)) => {
+                    if let twilight_model::gateway::payload::incoming::GuildCreate::Available(g) =
+                        guild.as_ref()
+                    {
+                        roles.extend(own_roles(&g.roles, me));
+                    }
+                }
+                Ok(Event::RoleCreate(role)) => roles.extend(own_roles([&role.role], me)),
                 Ok(Event::Ready(_)) => tracing::info!(channel = %self.id, "Discord gateway ready"),
                 Ok(_) => {}
                 // twilight reconnects by itself; fatal errors end the stream.
