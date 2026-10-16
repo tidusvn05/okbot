@@ -113,9 +113,11 @@ pub const MAX_FIELDS: usize = 5;
 impl Prompt {
     /// Checks the limits and ids; the message says what is wrong.
     pub fn validate(&self) -> Result<(), String> {
-        let id_ok = |s: &str| {
+        // Button ids end up in a Discord custom id with the prompt id (100 characters in all);
+        // field ids are custom ids of their own, so they may be as long as Discord allows.
+        let id_ok = |s: &str, max: usize| {
             !s.is_empty()
-                && s.len() <= 32
+                && s.len() <= max
                 && s.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         };
@@ -127,7 +129,7 @@ impl Prompt {
         }
         let mut seen = std::collections::HashSet::new();
         for b in &self.buttons {
-            if !id_ok(&b.id) || !seen.insert(b.id.as_str()) {
+            if !id_ok(&b.id, 32) || !seen.insert(b.id.as_str()) {
                 return Err(format!(
                     "button id {:?}: unique, 1-32 of a-z A-Z 0-9 - _",
                     b.id
@@ -145,9 +147,9 @@ impl Prompt {
                 }
                 let mut fields = std::collections::HashSet::new();
                 for f in &form.fields {
-                    if !id_ok(&f.id) || !fields.insert(f.id.as_str()) {
+                    if !id_ok(&f.id, 100) || !fields.insert(f.id.as_str()) {
                         return Err(format!(
-                            "field id {:?}: unique, 1-32 of a-z A-Z 0-9 - _",
+                            "field id {:?}: unique, 1-100 of a-z A-Z 0-9 - _",
                             f.id
                         ));
                     }
@@ -247,6 +249,13 @@ mod tests {
             prompt(vec![button("ok", Some(form(vec![field("a"), field("a")])))])
                 .validate()
                 .is_err()
+        );
+        let long = "LINE_ASSISTANT_CHANNEL_ACCESS_TOKEN";
+        assert!(
+            prompt(vec![button("ok", Some(form(vec![field(long)])))])
+                .validate()
+                .is_ok(),
+            "variable names make natural field ids"
         );
     }
 
