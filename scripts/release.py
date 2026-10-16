@@ -3,19 +3,31 @@
 
     scripts/release.py version 0.5.0       set the workspace version and every internal dependency
     scripts/release.py order               print the crates in publishing order
+    scripts/release.py pending             print the crates whose version is not on crates.io yet
     scripts/release.py publish [--dry-run] publish every crate to crates.io, in order
+    scripts/release.py trustpub OWNER/REPO [--workflow F] [--environment E] [--crates a,b] [--only]
+                                           set up crates.io Trusted Publishing for the crates
 
 `publish` can be run again after a failure: versions already on crates.io are skipped. When
 crates.io rate-limits new crates (HTTP 429, about one new crate every 10 minutes after a short
 burst), it waits until the time crates.io gives and retries.
+
+`trustpub` needs a crates.io API token with the `trusted-publishing` scope: CRATES_IO_TOKEN, or
+the token saved by `cargo login`.
+It lets the GitHub workflow publish the crates (by default this workspace's) without any stored
+token; `--only` also makes crates.io refuse every other way of publishing them. It works for any
+repository: `--crates` names the crates, `--workflow` and `--environment` default to
+`release.yml` and `crates-io`. Running it again changes nothing.
 """
 
 import email.utils
 import json
+import os
 import re
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -73,8 +85,9 @@ def set_version(version):
     print(f"version {version} ({n} internal dependencies)")
 
 
-def published(name, version):
-    """Whether crates.io already has `name` at `version` (from the sparse index)."""
+def index_versions(name):
+    """Versions of `name` on crates.io (from the sparse index), or None for a crate it does not
+    have yet."""
     lower = name.lower()
     if len(lower) <= 2:
         prefix = str(len(lower))
@@ -88,9 +101,118 @@ def published(name, version):
             lines = response.read().decode().splitlines()
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            return False
+            return None
         raise
-    return any(json.loads(line).get("vers") == version for line in lines if line.strip())
+    return {json.loads(line).get("vers") for line in lines if line.strip()}
+
+
+def published(name, version):
+    """Whether crates.io already has `name` at `version`."""
+    return version in (index_versions(name) or set())
+
+
+def pending():
+    """Prints the crates still to publish. With GITHUB_OUTPUT set, also writes `count` and `new`
+    (crates crates.io does not have at all: Trusted Publishing cannot create them)."""
+    order, version = publish_order()
+    todo, new = [], []
+    for name in order:
+        versions = index_versions(name)
+        if versions is None:
+            new.append(name)
+        if version not in (versions or set()):
+            todo.append(name)
+    for name in todo:
+        print(f"{name} {version}" + (" (new crate)" if name in new else ""))
+    if not todo:
+        print(f"every crate is on crates.io at {version}")
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a") as out:
+            out.write(f"count={len(todo)}\nnew={' '.join(new)}\n")
+
+
+USER_AGENT = "okbot-release (https://github.com/tidusvn05/okbot)"
+
+
+def crates_io(method, path, token, body=None):
+    request = urllib.request.Request(
+        f"https://crates.io/api/v1{path}",
+        method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={
+            "Authorization": token,
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode(errors="replace")
+        sys.exit(f"crates.io {method} {path}: HTTP {error.code} {detail}")
+
+
+def cargo_token():
+    """The crates.io token saved by `cargo login`, if any."""
+    home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    for name in ("credentials.toml", "credentials"):
+        path = home / name
+        if path.is_file():
+            with open(path, "rb") as f:
+                return tomllib.load(f).get("registry", {}).get("token", "")
+    return ""
+
+
+def trustpub(args):
+    token = os.environ.get("CRATES_IO_TOKEN") or cargo_token()
+    if not token:
+        sys.exit("run `cargo login` (or set CRATES_IO_TOKEN) with a crates.io token that has the "
+                 "`trusted-publishing` scope")
+    if not args or "/" not in args[0]:
+        sys.exit(__doc__)
+    owner, repo = args[0].split("/", 1)
+    options = {"--workflow": "release.yml", "--environment": "crates-io", "--crates": None}
+    only = False
+    rest = args[1:]
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--only":
+            only = True
+        elif flag in options and rest:
+            options[flag] = rest.pop(0)
+        else:
+            sys.exit(__doc__)
+    crates = (options["--crates"].split(",") if options["--crates"] else publish_order()[0])
+    environment = options["--environment"] or None
+    for name in crates:
+        existing = crates_io("GET", f"/trusted_publishing/github_configs?crate={name}", token)
+        same = [
+            c for c in existing.get("github_configs", [])
+            if c["repository_owner"].lower() == owner.lower()
+            and c["repository_name"].lower() == repo.lower()
+            and c["workflow_filename"] == options["--workflow"]
+            and c.get("environment") == environment
+        ]
+        if same:
+            print(f"= {name}: already trusts {owner}/{repo} {options['--workflow']}")
+        else:
+            crates_io("POST", "/trusted_publishing/github_configs", token, {
+                "github_config": {
+                    "crate": name,
+                    "repository_owner": owner,
+                    "repository_name": repo,
+                    "workflow_filename": options["--workflow"],
+                    "environment": environment,
+                }
+            })
+            print(f"+ {name}: trusts {owner}/{repo} {options['--workflow']}"
+                  + (f" (environment {environment})" if environment else ""))
+        if only:
+            crates_io("PATCH", f"/crates/{name}", token, {"crate": {"trustpub_only": True}})
+            print(f"  {name}: Trusted Publishing only")
 
 
 def retry_after(output):
@@ -148,8 +270,12 @@ def main():
     elif args == ["order"]:
         order, version = publish_order()
         print(f"{version}: " + " ".join(order))
+    elif args == ["pending"]:
+        pending()
     elif args[:1] == ["publish"] and args[1:] in ([], ["--dry-run"]):
         publish(dry_run=args[1:] == ["--dry-run"])
+    elif args[:1] == ["trustpub"]:
+        trustpub(args[1:])
     else:
         sys.exit(__doc__)
 
