@@ -108,6 +108,25 @@ impl Drop for Typing {
     }
 }
 
+/// The knowledge servers plus `[[mcp]]` servers this requester may use (agents with MCP only).
+fn with_extra_mcp(
+    shared: &Shared,
+    grant: &RunGrant,
+    admin: bool,
+) -> (
+    Vec<okbot_core::McpServer>,
+    Vec<(String, okbot_core::Secret<String>)>,
+) {
+    let (mut mcp, mut env) = (grant.mcp.clone(), grant.env.clone());
+    if shared.agent.caps().mcp {
+        for extra in shared.config.mcp.iter().filter(|m| admin || !m.admins_only) {
+            mcp.push(extra.server.clone());
+            env.push((extra.server.bearer_token_env.clone(), extra.token.clone()));
+        }
+    }
+    (mcp, env)
+}
+
 /// Answers a batch of messages from one conversation.
 pub(crate) async fn answer(shared: &Shared, batch: &[Tracked], cancel: &CancellationToken) {
     let Some((event, _)) = batch.last() else {
@@ -182,12 +201,13 @@ async fn answer_batch(
         }
         None => (None, None),
     };
+    let (mcp, env) = with_extra_mcp(shared, &grant, admin);
     let turn = AgentTurn {
         system: prompt.system,
         prompt: prompt.prompt,
         tools,
-        mcp: grant.mcp.clone(),
-        env: grant.env.clone(),
+        mcp,
+        env,
         workdir: workdir(shared, event),
         timeout,
         resume,

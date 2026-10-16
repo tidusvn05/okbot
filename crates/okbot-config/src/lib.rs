@@ -18,8 +18,9 @@ use okbot_core::Secret;
 pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
-    DiscordSection, GChatDelivery, GChatSection, HttpSection, PersonSection, ProviderSection,
-    ReplyOn, RoomSection, ScheduleSection, SlackSection, TelegramSection, ZaloSection,
+    DiscordSection, GChatDelivery, GChatSection, HttpSection, McpSection, PersonSection,
+    ProviderSection, ReplyOn, RoomSection, ScheduleSection, SlackSection, TelegramSection,
+    ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -113,6 +114,8 @@ pub struct Config {
     pub people: BTreeMap<String, PersonSection>,
     /// `[schedule]`.
     pub schedule: ScheduleSection,
+    /// `[[mcp]]`: extra MCP servers for the agent.
+    pub mcp: Vec<McpSection>,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -157,6 +160,7 @@ impl Config {
             channels: file.channels,
             people: file.people,
             schedule: file.schedule,
+            mcp: file.mcp,
             dotenv,
         };
         config.validate()?;
@@ -167,6 +171,7 @@ impl Config {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
         self.validate_people()?;
         self.validate_schedule()?;
+        self.validate_mcp()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -298,6 +303,43 @@ impl Config {
         Ok(())
     }
 
+    fn validate_mcp(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let mut seen = std::collections::HashSet::new();
+        for m in &self.mcp {
+            if !is_slug(&m.name) || m.name.contains('_') {
+                return invalid(format!(
+                    "[[mcp]] name `{}`: use a-z, 0-9 and `-` only",
+                    m.name
+                ));
+            }
+            if matches!(m.name.as_str(), "kb" | "bot") {
+                return invalid(format!("[[mcp]] name `{}` is reserved", m.name));
+            }
+            if !seen.insert(m.name.as_str()) {
+                return invalid(format!("[[mcp]] name `{}` is used twice", m.name));
+            }
+            if !(m.url.starts_with("http://") || m.url.starts_with("https://")) {
+                return invalid(format!(
+                    "[[mcp]] `{}`: url must start with http:// or https://",
+                    m.name
+                ));
+            }
+            let plain = !m.token_env.is_empty()
+                && !m.token_env.starts_with(|c: char| c.is_ascii_digit())
+                && m.token_env
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+            if !plain {
+                return invalid(format!(
+                    "[[mcp]] `{}`: token_env must be a variable name such as OPS_MCP_TOKEN",
+                    m.name
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// A secret by variable name: the process environment first, then the bot's `.env`.
     pub fn secret(&self, name: &str) -> Result<Secret<String>, ConfigError> {
         std::env::var(name)
@@ -332,6 +374,7 @@ impl Config {
         for b in self.channels.bridge.values() {
             names.extend(b.env.iter().cloned());
         }
+        names.extend(self.mcp.iter().map(|m| m.token_env.clone()));
         names.sort();
         names.dedup();
         names

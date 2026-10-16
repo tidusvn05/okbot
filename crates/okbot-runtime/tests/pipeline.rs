@@ -660,3 +660,39 @@ async fn reminders_are_sent_by_the_scheduler_and_tasks_commands_work() {
     stop.cancel();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn configured_mcp_servers_reach_the_agent() {
+    let server = |name: &str, admins_only| okbot_runtime::ExtraMcp {
+        server: okbot_core::McpServer {
+            name: name.into(),
+            url: format!("http://127.0.0.1:9/{name}"),
+            bearer_token_env: format!("{}_TOKEN", name.to_uppercase()),
+        },
+        token: okbot_core::Secret::new(format!("{name}-secret")),
+        admins_only,
+    };
+    let caps = okbot_core::AgentCaps {
+        mcp: true,
+        ..okbot_core::AgentCaps::default()
+    };
+    let h = Harness::start_with(FakeAgent::echo("fake").with_caps(caps), |c| {
+        c.mcp = vec![server("ops", false), server("root", true)];
+    });
+    h.say("hi").await;
+    h.settle().await;
+    let turn = &h.agent.turns()[0];
+    let names: Vec<&str> = turn.mcp.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["ops"],
+        "admins_only servers are not offered to others"
+    );
+    let env: Vec<(&str, &str)> = turn
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.expose().as_str()))
+        .collect();
+    assert_eq!(env, [("OPS_TOKEN", "ops-secret")]);
+    h.stop().await;
+}

@@ -115,6 +115,18 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     config.timezone = timezone;
     if let Some(bot) = bot {
         config.personal = bot.bot.profile == okbot_config::BotProfile::Personal;
+        // The terminal user owns the bot directory, so admins_only servers are theirs too.
+        for m in &bot.mcp {
+            config.mcp.push(okbot_runtime::ExtraMcp {
+                server: okbot_core::McpServer {
+                    name: m.name.clone(),
+                    url: m.url.clone(),
+                    bearer_token_env: m.token_env.clone(),
+                },
+                token: bot.secret(&m.token_env)?,
+                admins_only: false,
+            });
+        }
         for (id, person) in &bot.people {
             let accounts = person
                 .accounts

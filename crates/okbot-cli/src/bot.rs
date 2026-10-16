@@ -176,6 +176,19 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     if !allow_users.is_empty() {
         rc.access.allow_users = Some(allow_users);
     }
+    for m in &config.mcp {
+        let token = config.secret(&m.token_env)?;
+        crate::logging::redact(&token);
+        rc.mcp.push(okbot_runtime::ExtraMcp {
+            server: okbot_core::McpServer {
+                name: m.name.clone(),
+                url: m.url.clone(),
+                bearer_token_env: m.token_env.clone(),
+            },
+            token,
+            admins_only: m.admins_only,
+        });
+    }
     Ok(rc)
 }
 

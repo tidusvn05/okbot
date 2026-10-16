@@ -66,6 +66,20 @@ fn polling_config_loads() {
 }
 
 #[test]
+fn mcp_servers_load_and_their_tokens_are_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://127.0.0.1:8790/mcp\"\ntoken_env = \"OPS_MCP_TOKEN\"\nadmins_only = true\n",
+    );
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.mcp.len(), 1);
+    assert_eq!(config.mcp[0].name, "ops");
+    assert!(config.mcp[0].admins_only);
+    assert!(config.secret_names().contains(&"OPS_MCP_TOKEN".to_string()));
+}
+
+#[test]
 fn rejects_bad_configs() {
     let dir = tempfile::tempdir().unwrap();
     let cases = [
@@ -104,6 +118,22 @@ fn rejects_bad_configs() {
         (
             "config_version = 1\n[bot]\nname = \"x\"\ntimezone = \"Mars/Base\"\n",
             "IANA",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"kb\"\nurl = \"http://x\"\ntoken_env = \"T\"\n",
+            "reserved",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"ftp://x\"\ntoken_env = \"T\"\n",
+            "url",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"$T\"\n",
+            "token_env",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://y\"\ntoken_env = \"T\"\n",
+            "twice",
         ),
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[schedule]\ndeliver_to = \"discord\"\n",

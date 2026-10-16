@@ -33,7 +33,7 @@ use okbot_core::{
 };
 use tokio::sync::{Notify, mpsc};
 
-pub use config::{OWNER, RuntimeConfig, ScheduleConfig};
+pub use config::{ExtraMcp, OWNER, RuntimeConfig, ScheduleConfig};
 pub use http::HttpOptions;
 
 /// Building the runtime failed.

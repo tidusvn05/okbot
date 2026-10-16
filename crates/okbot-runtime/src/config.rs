@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use okbot_core::{ChannelId, Person, ToolPolicy, UserId};
+use okbot_core::{ChannelId, McpServer, Person, Secret, ToolPolicy, UserId};
 
 /// When the bot answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +159,19 @@ pub struct RuntimeConfig {
     pub personal: bool,
     /// Reminders.
     pub schedule: ScheduleConfig,
+    /// Extra MCP servers (`[[mcp]]`), offered next to the knowledge servers.
+    pub mcp: Vec<ExtraMcp>,
+}
+
+/// An MCP server from the configuration and the bearer token it expects.
+#[derive(Debug, Clone)]
+pub struct ExtraMcp {
+    /// Name, URL and the variable the agent reads the token from.
+    pub server: McpServer,
+    /// The token, passed to the agent process in that variable.
+    pub token: Secret<String>,
+    /// Offered only to `[bot] admins`.
+    pub admins_only: bool,
 }
 
 /// When and where reminders are sent (design §5.6).
@@ -241,6 +254,7 @@ impl RuntimeConfig {
             people: HashMap::new(),
             personal: false,
             schedule: ScheduleConfig::default(),
+            mcp: Vec::new(),
         }
     }
 

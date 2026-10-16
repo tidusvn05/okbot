@@ -21,6 +21,24 @@ pub(crate) struct File {
     pub(crate) people: BTreeMap<String, PersonSection>,
     #[serde(default)]
     pub(crate) schedule: ScheduleSection,
+    #[serde(default)]
+    pub(crate) mcp: Vec<McpSection>,
+}
+
+/// `[[mcp]]`: an extra MCP server (streamable HTTP) the agent may call, next to `kb` and `bot`.
+/// The agent sees its tools as `mcp__<name>__<tool>`; every tool of the server is allowed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpSection {
+    /// Server name as the agent sees it (`ops`); `kb` and `bot` are taken.
+    pub name: String,
+    /// Endpoint, `http://` or `https://`.
+    pub url: String,
+    /// Variable (environment or `.env`) holding the bearer token the server expects.
+    pub token_env: String,
+    /// Offer the server only in turns of `[bot] admins`.
+    #[serde(default)]
+    pub admins_only: bool,
 }
 
 /// `[schedule]`: reminders and routines (design §5.6).
