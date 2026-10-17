@@ -12,7 +12,7 @@ protocol) to Claude Code, Codex, OpenCode or Devin. Every bot has its own markdo
 memory. The agent behind it can search the web and read that knowledge, but never run a shell or
 touch your files.
 
-> **Status: alpha (v0.5.0).** Every feature below is tested against fake platform APIs and real agent
+> **Status: alpha (v0.6.0).** Every feature below is tested against fake platform APIs and real agent
 > CLIs, and runs daily on real Zalo and Discord bots; Telegram, Google Chat and Slack have not been
 > tried on real accounts yet. Expect breaking changes until v1.0.
 
@@ -31,6 +31,10 @@ touch your files.
   read another user's memory, even through prompt injection.
 - **Safe by default.** Web search and fetch through the CLI's built-in tools plus okbot's MCP tools;
   never a shell or file access. Rooms with sensitive knowledge can turn the web off (`mcp-only`).
+- **Your own tools.** Connect your MCP servers (`[[mcp]]`): with signed run identity they know who
+  asked and where, and can ask that person directly with buttons and forms (approvals, one-time codes)
+  that never pass through the agent. `[[command]]` turns a tool into a chat command (`/logs acme 24h`)
+  that answers without the agent, with platform command menus. See [docs/extending](docs/extending/README.md).
 - **Personal or team.** A `personal` bot answers only you, on every platform you pair with
   `okbot pair`, with one shared memory; a `team` bot keeps one memory per person.
 - **Many bots per machine.** A bot is a directory; `okbot` creates, checks, runs and supervises them

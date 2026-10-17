@@ -52,6 +52,16 @@ Personal memory is per account unless the operator links accounts:
 in that chat). Linked accounts share `kb/memory/people/<person>/`. Also `people list|unlink|remove`.
 Only link accounts the user confirms are theirs: linked accounts see each other's notes.
 
+## Your own MCP servers and chat commands
+
+To give the bot the user's own tools, add an `[[mcp]]` server to `okbot.toml` (`name`, `url`,
+`token_env` naming a variable in `.env`; `auth = "signed"` gives the server who asked and where, and
+lets it show buttons and forms). `[[command]]` turns one of its tools into a chat command that runs
+without the agent (`name`, `mcp`, `tool`, `args = ["company", "since?"]`, `with = {…}` fixed
+arguments). `okbot doctor` checks the config; restart the bot afterwards. Details:
+`docs/extending/README.md`. Only add servers the user runs or trusts: the agent may call every tool
+of a server, so never point `[[mcp]]` at a server that offers a shell or file access.
+
 ## Exit codes
 
 | Code | Meaning |

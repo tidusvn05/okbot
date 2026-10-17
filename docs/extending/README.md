@@ -39,7 +39,9 @@ auth = "signed"                       # bearer (default): the secret itself | si
 - Only agents that take per-run MCP servers (Claude, Codex) get it; it works with `tool_policy = "mcp-only"`, which
   is the setting to use for a bot whose job is your tools.
 - The secret is kept out of logs and out of every other run's environment.
-- Every tool of the server is allowed. Keep dangerous operations behind a prompt (below) in the server.
+- Every tool of the server is allowed. Keep dangerous operations behind a prompt (below) in the server, and
+  never add a server that offers a shell or file access: the agent would get them, which okbot otherwise
+  never allows. Use `https://` for a server on another host.
 
 ### Signed run identity (`auth = "signed"`)
 
