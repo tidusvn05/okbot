@@ -96,6 +96,8 @@ async fn execute(
         "command"
     );
     match result {
+        // A server that leads with its own icon (❌, 🔑…) keeps it.
+        Ok(Ok(out)) if out.is_error && starts_with_icon(&out.text) => out.text,
         Ok(Ok(out)) if out.is_error => format!("⚠️ {}", out.text),
         Ok(Ok(out)) => out.text,
         Ok(Err(usage)) => usage,
@@ -105,6 +107,14 @@ async fn execute(
             format!("⚠️ `/{}` failed: {error}", command.name)
         }
     }
+}
+
+/// The text starts with a symbol such as an emoji (not a letter, digit or Markdown).
+fn starts_with_icon(text: &str) -> bool {
+    text.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|c| !c.is_ascii() && !c.is_alphanumeric())
 }
 
 /// Usage and description.
@@ -305,6 +315,13 @@ mod tests {
     use super::*;
     use crate::config::CommandArg;
     use serde_json::json;
+
+    #[test]
+    fn icons_lead_error_texts() {
+        assert!(starts_with_icon("❌ down") && starts_with_icon("🔑 key"));
+        assert!(!starts_with_icon("no such company") && !starts_with_icon("**x**"));
+        assert!(!starts_with_icon("Đã hỏng") && !starts_with_icon("会社がありません"));
+    }
 
     fn command(args: &[&str]) -> McpCommand {
         McpCommand {
