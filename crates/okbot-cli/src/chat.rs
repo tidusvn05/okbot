@@ -128,6 +128,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
                 signed: m.auth == okbot_config::McpAuth::Signed,
             });
         }
+        config.commands = crate::bot::commands(&bot)?;
         for (id, person) in &bot.people {
             let accounts = person
                 .accounts
