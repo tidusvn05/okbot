@@ -4,6 +4,33 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.6.0] - 2026-10-17
+
+### Features
+
+- **config:** [[mcp]] for your own MCP servers (3ca4955)
+- signed run identity and prompts for [[mcp]] servers (ADR 0007) (cc03766)
+- [[command]] chat commands for MCP tools, with platform menus (ADR 0008) (6a86309)
+- **cli:** okbot chat also runs the bot's [[command]]s (1d5f50f)
+- the author's locale from platforms that report it, in signed run tokens (138eb0a)
+- [[command]] descriptions in several languages (4d6229d)
+- **render:** chat line breaks, -# notes and a reply layout convention (481c351)
+- **commands:** keep a server's own icon on error results (853dd84)
+
+### Bug fixes
+
+- **cli:** refuse an empty token in the setup wizard (a9f7d2c)
+- **discord:** answer when the bot's own role is mentioned (4f1af1a)
+- **core:** allow form field ids up to 100 characters (7cce51a)
+- **runtime:** name=value before a rest argument; a quoted word is always a value (7900749)
+- **discord:** prompts never show link previews (3014ab8)
+- **mcp:** fixed `with` arguments, no URLs in errors, only issued tokens on /interact (#23) (f6d1f97)
+
+### Other
+
+- reopen development as 0.6.0-dev (#22) (a60ce83)
+- **deny:** ignore zip extract() advisories that okbot cannot reach (3d180d1)
+
 ## [0.5.0] - 2026-10-16
 
 ### Features
