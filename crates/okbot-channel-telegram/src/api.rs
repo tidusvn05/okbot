@@ -223,6 +223,20 @@ impl TelegramApi {
             .map(drop)
     }
 
+    /// `setMyCommands`: the command menu, as `(command, description)`.
+    pub(crate) async fn set_my_commands(
+        &self,
+        commands: &[(String, String)],
+    ) -> Result<(), TelegramError> {
+        let list: Vec<Value> = commands
+            .iter()
+            .map(|(c, d)| json!({"command": c, "description": d}))
+            .collect();
+        self.call::<Value>("setMyCommands", &json!({ "commands": list }), Self::SHORT)
+            .await
+            .map(drop)
+    }
+
     /// `setWebhook` for message updates, authenticated by `secret`.
     pub(crate) async fn set_webhook(&self, url: &str, secret: &str) -> Result<(), TelegramError> {
         let body = json!({ "url": url, "secret_token": secret, "allowed_updates": ["message"] });

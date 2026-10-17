@@ -58,6 +58,8 @@ pub struct DiscordChannel {
     app: OnceLock<Id<ApplicationMarker>>,
     /// Prompts shown and not closed, by id (lost on restart: their buttons then say so).
     prompts: Mutex<HashMap<String, okbot_core::Prompt>>,
+    /// Commands for the `/` menu, registered when the gateway connects.
+    commands: Mutex<Vec<okbot_core::CommandInfo>>,
 }
 
 impl std::fmt::Debug for DiscordChannel {
@@ -207,6 +209,7 @@ impl DiscordChannel {
             me: OnceLock::new(),
             app: OnceLock::new(),
             prompts: Mutex::new(HashMap::new()),
+            commands: Mutex::new(Vec::new()),
         }
     }
 
@@ -234,12 +237,15 @@ impl DiscordChannel {
         }
     }
 
-    /// A button press or a submitted modal on one of our prompts. `Err` when the runtime stopped.
+    /// A slash command, or a button press or a submitted modal on one of our prompts. `Err` when the runtime stopped.
     async fn interaction(
         &self,
         sink: &Arc<dyn InboundSink>,
         interaction: &Interaction,
     ) -> Result<(), okbot_core::SinkClosed> {
+        if let Some(InteractionData::ApplicationCommand(data)) = &interaction.data {
+            return self.slash_command(sink, interaction, data).await;
+        }
         let user = interaction
             .member
             .as_ref()
@@ -321,6 +327,90 @@ impl DiscordChannel {
         .await
     }
 
+    /// A chosen slash command: acknowledged at once, then delivered as the text `/name value…`.
+    async fn slash_command(
+        &self,
+        sink: &Arc<dyn InboundSink>,
+        interaction: &Interaction,
+        data: &twilight_model::application::interaction::application_command::CommandData,
+    ) -> Result<(), okbot_core::SinkClosed> {
+        let user = interaction
+            .member
+            .as_ref()
+            .and_then(|m| m.user.as_ref())
+            .or(interaction.user.as_ref());
+        let (Some(user), Some(channel_id)) = (user, interaction.channel.as_ref().map(|c| c.id))
+        else {
+            return Ok(());
+        };
+        let text = commands::invocation(data);
+        // Discord needs an answer within 3 seconds; the reply itself follows as a message.
+        self.respond(
+            interaction,
+            &twilight_model::http::interaction::InteractionResponse {
+                kind: twilight_model::http::interaction::InteractionResponseType::ChannelMessageWithSource,
+                data: Some(twilight_model::http::interaction::InteractionResponseData {
+                    content: Some(format!("› `{}`", text.replace('`', "'"))),
+                    allowed_mentions: Some(AllowedMentions::default()),
+                    ..Default::default()
+                }),
+            },
+        )
+        .await;
+        sink.deliver(InboundEvent {
+            event_id: interaction.id.to_string(),
+            conversation: ConversationKey {
+                channel: self.id.clone(),
+                space: interaction.guild_id.map(|g| g.to_string()),
+                room: channel_id.to_string(),
+                thread: None,
+            },
+            author: UserRef {
+                id: UserId::new(user.id.to_string()),
+                display_name: user
+                    .global_name
+                    .clone()
+                    .unwrap_or_else(|| user.name.clone()),
+                is_bot: user.bot,
+            },
+            text,
+            attachments: Vec::new(),
+            // A slash command is addressed to the bot.
+            mentions_bot: true,
+            is_direct: interaction.guild_id.is_none(),
+            restricted: false,
+            message_id: None,
+            sent_at: jiff::Timestamp::now(),
+        })
+        .await
+    }
+
+    /// Replaces the bot's global slash commands with the listed ones.
+    async fn register_commands(&self, app: Id<ApplicationMarker>) {
+        let list = self
+            .commands
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if list.is_empty() {
+            return;
+        }
+        let definitions = commands::definitions(&list);
+        match self
+            .http
+            .interaction(app)
+            .set_global_commands(&definitions)
+            .await
+        {
+            Ok(_) => {
+                tracing::info!(channel = %self.id, count = list.len(), "slash commands registered");
+            }
+            Err(error) => {
+                tracing::warn!(channel = %self.id, %error, "cannot register the slash commands");
+            }
+        }
+    }
+
     /// The bot's application id (its OAuth2 client id), for [`install_url`].
     pub async fn application_id(&self) -> Result<u64, ChannelError> {
         let app = self
@@ -365,7 +455,9 @@ impl Channel for DiscordChannel {
     ) -> Result<(), ChannelError> {
         let (me, name) = self.current_user().await?;
         let _ = self.me.set(me);
-        let _ = self.app.set(Id::new(self.application_id().await?));
+        let app = Id::new(self.application_id().await?);
+        let _ = self.app.set(app);
+        self.register_commands(app).await;
         tracing::info!(channel = %self.id, bot = %name, "connecting to the Discord gateway");
         let mut shard = Shard::new(ShardId::ONE, self.token.expose().clone(), self.intents);
         let mut roles = HashSet::new();
@@ -407,6 +499,14 @@ impl Channel for DiscordChannel {
                 Err(error) => tracing::warn!(channel = %self.id, %error, "Discord gateway error"),
             }
         }
+    }
+
+    async fn set_commands(&self, list: &[okbot_core::CommandInfo]) -> Result<(), ChannelError> {
+        *self
+            .commands
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = list.to_vec();
+        Ok(())
     }
 
     async fn send(
@@ -508,6 +608,7 @@ impl Channel for DiscordChannel {
     }
 }
 
+mod commands;
 mod prompt;
 
 #[cfg(test)]

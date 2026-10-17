@@ -189,3 +189,75 @@ fn install_url_has_the_needed_permissions() {
         "https://discord.com/oauth2/authorize?client_id=1559468846841200730&scope=bot&permissions=274877975552&integration_type=0"
     );
 }
+
+#[derive(Default)]
+struct Sink(Mutex<Vec<InboundEvent>>);
+
+#[async_trait]
+impl InboundSink for Sink {
+    async fn deliver(&self, event: InboundEvent) -> Result<(), okbot_core::SinkClosed> {
+        self.0.lock().unwrap().push(event);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn slash_commands_register_and_arrive_as_text() {
+    let calls = Arc::new(Calls::default());
+    let app = axum::Router::new().fallback(fake).with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let channel = DiscordChannel::new(DiscordConfig {
+        id: channel(),
+        token: Secret::new("Bot test-token".into()),
+        message_content: false,
+        http_proxy: Some(addr.to_string()),
+    });
+    channel
+        .set_commands(&[okbot_core::CommandInfo {
+            name: "status".into(),
+            description: "Status".into(),
+            params: vec![okbot_core::CommandParam {
+                name: "company".into(),
+                required: true,
+                rest: false,
+            }],
+        }])
+        .await
+        .unwrap();
+    let app_id = Id::new(77);
+    let _ = channel.app.set(app_id);
+    channel.register_commands(app_id).await;
+
+    let interaction: Interaction = serde_json::from_value(json!({
+        "id": "3001", "application_id": "77", "type": 2, "token": "tok", "version": 1,
+        "guild_id": "9", "channel": {"id": "500", "type": 0},
+        "member": {"user": {"id": "7", "username": "lan", "global_name": "Lan", "discriminator": "0", "avatar": null},
+                   "roles": [], "joined_at": "2026-01-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0},
+        "data": {"id": "11", "name": "status", "type": 1,
+                 "options": [{"name": "company", "type": 3, "value": "free ch"}]},
+        "entitlements": [], "authorizing_integration_owners": {}
+    }))
+    .unwrap();
+    let collected = Arc::new(Sink::default());
+    let sink: Arc<dyn InboundSink> = collected.clone();
+    channel.interaction(&sink, &interaction).await.unwrap();
+
+    let calls = calls.0.lock().unwrap().clone();
+    let put = calls.iter().find(|c| c.0 == "PUT").unwrap();
+    assert!(put.1.ends_with("/applications/77/commands"), "{}", put.1);
+    assert_eq!(put.2[0]["name"], "status");
+    let ack = calls
+        .iter()
+        .find(|c| c.1.ends_with("/interactions/3001/tok/callback"))
+        .unwrap_or_else(|| panic!("{calls:?}"));
+    assert_eq!(ack.2["type"], 4);
+    assert_eq!(ack.2["data"]["content"], "› `/status \"free ch\"`");
+
+    let event = collected.0.lock().unwrap()[0].clone();
+    assert_eq!(event.text, "/status \"free ch\"");
+    assert_eq!(event.author.id.as_str(), "7");
+    assert_eq!(event.conversation.room, "500");
+    assert!(event.mentions_bot && !event.is_direct);
+}

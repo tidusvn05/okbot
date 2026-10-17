@@ -245,11 +245,18 @@ async fn worker(
             turn::reply(&shared, &first.0, &text).await;
             continue;
         }
+        if let Some((command, rest)) = crate::mcp_command::find(&shared, &first.0.text) {
+            crate::mcp_command::run(&shared, command, rest, &first.0).await;
+            continue;
+        }
         let mut batch = vec![first];
         while let Ok(more) = rx.try_recv() {
             // A turn runs with one person's identity, scope and rights, so it only batches that
             // person's messages: another author's text must never run as this one.
-            if Command::parse(&more.0.text).is_some() || more.0.author.id != batch[0].0.author.id {
+            if Command::parse(&more.0.text).is_some()
+                || crate::mcp_command::find(&shared, &more.0.text).is_some()
+                || more.0.author.id != batch[0].0.author.id
+            {
                 pending = Some(more);
                 break;
             }

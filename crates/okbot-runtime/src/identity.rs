@@ -40,6 +40,10 @@ pub struct Claims {
     /// okbot's endpoint for prompts, when `[http]` is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interact: Option<String>,
+    /// Set when a person ran a `[[command]]` (its name): the result is shown to them as is,
+    /// without the agent, so the server should answer in readable text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     /// Expiry, Unix seconds.
     pub exp: i64,
     /// Random id of this token.
@@ -57,6 +61,36 @@ pub fn sign(key: &[u8], claims: &Claims) -> String {
     let mut m = mac(key);
     m.update(signed.as_bytes());
     format!("{signed}.{}", B64.encode(m.finalize().into_bytes()))
+}
+
+/// What `[[mcp]] extra` gets for a run on behalf of `event`'s author: a signed token naming them,
+/// or the configured secret itself. `command` is set for `[[command]]` runs.
+pub(crate) fn token_for(
+    shared: &crate::Shared,
+    extra: &crate::ExtraMcp,
+    event: &okbot_core::InboundEvent,
+    admin: bool,
+    command: Option<&str>,
+) -> okbot_core::Secret<String> {
+    if !extra.signed {
+        return extra.token.clone();
+    }
+    let claims = Claims {
+        bot: shared.config.bot_name.clone(),
+        mcp: extra.server.name.clone(),
+        user: format!("{}/{}", event.conversation.channel, event.author.id),
+        name: event.author.display_name.clone(),
+        conversation: event.conversation.clone(),
+        admin,
+        direct: event.is_direct,
+        interact: shared.interact_url.get().cloned(),
+        command: command.map(str::to_string),
+        exp: shared.clock.now().as_second()
+            + i64::try_from(shared.config.agent_timeout.as_secs()).unwrap_or(3600)
+            + 60,
+        jti: hex::encode(rand::random::<[u8; 8]>()),
+    };
+    okbot_core::Secret::new(sign(extra.token.expose().as_bytes(), &claims))
 }
 
 /// The server name a token claims, read before its signature is checked (to pick the key).
@@ -100,6 +134,7 @@ mod tests {
             admin: true,
             direct: false,
             interact: Some("http://127.0.0.1:8788/interact".into()),
+            command: None,
             exp,
             jti: "abc".into(),
         }

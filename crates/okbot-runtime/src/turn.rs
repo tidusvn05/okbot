@@ -21,7 +21,7 @@ pub(crate) async fn reply(shared: &Shared, event: &InboundEvent, markdown: &str)
 }
 
 /// Like [`reply`], but the first part replaces `placeholder` (a "thinking…" message) when given.
-async fn reply_over(
+pub(crate) async fn reply_over(
     shared: &Shared,
     event: &InboundEvent,
     markdown: &str,
@@ -58,11 +58,14 @@ fn workdir(shared: &Shared, event: &InboundEvent) -> PathBuf {
 
 /// Shows that the bot is working: a repeated typing indicator, or, on platforms that can edit
 /// but not type (Google Chat), a "thinking…" message that the answer later replaces.
-struct Typing(Option<tokio::task::JoinHandle<()>>, Option<SentRef>);
+pub(crate) struct Typing(
+    Option<tokio::task::JoinHandle<()>>,
+    pub(crate) Option<SentRef>,
+);
 
 impl Typing {
     /// Shows the indicator once right away, then repeats it in the background.
-    async fn start(shared: &Shared, event: &InboundEvent) -> Self {
+    pub(crate) async fn start(shared: &Shared, event: &InboundEvent) -> Self {
         let Some(channel) = shared.channels.get(&event.conversation.channel).cloned() else {
             return Self(None, None);
         };
@@ -123,28 +126,7 @@ fn with_extra_mcp(
     if shared.agent.caps().mcp {
         for extra in shared.config.mcp.iter().filter(|m| admin || !m.admins_only) {
             mcp.push(extra.server.clone());
-            let token = if extra.signed {
-                let claims = crate::identity::Claims {
-                    bot: shared.config.bot_name.clone(),
-                    mcp: extra.server.name.clone(),
-                    user: format!("{}/{}", event.conversation.channel, event.author.id),
-                    name: event.author.display_name.clone(),
-                    conversation: event.conversation.clone(),
-                    admin,
-                    direct: event.is_direct,
-                    interact: shared.interact_url.get().cloned(),
-                    exp: shared.clock.now().as_second()
-                        + i64::try_from(shared.config.agent_timeout.as_secs()).unwrap_or(3600)
-                        + 60,
-                    jti: hex::encode(rand::random::<[u8; 8]>()),
-                };
-                okbot_core::Secret::new(crate::identity::sign(
-                    extra.token.expose().as_bytes(),
-                    &claims,
-                ))
-            } else {
-                extra.token.clone()
-            };
+            let token = crate::identity::token_for(shared, extra, event, admin, None);
             env.push((extra.server.bearer_token_env.clone(), token));
         }
     }

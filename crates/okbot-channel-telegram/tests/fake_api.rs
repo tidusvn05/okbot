@@ -317,3 +317,38 @@ async fn errors_never_contain_the_token() {
     assert!(!text.contains("abc-xyz"), "{text}");
     assert!(!format!("{api:?}").contains("abc-xyz"));
 }
+
+#[tokio::test]
+async fn command_menu_lists_parameters() {
+    let (fake, base) = fake_api().await;
+    let channel = TelegramChannel::new(config(
+        &base,
+        Delivery::Polling {
+            timeout: Duration::from_secs(1),
+        },
+    ));
+    channel
+        .set_commands(&[okbot_core::CommandInfo {
+            name: "status".into(),
+            description: "Company status".into(),
+            params: vec![
+                okbot_core::CommandParam {
+                    name: "company".into(),
+                    required: true,
+                    rest: false,
+                },
+                okbot_core::CommandParam {
+                    name: "deep".into(),
+                    required: false,
+                    rest: false,
+                },
+            ],
+        }])
+        .await
+        .unwrap();
+    let set = &calls(&fake, "setMyCommands")[0];
+    assert_eq!(
+        set["commands"],
+        json!([{"command": "status", "description": "<company> [deep] — Company status"}])
+    );
+}

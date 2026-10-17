@@ -190,6 +190,23 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             signed: m.auth == okbot_config::McpAuth::Signed,
         });
     }
+    for c in &config.commands {
+        let with = serde_json::to_value(&c.with)
+            .with_context(|| format!("[[command]] `{}`: with", c.name))?;
+        rc.commands.push(okbot_runtime::McpCommand {
+            name: c.name.clone(),
+            description: c.description.clone(),
+            mcp: c.mcp.clone(),
+            tool: c.tool.clone(),
+            args: c
+                .args
+                .iter()
+                .map(|a| okbot_runtime::CommandArg::parse(a))
+                .collect(),
+            with: with.as_object().cloned().unwrap_or_default(),
+            admins_only: c.admins_only,
+        });
+    }
     Ok(rc)
 }
 

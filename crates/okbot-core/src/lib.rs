@@ -73,7 +73,7 @@ pub use agent::{
     TokenUsage,
 };
 pub use caps::{AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ToolPolicy};
-pub use channel::{Channel, ChannelError, InboundSink, SinkClosed};
+pub use channel::{Channel, ChannelError, CommandInfo, CommandParam, InboundSink, SinkClosed};
 pub use clock::{Clock, SystemClock};
 pub use id::{ChannelId, ConversationKey, IdError, MessageId, RunId, UserId, UserRef};
 pub use knowledge::{

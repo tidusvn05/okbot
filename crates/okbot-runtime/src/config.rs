@@ -1,6 +1,7 @@
 //! Runtime settings. `okbot` builds these from `okbot.toml`.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -161,6 +162,8 @@ pub struct RuntimeConfig {
     pub schedule: ScheduleConfig,
     /// Extra MCP servers (`[[mcp]]`), offered next to the knowledge servers.
     pub mcp: Vec<ExtraMcp>,
+    /// Chat commands that call `[[mcp]]` tools directly (`[[command]]`).
+    pub commands: Vec<McpCommand>,
 }
 
 /// An MCP server from the configuration and the bearer token it expects.
@@ -175,6 +178,83 @@ pub struct ExtraMcp {
     /// Give the agent a signed run token (who asked, where) instead of the secret itself; the
     /// server verifies it with the secret and may show prompts through `POST /interact`.
     pub signed: bool,
+}
+
+/// A chat command that calls one tool of an [`ExtraMcp`] server, without the agent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpCommand {
+    /// The command without `/`.
+    pub name: String,
+    /// One line for `/help` and command menus.
+    pub description: String,
+    /// The [`ExtraMcp`] server name.
+    pub mcp: String,
+    /// The tool.
+    pub tool: String,
+    /// Positional arguments.
+    pub args: Vec<CommandArg>,
+    /// Arguments always passed.
+    pub with: serde_json::Map<String, serde_json::Value>,
+    /// Only `[bot] admins` may run it.
+    pub admins_only: bool,
+}
+
+/// A positional argument of an [`McpCommand`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandArg {
+    /// The tool argument it sets.
+    pub name: String,
+    /// Whether it may be left out, or takes the rest of the line.
+    pub kind: ArgKind,
+}
+
+/// How a [`CommandArg`] is filled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgKind {
+    /// One word, required.
+    Required,
+    /// One word, may be left out.
+    Optional,
+    /// The rest of the line, required.
+    Rest,
+}
+
+impl CommandArg {
+    /// Parses `name`, `name?` or `name...`.
+    pub fn parse(spec: &str) -> Self {
+        let (name, kind) = if let Some(n) = spec.strip_suffix("...") {
+            (n, ArgKind::Rest)
+        } else if let Some(n) = spec.strip_suffix('?') {
+            (n, ArgKind::Optional)
+        } else {
+            (spec, ArgKind::Required)
+        };
+        Self {
+            name: name.to_string(),
+            kind,
+        }
+    }
+}
+
+impl McpCommand {
+    /// `/name <a> [b] <c...>`.
+    pub fn usage(&self) -> String {
+        let mut out = format!("/{}", self.name);
+        for a in &self.args {
+            match a.kind {
+                ArgKind::Required => {
+                    let _ = write!(out, " <{}>", a.name);
+                }
+                ArgKind::Optional => {
+                    let _ = write!(out, " [{}]", a.name);
+                }
+                ArgKind::Rest => {
+                    let _ = write!(out, " <{}…>", a.name);
+                }
+            }
+        }
+        out
+    }
 }
 
 /// When and where reminders are sent (design §5.6).
@@ -258,6 +338,7 @@ impl RuntimeConfig {
             personal: false,
             schedule: ScheduleConfig::default(),
             mcp: Vec::new(),
+            commands: Vec::new(),
         }
     }
 

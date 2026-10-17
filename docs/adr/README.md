@@ -12,3 +12,4 @@ by a new ADR that supersedes the old one; old ADRs are kept.
 | [0005](0005-git-dependencies.md) | agent-core and okbase as git dependencies | Superseded (all on crates.io) |
 | [0006](0006-tasks-and-schedules.md) | Tasks as bundle files, firings in SQLite, routines as scheduled turns | Accepted |
 | [0007](0007-signed-identity-and-prompts.md) | Signed run identity and prompts for your own MCP servers | Accepted |
+| [0008](0008-commands-for-mcp-tools.md) | Chat commands for MCP tools | Accepted |

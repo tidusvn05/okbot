@@ -350,6 +350,39 @@ impl Channel for TelegramChannel {
         }
     }
 
+    async fn set_commands(&self, commands: &[okbot_core::CommandInfo]) -> Result<(), ChannelError> {
+        // The menu only inserts `/name `: the description shows what to type after it.
+        let list: Vec<(String, String)> = commands
+            .iter()
+            .map(|c| {
+                let mut d = c.description.trim().to_string();
+                let params: Vec<String> = c
+                    .params
+                    .iter()
+                    .map(|p| {
+                        if p.required {
+                            format!("<{}>", p.name)
+                        } else {
+                            format!("[{}]", p.name)
+                        }
+                    })
+                    .collect();
+                if !params.is_empty() {
+                    d = format!("{} — {d}", params.join(" "));
+                }
+                if d.is_empty() {
+                    d.clone_from(&c.name);
+                }
+                (c.name.clone(), d.chars().take(256).collect())
+            })
+            .collect();
+        self.shared
+            .api
+            .set_my_commands(&list)
+            .await
+            .map_err(channel_error)
+    }
+
     async fn send(
         &self,
         to: &ReplyTarget,

@@ -17,15 +17,22 @@ use okbot_core::Secret;
 
 pub use edit::ConfigEditor;
 pub use schema::{
-    AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection, Delivery,
-    DiscordSection, GChatDelivery, GChatSection, HttpSection, McpAuth, McpSection, PersonSection,
-    ProviderSection, ReplyOn, RoomSection, ScheduleSection, SlackSection, TelegramSection,
-    ZaloSection,
+    AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection,
+    CommandSection, Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection, McpAuth,
+    McpSection, PersonSection, ProviderSection, ReplyOn, RoomSection, ScheduleSection,
+    SlackSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
     upsert_env,
 };
+
+/// Commands okbot handles itself; `[[command]]` cannot reuse them.
+pub const BUILTIN_COMMANDS: &[&str] = &[
+    "help", "reset", "new", "clear", "whoami", "stop", "cancel", "remember", "forget", "memories",
+    "memory", "pair", "tasks", "todo", "todos", "done", "snooze", "later", "resume", "start",
+    "pause", "note",
+];
 
 /// The file name of a bot's configuration.
 pub const CONFIG_FILE: &str = "okbot.toml";
@@ -116,6 +123,8 @@ pub struct Config {
     pub schedule: ScheduleSection,
     /// `[[mcp]]`: extra MCP servers for the agent.
     pub mcp: Vec<McpSection>,
+    /// `[[command]]`: chat commands that call `[[mcp]]` tools directly.
+    pub commands: Vec<CommandSection>,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -161,6 +170,7 @@ impl Config {
             people: file.people,
             schedule: file.schedule,
             mcp: file.mcp,
+            commands: file.command,
             dotenv,
         };
         config.validate()?;
@@ -172,6 +182,7 @@ impl Config {
         self.validate_people()?;
         self.validate_schedule()?;
         self.validate_mcp()?;
+        self.validate_commands()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -335,6 +346,72 @@ impl Config {
                     "[[mcp]] `{}`: token_env must be a variable name such as OPS_MCP_TOKEN",
                     m.name
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_commands(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let mut seen = std::collections::HashSet::new();
+        for c in &self.commands {
+            let n = &c.name;
+            let plain = !n.is_empty()
+                && n.len() <= 32
+                && n.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+            if !plain {
+                return invalid(format!(
+                    "[[command]] name `{n}`: use a-z, 0-9 and `_` only, at most 32 (no `/`)"
+                ));
+            }
+            if BUILTIN_COMMANDS.contains(&n.as_str()) {
+                return invalid(format!("[[command]] `{n}` is a built-in command"));
+            }
+            if !seen.insert(n.as_str()) {
+                return invalid(format!("[[command]] `{n}` is defined twice"));
+            }
+            if c.description.chars().count() > 100 || c.description.contains('\n') {
+                return invalid(format!(
+                    "[[command]] `{n}`: description must be one line of at most 100 characters"
+                ));
+            }
+            if !self.mcp.iter().any(|m| m.name == c.mcp) {
+                return invalid(format!(
+                    "[[command]] `{n}`: mcp `{}` is not an [[mcp]] server",
+                    c.mcp
+                ));
+            }
+            if c.tool.trim().is_empty() {
+                return invalid(format!("[[command]] `{n}`: tool must not be empty"));
+            }
+            let mut optional = false;
+            for (i, arg) in c.args.iter().enumerate() {
+                let (base, kind) = if let Some(b) = arg.strip_suffix("...") {
+                    (b, "rest")
+                } else if let Some(b) = arg.strip_suffix('?') {
+                    (b, "optional")
+                } else {
+                    (arg.as_str(), "required")
+                };
+                let ident = base.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
+                    && base
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+                if !ident {
+                    return invalid(format!("[[command]] `{n}`: argument `{arg}` is not a name"));
+                }
+                if kind == "rest" && i + 1 != c.args.len() {
+                    return invalid(format!(
+                        "[[command]] `{n}`: only the last argument may take the rest (`{arg}`)"
+                    ));
+                }
+                if kind == "required" && optional {
+                    return invalid(format!(
+                        "[[command]] `{n}`: required `{arg}` after an optional argument"
+                    ));
+                }
+                optional |= kind == "optional";
             }
         }
         Ok(())

@@ -41,6 +41,28 @@ impl ChannelError {
     }
 }
 
+/// A command for the platform's command menu (`/` on Discord and Telegram).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandInfo {
+    /// Without `/`: a-z, 0-9 and `_`, at most 32.
+    pub name: String,
+    /// One line, at most 100 characters.
+    pub description: String,
+    /// Positional parameters, required ones first.
+    pub params: Vec<CommandParam>,
+}
+
+/// A parameter of a [`CommandInfo`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandParam {
+    /// Its name.
+    pub name: String,
+    /// Must be given.
+    pub required: bool,
+    /// May contain spaces (the rest of the line).
+    pub rest: bool,
+}
+
 /// The runtime stopped accepting events (it is shutting down).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the runtime is no longer accepting events")]
@@ -113,6 +135,14 @@ pub trait Channel: Send + Sync {
         _keep_buttons: bool,
     ) -> Result<(), ChannelError> {
         Err(ChannelError::Unsupported("prompt"))
+    }
+
+    /// Lists the bot's commands in the platform's command menu. Called once, before
+    /// [`Channel::run`], and only when the bot has commands of its own. Commands always arrive as
+    /// text messages starting with `/name`: platforms whose menu sends something else (Discord's
+    /// slash commands) turn it into such a message. Platforms without a menu ignore this.
+    async fn set_commands(&self, _commands: &[CommandInfo]) -> Result<(), ChannelError> {
+        Ok(())
     }
 
     /// The webhook endpoint, for platforms that push events over HTTP.

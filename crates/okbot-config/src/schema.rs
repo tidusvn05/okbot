@@ -23,6 +23,8 @@ pub(crate) struct File {
     pub(crate) schedule: ScheduleSection,
     #[serde(default)]
     pub(crate) mcp: Vec<McpSection>,
+    #[serde(default)]
+    pub(crate) command: Vec<CommandSection>,
 }
 
 /// `[[mcp]]`: an extra MCP server (streamable HTTP) the agent may call, next to `kb` and `bot`.
@@ -54,6 +56,34 @@ pub enum McpAuth {
     Bearer,
     /// `Authorization: Bearer okbot1.<claims>.<signature>`: who asked, where, until when.
     Signed,
+}
+
+/// `[[command]]`: a chat command that calls one tool of an `[[mcp]]` server directly, without the
+/// agent: `/status freach` → `company_status {"company": "freach"}`. It answers even when no agent
+/// is available, in the same words every time, and works on every platform (text starting with
+/// `/`; platforms with native command menus also list it).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandSection {
+    /// The command without `/`: a-z, 0-9 and `_`, at most 32 (what every platform accepts).
+    pub name: String,
+    /// One line for `/help` and command menus (at most 100 characters).
+    #[serde(default)]
+    pub description: String,
+    /// The `[[mcp]]` server.
+    pub mcp: String,
+    /// The tool to call.
+    pub tool: String,
+    /// Positional arguments, in order: `company`, `bot?` (optional), `note...` (the rest of the
+    /// line). Values are converted to the tool's declared types; `name=value` sets any argument.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Arguments always passed (`with = { level = "error" }`).
+    #[serde(default)]
+    pub with: BTreeMap<String, toml::Value>,
+    /// Only `[bot] admins` may run it (servers that are `admins_only` imply it).
+    #[serde(default)]
+    pub admins_only: bool,
 }
 
 /// `[schedule]`: reminders and routines (design §5.6).

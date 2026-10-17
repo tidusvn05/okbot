@@ -16,6 +16,8 @@ mod http;
 pub mod identity;
 mod interact;
 mod live;
+mod mcp_client;
+mod mcp_command;
 mod metrics;
 mod policy;
 mod schedule;
@@ -35,7 +37,7 @@ use okbot_core::{
 };
 use tokio::sync::{Notify, mpsc};
 
-pub use config::{ExtraMcp, OWNER, RuntimeConfig, ScheduleConfig};
+pub use config::{ArgKind, CommandArg, ExtraMcp, McpCommand, OWNER, RuntimeConfig, ScheduleConfig};
 pub use http::HttpOptions;
 
 /// Building the runtime failed.
@@ -358,12 +360,19 @@ impl Runtime {
         } = self;
         let channel_stop = shutdown.child_token();
         let mut tasks = tokio::task::JoinSet::new();
+        let menu = Arc::new(mcp_command::menu(&shared.config));
         for channel in shared.channels.values() {
             let channel = channel.clone();
             let sink: Arc<dyn InboundSink> = sink.clone();
             let stop = channel_stop.clone();
+            let menu = menu.clone();
             tasks.spawn(async move {
                 let id = channel.id().clone();
+                if !menu.is_empty()
+                    && let Err(error) = channel.set_commands(&menu).await
+                {
+                    tracing::warn!(channel = %id, %error, "cannot list the commands in the menu");
+                }
                 tracing::info!(channel = %id, "channel starting");
                 match channel.run(sink, stop).await {
                     Ok(()) => tracing::info!(channel = %id, "channel stopped"),

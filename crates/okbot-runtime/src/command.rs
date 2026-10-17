@@ -70,7 +70,10 @@ impl Command {
 /// Runs a command other than `/stop` and returns the reply.
 pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) -> String {
     match command {
-        Command::Help => help_text(&s.config.bot_name),
+        Command::Help => {
+            let admin = s.is_admin(event).await;
+            help_text(&s.config.bot_name) + &crate::mcp_command::help(s, admin)
+        }
         Command::WhoAmI => whoami(s, event).await,
         // Personal bots handle `/pair` before commands reach a conversation (dispatch).
         Command::Pair(_) => {

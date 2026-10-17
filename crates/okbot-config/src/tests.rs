@@ -66,6 +66,23 @@ fn polling_config_loads() {
 }
 
 #[test]
+fn commands_load() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("okbot.toml"),
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n\
+         [[command]]\nname = \"logs\"\ndescription = \"Errors\"\nmcp = \"ops\"\ntool = \"company_logs\"\n\
+         args = [\"company\", \"service\", \"since?\"]\nwith = { level = \"error\", limit = 50 }\n",
+    )
+    .unwrap();
+    let config = Config::load(dir.path()).unwrap();
+    let c = &config.commands[0];
+    assert_eq!((c.name.as_str(), c.tool.as_str()), ("logs", "company_logs"));
+    assert_eq!(c.args, ["company", "service", "since?"]);
+    assert_eq!(c.with["limit"], toml::Value::Integer(50));
+}
+
+#[test]
 fn mcp_servers_load_and_their_tokens_are_secrets() {
     let dir = tempfile::tempdir().unwrap();
     write(
@@ -143,6 +160,26 @@ fn rejects_bad_configs() {
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://y\"\ntoken_env = \"T\"\n",
             "twice",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"Status\"\nmcp = \"ops\"\ntool = \"t\"\n",
+            "a-z, 0-9 and `_`",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"help\"\nmcp = \"ops\"\ntool = \"t\"\n",
+            "built-in",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"s\"\nmcp = \"nope\"\ntool = \"t\"\n",
+            "not an [[mcp]]",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"s\"\nmcp = \"ops\"\ntool = \"t\"\nargs = [\"a?\", \"b\"]\n",
+            "after an optional",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"s\"\nmcp = \"ops\"\ntool = \"t\"\nargs = [\"a...\", \"b\"]\n",
+            "last argument",
         ),
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[schedule]\ndeliver_to = \"discord\"\n",
