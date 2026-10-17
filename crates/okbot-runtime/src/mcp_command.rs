@@ -234,7 +234,8 @@ fn arguments(
     for (start, word) in words(rest) {
         if let Some((key, value)) = word.split_once('=')
             && known(key)
-            && next.is_none_or(|a| a.kind != ArgKind::Rest)
+            // A quoted word is a value, even with `=` in it.
+            && !rest[start..].starts_with('"')
         {
             out.insert(key.to_string(), coerce(key, value, props)?);
             continue;
@@ -355,6 +356,14 @@ mod tests {
         assert_eq!(args["note"], "Lan (sales) a=b");
         let args = arguments(&c, "acme \"quoted text\"", &schema()).unwrap();
         assert_eq!(args["note"], "quoted text");
+        // Named arguments may come before the rest; a quoted one is text.
+        let args = arguments(&c, "acme deep=yes Lan", &schema()).unwrap();
+        assert_eq!(
+            (args["deep"].clone(), args["note"].clone()),
+            (json!(true), json!("Lan"))
+        );
+        let args = arguments(&c, "acme \"deep=yes Lan\"", &schema()).unwrap();
+        assert_eq!(args["note"], "deep=yes Lan");
     }
 
     #[test]
