@@ -18,7 +18,7 @@ use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt
 use twilight_http::Client;
 use twilight_model::application::interaction::{Interaction, InteractionData};
 use twilight_model::channel::Message;
-use twilight_model::channel::message::AllowedMentions;
+use twilight_model::channel::message::{AllowedMentions, MessageFlags};
 use twilight_model::id::Id;
 use twilight_model::id::marker::{ApplicationMarker, RoleMarker, UserMarker};
 
@@ -544,6 +544,7 @@ impl Channel for DiscordChannel {
         self.http
             .update_message(channel, parse_id(sent.message_id.as_str())?)
             .content(Some(&message.text))
+            .flags(MessageFlags::SUPPRESS_EMBEDS)
             .allowed_mentions(Some(&none))
             .await
             .map(drop)
@@ -564,6 +565,8 @@ impl Channel for DiscordChannel {
             .content(&prompt.text)
             .components(&components)
             .allowed_mentions(Some(&none))
+            // A prompt asks for a decision: a link preview would push its buttons out of view.
+            .flags(MessageFlags::SUPPRESS_EMBEDS)
             .await
             .map_err(failed)?
             .model()
@@ -591,6 +594,7 @@ impl Channel for DiscordChannel {
             .http
             .update_message(channel, parse_id(sent.message_id.as_str())?)
             .content(Some(&message.text))
+            .flags(MessageFlags::SUPPRESS_EMBEDS)
             .allowed_mentions(Some(&none));
         if !keep_buttons {
             request = request.components(Some(&[]));

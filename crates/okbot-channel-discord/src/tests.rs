@@ -261,3 +261,49 @@ async fn slash_commands_register_and_arrive_as_text() {
     assert_eq!(event.conversation.room, "500");
     assert!(event.mentions_bot && !event.is_direct);
 }
+
+#[tokio::test]
+async fn prompts_never_show_link_previews() {
+    let calls = Arc::new(Calls::default());
+    let app = axum::Router::new().fallback(fake).with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let channel = DiscordChannel::new(DiscordConfig {
+        id: channel(),
+        token: Secret::new("Bot test-token".into()),
+        message_content: false,
+        http_proxy: Some(addr.to_string()),
+    });
+    let to = ReplyTarget {
+        conversation: ConversationKey::room(self::channel(), "500"),
+        in_reply_to: None,
+    };
+    let prompt = okbot_core::Prompt {
+        id: "p1".into(),
+        text: "[Sign in](https://claude.ai/oauth)".into(),
+        buttons: vec![okbot_core::PromptButton {
+            id: "ok".into(),
+            label: "OK".into(),
+            style: okbot_core::ButtonStyle::Primary,
+            form: None,
+        }],
+        allowed: vec![],
+    };
+    let sent = channel.prompt(&to, &prompt).await.unwrap();
+    channel
+        .close_prompt(
+            &sent,
+            &RenderedMessage {
+                text: "done".into(),
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    let calls = calls.0.lock().unwrap().clone();
+    let post = calls.iter().find(|c| c.0 == "POST").unwrap();
+    assert_eq!(post.2["flags"], 4, "SUPPRESS_EMBEDS");
+    let patch = calls.iter().find(|c| c.0 == "PATCH").unwrap();
+    assert_eq!(patch.2["flags"], 4);
+}
