@@ -422,6 +422,7 @@ pub fn inbound(channel: &str, room: &str, user: &str, text: &str) -> okbot_core:
         restricted: false,
         message_id: Some(okbot_core::MessageId::new(format!("m-{n}"))),
         sent_at: "2026-01-01T00:00:00Z".parse().expect("timestamp"),
+        locale: None,
     }
 }
 

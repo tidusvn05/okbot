@@ -75,6 +75,7 @@ pub(crate) fn to_inbound(
         restricted: false,
         message_id: name.map(MessageId::new),
         sent_at,
+        locale: None,
     })
 }
 

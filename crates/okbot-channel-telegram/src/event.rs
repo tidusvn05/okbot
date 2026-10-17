@@ -61,6 +61,8 @@ struct User {
     last_name: Option<String>,
     #[serde(default)]
     username: Option<String>,
+    #[serde(default)]
+    language_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -319,6 +321,7 @@ pub(crate) fn to_inbound(
         restricted: false,
         message_id: Some(MessageId::new(message.message_id.to_string())),
         sent_at,
+        locale: from.language_code.clone(),
     };
     Some((event, files))
 }
@@ -352,7 +355,7 @@ mod tests {
     fn message(chat: serde_json::Value, extra: serde_json::Value) -> serde_json::Value {
         let mut m = json!({
             "message_id": 42,
-            "from": {"id": 7, "is_bot": false, "first_name": "Lan", "last_name": "Nguyễn"},
+            "from": {"id": 7, "is_bot": false, "first_name": "Lan", "last_name": "Nguyễn", "language_code": "vi"},
             "chat": chat,
             "date": 1_750_000_000,
         });
@@ -376,6 +379,7 @@ mod tests {
         assert_eq!(e.event_id, "7:42");
         assert!(e.is_direct && !e.mentions_bot);
         assert_eq!(e.sent_at.as_second(), 1_750_000_000);
+        assert_eq!(e.locale.as_deref(), Some("vi"));
         assert_eq!(files, []);
     }
 

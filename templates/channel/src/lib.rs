@@ -65,6 +65,7 @@ impl ExampleChannel {
             message_id: Some(MessageId::new(m.id)),
             // TODO(platform): the platform's timestamp.
             sent_at: jiff::Timestamp::now(),
+            locale: None,
         }
     }
 }

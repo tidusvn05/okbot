@@ -60,6 +60,11 @@ pub struct InboundEvent {
     pub message_id: Option<MessageId>,
     /// When the platform says it was sent (or when it was received, if unknown).
     pub sent_at: Timestamp,
+    /// The author's language as the platform reports it (`en-US`, `ja`, `vi`), when it does:
+    /// Discord slash commands and button presses, Telegram messages. Plain Discord, Slack, Google
+    /// Chat and Zalo messages carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 /// Where a reply goes.

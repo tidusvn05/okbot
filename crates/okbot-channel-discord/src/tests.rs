@@ -231,7 +231,7 @@ async fn slash_commands_register_and_arrive_as_text() {
     channel.register_commands(app_id).await;
 
     let interaction: Interaction = serde_json::from_value(json!({
-        "id": "3001", "application_id": "77", "type": 2, "token": "tok", "version": 1,
+        "id": "3001", "application_id": "77", "type": 2, "token": "tok", "version": 1, "locale": "ja",
         "guild_id": "9", "channel": {"id": "500", "type": 0},
         "member": {"user": {"id": "7", "username": "lan", "global_name": "Lan", "discriminator": "0", "avatar": null},
                    "roles": [], "joined_at": "2026-01-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0},
@@ -260,6 +260,7 @@ async fn slash_commands_register_and_arrive_as_text() {
     assert_eq!(event.author.id.as_str(), "7");
     assert_eq!(event.conversation.room, "500");
     assert!(event.mentions_bot && !event.is_direct);
+    assert_eq!(event.locale.as_deref(), Some("ja"));
 }
 
 #[tokio::test]

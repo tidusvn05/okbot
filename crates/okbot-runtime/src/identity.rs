@@ -44,6 +44,9 @@ pub struct Claims {
     /// without the agent, so the server should answer in readable text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The person's language as their platform reports it (`en-US`, `ja`), when it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
     /// Expiry, Unix seconds.
     pub exp: i64,
     /// Random id of this token.
@@ -85,6 +88,7 @@ pub(crate) fn token_for(
         direct: event.is_direct,
         interact: shared.interact_url.get().cloned(),
         command: command.map(str::to_string),
+        locale: event.locale.clone(),
         exp: shared.clock.now().as_second()
             + i64::try_from(shared.config.agent_timeout.as_secs()).unwrap_or(3600)
             + 60,
@@ -135,6 +139,7 @@ mod tests {
             direct: false,
             interact: Some("http://127.0.0.1:8788/interact".into()),
             command: None,
+            locale: None,
             exp,
             jti: "abc".into(),
         }

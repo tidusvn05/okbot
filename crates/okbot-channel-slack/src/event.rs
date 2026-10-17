@@ -62,5 +62,6 @@ pub(crate) fn to_inbound(channel: &ChannelId, payload: &Value, me: &str) -> Opti
         restricted: false,
         message_id: Some(MessageId::new(ts)),
         sent_at,
+        locale: None,
     })
 }

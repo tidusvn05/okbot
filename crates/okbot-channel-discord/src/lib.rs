@@ -176,6 +176,8 @@ pub(crate) fn to_inbound(
         restricted: false,
         message_id: Some(MessageId::new(message.id.to_string())),
         sent_at,
+        // Gateway messages carry no locale; interactions do.
+        locale: None,
     })
 }
 
@@ -381,6 +383,7 @@ impl DiscordChannel {
             restricted: false,
             message_id: None,
             sent_at: jiff::Timestamp::now(),
+            locale: interaction.locale.clone(),
         })
         .await
     }

@@ -91,6 +91,7 @@ pub(crate) fn to_inbound(
         restricted,
         message_id,
         sent_at,
+        locale: None,
     })
 }
 

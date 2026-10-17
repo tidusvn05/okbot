@@ -86,6 +86,7 @@ impl ConsoleChannel {
             restricted: false,
             message_id: Some(MessageId::new(n.to_string())),
             sent_at: jiff::Timestamp::now(),
+            locale: None,
         }
     }
 }

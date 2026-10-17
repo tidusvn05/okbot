@@ -252,6 +252,7 @@ async fn routine_event(
         restricted: false,
         message_id: None,
         sent_at: now,
+        locale: None,
     })
 }
 

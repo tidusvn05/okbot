@@ -50,8 +50,10 @@ The agent presents `Authorization: Bearer okbot1.<claims>.<signature>` instead o
 2. `signature == base64url(HMAC-SHA256(secret, signed))` (no padding; compare in constant time);
 3. `signed` starts with `okbot1.`; the rest is base64url JSON:
    `{"bot", "mcp", "user": "discord:main/1234", "name", "conversation": {...}, "admin", "direct",
-   "interact": "http://127.0.0.1:…/interact", "command", "exp", "jti"}`; reject when `exp` (Unix seconds) has
-   passed. `command` is present only for a [`[[command]]`](#commands-for-your-tools) run.
+   "interact": "http://127.0.0.1:…/interact", "command", "locale", "exp", "jti"}`; reject when `exp` (Unix seconds) has
+   passed. `command` is present only for a [`[[command]]`](#commands-for-your-tools) run; `locale` (`en-US`, `ja`)
+   only when the platform reports the person's language (Discord slash commands and buttons, Telegram), so a
+   server can answer in it.
 
 Authorize by `user` and `admin` — the agent cannot change them.
 
