@@ -91,8 +91,13 @@ fn authenticate<'a>(
         .mcp
         .iter()
         .find(|m| m.signed && m.server.name == name)?;
-    let claims = identity::verify(server.token.expose().as_bytes(), token, now_unix(shared))?;
-    Some((claims, server))
+    let now = now_unix(shared);
+    let claims = identity::verify(server.token.expose().as_bytes(), token, now)?;
+    // Signed by the server itself, not issued for a turn: refused.
+    shared
+        .issued
+        .contains(&claims, now)
+        .then_some((claims, server))
 }
 
 fn error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Value) {
@@ -273,11 +278,12 @@ async fn post_callback(
         .body(body)
         .send()
         .await
-        .and_then(reqwest::Response::error_for_status);
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(reqwest::Error::without_url);
     match result {
         Ok(response) => response.json::<CallbackReply>().await.unwrap_or_default(),
         Err(error) => {
-            // The error never contains the body (values); the URL is the server's own.
+            // The error never contains the body (values) nor the URL (it may hold a key).
             tracing::warn!(prompt = %answer.prompt, %error, "prompt callback failed");
             CallbackReply {
                 text: "⚠️ The service did not answer; try again.".into(),

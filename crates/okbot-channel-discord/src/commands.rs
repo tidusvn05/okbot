@@ -96,7 +96,8 @@ pub(crate) fn invocation(data: &CommandData) -> String {
         };
         let value = value.replace('"', "'");
         text.push(' ');
-        if value.contains(char::is_whitespace) || value.is_empty() {
+        // Quoted, an option fills its own argument: `a=b` stays a value, not `name=value`.
+        if value.contains(char::is_whitespace) || value.contains('=') || value.is_empty() {
             text.push('"');
             text.push_str(&value);
             text.push('"');
@@ -156,5 +157,12 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(invocation(&data), "/allow acme \"Lan 'sales'\"");
+
+        let data: CommandData = serde_json::from_value(serde_json::json!({
+            "id": "1", "name": "allow", "type": 1,
+            "options": [{"name": "company", "type": 3, "value": "company=other"}]
+        }))
+        .unwrap();
+        assert_eq!(invocation(&data), "/allow \"company=other\"");
     }
 }

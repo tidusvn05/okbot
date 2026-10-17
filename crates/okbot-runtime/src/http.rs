@@ -255,6 +255,7 @@ mod tests {
             in_flight: Arc::new(InFlight::default()),
             metrics: crate::metrics::Metrics::default(),
             prompts: crate::interact::Prompts::default(),
+            issued: crate::identity::Issued::default(),
             interact_url: std::sync::OnceLock::new(),
         })
     }

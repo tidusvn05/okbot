@@ -414,6 +414,11 @@ impl Config {
                 if !ident {
                     return invalid(format!("[[command]] `{n}`: argument `{arg}` is not a name"));
                 }
+                if c.with.contains_key(base) {
+                    return invalid(format!(
+                        "[[command]] `{n}`: `{base}` is fixed by `with`; it cannot also be an argument"
+                    ));
+                }
                 if kind == "rest" && i + 1 != c.args.len() {
                     return invalid(format!(
                         "[[command]] `{n}`: only the last argument may take the rest (`{arg}`)"

@@ -79,10 +79,11 @@ pub struct CommandSection {
     /// The tool to call.
     pub tool: String,
     /// Positional arguments, in order: `company`, `bot?` (optional), `note...` (the rest of the
-    /// line). Values are converted to the tool's declared types; `name=value` sets any argument.
+    /// line). Values are converted to the tool's declared types; `name=value` sets any argument
+    /// not fixed by `with`.
     #[serde(default)]
     pub args: Vec<String>,
-    /// Arguments always passed (`with = { level = "error" }`).
+    /// Arguments always passed (`with = { level = "error" }`); chat cannot change them.
     #[serde(default)]
     pub with: BTreeMap<String, toml::Value>,
     /// Only `[bot] admins` may run it (servers that are `admins_only` imply it).

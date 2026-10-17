@@ -8,7 +8,9 @@
 //! ```
 //!
 //! The agent cannot forge or widen it. The same token authenticates the server's calls back to
-//! okbot (`POST /interact`), which can therefore only reach that conversation.
+//! okbot (`POST /interact`), which can therefore only reach that conversation. The server holds
+//! the key and could sign claims of its own, so `/interact` also requires a token okbot issued
+//! (`Issued`).
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -53,6 +55,32 @@ pub struct Claims {
     pub jti: String,
 }
 
+/// The ids (`jti`) of the signed tokens this process issued, with their expiry.
+#[derive(Default)]
+pub(crate) struct Issued(std::sync::Mutex<std::collections::HashMap<String, i64>>);
+
+impl Issued {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, i64>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Records a token, forgetting the expired ones.
+    fn record(&self, claims: &Claims, now: i64) {
+        let mut ids = self.lock();
+        ids.retain(|_, exp| *exp > now);
+        ids.insert(claims.jti.clone(), claims.exp);
+    }
+
+    /// okbot issued this token, and it has not expired.
+    pub(crate) fn contains(&self, claims: &Claims, now: i64) -> bool {
+        self.lock()
+            .get(&claims.jti)
+            .is_some_and(|exp| *exp == claims.exp && *exp > now)
+    }
+}
+
 fn mac(key: &[u8]) -> HmacSha256 {
     <HmacSha256 as KeyInit>::new_from_slice(key).expect("HMAC takes keys of any length")
 }
@@ -78,6 +106,7 @@ pub(crate) fn token_for(
     if !extra.signed {
         return extra.token.clone();
     }
+    let now = shared.clock.now().as_second();
     let claims = Claims {
         bot: shared.config.bot_name.clone(),
         mcp: extra.server.name.clone(),
@@ -89,11 +118,10 @@ pub(crate) fn token_for(
         interact: shared.interact_url.get().cloned(),
         command: command.map(str::to_string),
         locale: event.locale.clone(),
-        exp: shared.clock.now().as_second()
-            + i64::try_from(shared.config.agent_timeout.as_secs()).unwrap_or(3600)
-            + 60,
-        jti: hex::encode(rand::random::<[u8; 8]>()),
+        exp: now + i64::try_from(shared.config.agent_timeout.as_secs()).unwrap_or(3600) + 60,
+        jti: hex::encode(rand::random::<[u8; 16]>()),
     };
+    shared.issued.record(&claims, now);
     okbot_core::Secret::new(sign(extra.token.expose().as_bytes(), &claims))
 }
 
@@ -168,6 +196,22 @@ mod tests {
             "claims swapped"
         );
         assert_eq!(verify(b"k", "okbot1.x.y", 0), None);
+    }
+
+    #[test]
+    fn only_issued_tokens_count() {
+        let issued = Issued::default();
+        issued.record(&claims(100), 0);
+        assert!(issued.contains(&claims(100), 99));
+        assert!(!issued.contains(&claims(100), 100), "expired");
+        assert!(!issued.contains(&claims(200), 0), "another expiry");
+        let other = Claims {
+            jti: "def".into(),
+            ..claims(100)
+        };
+        assert!(!issued.contains(&other, 0), "never issued");
+        issued.record(&other, 150);
+        assert!(!issued.contains(&claims(300), 0) && issued.lock().len() == 1);
     }
 
     #[test]
