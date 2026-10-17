@@ -18,7 +18,9 @@ the agent's arguments: the model could press "yes" itself, and secrets ended up 
   (a loopback port is opened when no `[http] listen` is set). The body names text, 1–5 buttons, an
   optional form per button (Discord: a modal of up to five text fields), who may answer
   (`requester` | `admins` | `anyone`), an expiry and a callback URL on the server's own origin. okbot
-  shows the prompt in the token's conversation only.
+  shows the prompt in the token's conversation only, and accepts only tokens it issued (their `jti`
+  is kept in memory until `exp`): the server knows the secret and could otherwise sign claims for any
+  conversation.
 - **Answers bypass the agent.** A press (and form) arrives through `InboundSink::answer`, never as an
   `InboundEvent`. okbot POSTs it to the callback with `x-okbot-timestamp` and
   `x-okbot-signature = base64url(HMAC-SHA256(secret, "<timestamp>.<body>"))`, and replaces the

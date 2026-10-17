@@ -76,6 +76,8 @@ Authorization: Bearer <the run token>
 ```
 
 → `{"prompt": "<id>"}` (`501` on platforms without buttons). The callback must be on the server's own origin.
+Only a token okbot issued for a turn or command, until it expires, is accepted (`401` otherwise): the server holds
+the secret, but cannot sign claims of its own to reach another conversation.
 When someone allowed presses a button (and fills in its form), okbot POSTs
 
 ```json
@@ -102,13 +104,13 @@ descriptions = { ja = "サービスの最近のエラー" } # by the person's ap
 mcp = "ops"                                # an [[mcp]] server
 tool = "company_logs"
 args = ["company", "service", "since?"]    # positional; `x?` optional, `x...` the rest of the line
-with = { level = "error" }                 # always passed
+with = { level = "error" }                 # always passed; chat cannot change it
 admins_only = false                        # implied when the server is admins_only
 ```
 
 `/logs freach channel-broker 24h` calls `company_logs {"company": "freach", "service": "channel-broker",
-"since": "24h", "level": "error"}`. Any argument the tool declares can be set as `name=value`
-(`/logs freach agent-sales limit=20`), values take the type the tool's input schema declares (`integer`,
+"since": "24h", "level": "error"}`. Any argument the tool declares, except those fixed by `with`, can be set
+as `name=value` (`/logs freach agent-sales limit=20`), values take the type the tool's input schema declares (`integer`,
 `number`, `boolean`, `array` as `a,b`), and `"…"` keeps spaces in one value. Missing or malformed arguments
 get the usage line, without calling the tool. `/help` lists the commands the person may run.
 

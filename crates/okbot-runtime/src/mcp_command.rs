@@ -251,6 +251,10 @@ fn arguments(
             // A quoted word is a value, even with `=` in it.
             && !rest[start..].starts_with('"')
         {
+            // `with` is the operator's: chat never changes it.
+            if command.with.contains_key(key) {
+                return Err(usage(format!("`{key}` is fixed for this command.")));
+            }
             out.insert(key.to_string(), coerce(key, value, props)?);
             continue;
         }
@@ -354,16 +358,16 @@ mod tests {
     #[test]
     fn positional_named_and_typed() {
         let c = command(&["company", "service?"]);
-        let args = arguments(
-            &c,
-            "freach agent-sales limit=50 deep=yes level=error",
-            &schema(),
-            None,
-        )
-        .unwrap();
+        let args = arguments(&c, "freach agent-sales limit=50 deep=yes", &schema(), None).unwrap();
         assert_eq!(
             Value::Object(args),
-            json!({"company": "freach", "service": "agent-sales", "limit": 50, "deep": true, "level": "error"})
+            json!({"company": "freach", "service": "agent-sales", "limit": 50, "deep": true, "level": "warn"})
+        );
+        // `with` is fixed.
+        assert!(
+            arguments(&c, "freach level=error", &schema(), None)
+                .unwrap_err()
+                .starts_with("`level` is fixed")
         );
         let args = arguments(&c, "freach", &schema(), None).unwrap();
         assert_eq!(

@@ -25,6 +25,12 @@ pub(crate) enum McpError {
     Protocol(String),
 }
 
+/// A transport error without the URL: reqwest names it, and an `[[mcp]]` URL may hold a key and
+/// names internal hosts, while this text reaches logs and chats.
+fn http_error(error: reqwest::Error) -> McpError {
+    McpError::Http(error.without_url().to_string())
+}
+
 /// A tool's result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolOutput {
@@ -170,10 +176,7 @@ impl Session {
         if let Some(id) = &self.id {
             req = req.header(SESSION, id);
         }
-        let mut resp = req
-            .send()
-            .await
-            .map_err(|e| McpError::Http(e.to_string()))?;
+        let mut resp = req.send().await.map_err(http_error)?;
         if !resp.status().is_success() {
             return Err(McpError::Status(resp.status().as_u16()));
         }
@@ -187,11 +190,7 @@ impl Session {
             .is_some_and(|v| v.starts_with("text/event-stream"));
         let want = message.get("id").cloned();
         let mut body = Vec::new();
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| McpError::Http(e.to_string()))?
-        {
+        while let Some(chunk) = resp.chunk().await.map_err(http_error)? {
             body.extend_from_slice(&chunk);
             if body.len() > MAX_BODY {
                 return Err(McpError::Protocol("reply too large".into()));
@@ -276,6 +275,27 @@ mod tests {
         assert!(
             find_response("data: {\"id\":2}\n\n", 2).is_none(),
             "not a response"
+        );
+    }
+
+    #[tokio::test]
+    async fn errors_never_show_the_url() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        // Nothing listens on port 9 of loopback (discard), so the connection fails.
+        let error = with_session(
+            reqwest::Client::new(),
+            "http://127.0.0.1:9/mcp?key=s3cret",
+            "t",
+            Duration::from_secs(10),
+            async |_| Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, McpError::Http(_)), "{error}");
+        let text = error.to_string();
+        assert!(
+            !text.contains("s3cret") && !text.contains("127.0.0.1"),
+            "{text}"
         );
     }
 }

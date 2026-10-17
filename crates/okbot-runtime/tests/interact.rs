@@ -102,6 +102,19 @@ fn start(
     (channel, agent, handle, stop, task)
 }
 
+/// The server holds the key, so it can sign claims of its own (here for another room); okbot
+/// never issued them.
+fn minted_elsewhere(claims: &identity::Claims) -> String {
+    identity::sign(
+        KEY.as_bytes(),
+        &identity::Claims {
+            conversation: okbot_testkit::conversation("fake:test", "other-room"),
+            jti: "minted".into(),
+            ..claims.clone()
+        },
+    )
+}
+
 #[tokio::test]
 async fn signed_token_prompt_and_signed_callback() {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -142,6 +155,10 @@ async fn signed_token_prompt_and_signed_callback() {
     });
     let refused = post(prompt.clone(), KEY.into()).await.unwrap();
     assert_eq!(refused.status(), 401, "the plain secret is not a run token");
+    let refused = post(prompt.clone(), minted_elsewhere(&claims))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 401, "only issued tokens");
     let mut elsewhere = prompt.clone();
     elsewhere["callback"] = json!("http://127.0.0.1:1/steal");
     assert_eq!(post(elsewhere, token.clone()).await.unwrap().status(), 400);

@@ -182,6 +182,10 @@ fn rejects_bad_configs() {
             "last argument",
         ),
         (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"s\"\nmcp = \"ops\"\ntool = \"t\"\nargs = [\"level?\"]\nwith = { level = \"error\" }\n",
+            "fixed by `with`",
+        ),
+        (
             "config_version = 1\n[bot]\nname = \"x\"\n[schedule]\ndeliver_to = \"discord\"\n",
             "deliver_to",
         ),

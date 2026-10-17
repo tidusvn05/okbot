@@ -116,6 +116,8 @@ pub(crate) struct Shared {
     pub(crate) metrics: metrics::Metrics,
     /// Prompts shown for `[[mcp]]` servers, waiting for answers.
     pub(crate) prompts: interact::Prompts,
+    /// Signed run tokens issued (only those may call `/interact`).
+    pub(crate) issued: identity::Issued,
     /// `http://<listen>/interact` once the HTTP server is up (for signed run tokens).
     pub(crate) interact_url: std::sync::OnceLock<String>,
 }
@@ -255,6 +257,7 @@ impl RuntimeBuilder {
             in_flight: in_flight.clone(),
             metrics: metrics::Metrics::default(),
             prompts: interact::Prompts::default(),
+            issued: identity::Issued::default(),
             interact_url: std::sync::OnceLock::new(),
         });
         Ok(Runtime {
