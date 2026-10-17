@@ -15,6 +15,12 @@ ignore = [
     # PowerPoint and EPUB files only for `knowledge_add` (owner/admins). Drop this when anydoc moves
     # to zip 9 and okbase follows.
     { crate = "zip@8.6.0", reason = "yanked; anydoc (via okbase-convert) requires zip ^8.6.0" },
+    # Same zip 8.x: unsafe permission bits and symlinks when *extracting* archives to disk
+    # (`ZipArchive::extract`, `ZipStreamReader::extract`). anydoc, calamine and okbase only read
+    # entries in memory; nothing in the tree calls extract. Drop with the zip@8.6.0 entry.
+    { id = "RUSTSEC-2026-0367", reason = "zip extract() only; never called (entries read in memory)" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extract() only; never called (entries read in memory)" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extract() only; never called (entries read in memory)" },
 ]
 
 [licenses]
