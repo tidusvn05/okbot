@@ -65,6 +65,8 @@ struct Style {
     bullet: &'static str,
     /// Prefix of every quoted line; empty for `<blockquote>`.
     quote: &'static str,
+    /// The prefix of a `-# ` note line; without one, notes are written in emphasis.
+    note: Option<&'static str>,
     escape: Escape,
 }
 
@@ -82,6 +84,7 @@ impl Style {
                 table: TableStyle::List,
                 bullet: "- ",
                 quote: "> ",
+                note: None,
                 escape: Escape::MarkdownLite,
             },
             MarkdownDialect::GChatText => Self {
@@ -95,6 +98,7 @@ impl Style {
                 table: TableStyle::List,
                 bullet: "• ",
                 quote: "> ",
+                note: None,
                 escape: Escape::None,
             },
             MarkdownDialect::SlackMrkdwn => Self {
@@ -108,6 +112,7 @@ impl Style {
                 table: TableStyle::List,
                 bullet: "• ",
                 quote: "> ",
+                note: None,
                 escape: Escape::Entities,
             },
             MarkdownDialect::DiscordMd => Self {
@@ -121,6 +126,7 @@ impl Style {
                 table: TableStyle::List,
                 bullet: "- ",
                 quote: "> ",
+                note: Some("-# "),
                 escape: Escape::Discord,
             },
             MarkdownDialect::TelegramHtml => Self {
@@ -134,6 +140,7 @@ impl Style {
                 table: TableStyle::List,
                 bullet: "• ",
                 quote: "",
+                note: None,
                 escape: Escape::Entities,
             },
             MarkdownDialect::Plain => Self {
@@ -147,6 +154,7 @@ impl Style {
                 table: TableStyle::List,
                 bullet: "- ",
                 quote: "> ",
+                note: None,
                 escape: Escape::None,
             },
             // CommonMark and dialects added later fall back to CommonMark.
@@ -161,6 +169,7 @@ impl Style {
                 table: TableStyle::Markdown,
                 bullet: "- ",
                 quote: "> ",
+                note: None,
                 escape: Escape::None,
             },
         }
@@ -284,6 +293,13 @@ fn block_text(block: &Block, style: &Style, indent: &str) -> String {
                 .join("\n"),
         },
         Block::Table { header, rows } => table_text(header, rows, style),
+        Block::Note(inlines) => {
+            let text = inline_text(inlines, style);
+            match style.note {
+                Some(prefix) => format!("{prefix}{text}"),
+                None => wrap(&text, style.emphasis),
+            }
+        }
         Block::Rule => match (style.escape, style.link) {
             (Escape::MarkdownLite, _) | (_, LinkStyle::Html) => "———".to_string(),
             _ => "---".to_string(),

@@ -23,6 +23,8 @@ pub(crate) enum Block {
         rows: Vec<Vec<Vec<Inline>>>,
     },
     Rule,
+    /// A `-# ` line: small print (a footnote, who asked, when).
+    Note(Vec<Inline>),
 }
 
 /// An inline element.
@@ -37,12 +39,84 @@ pub(crate) enum Inline {
     Break,
 }
 
-/// Parses CommonMark (with tables and strikethrough) into blocks.
+/// Marks a `-# ` note line for the parser (a private-use character no one types).
+const NOTE: char = '\u{E000}';
+
+/// Parses CommonMark (with tables and strikethrough) into blocks, read the way chat apps show
+/// text: see [`chat_lines`].
 pub(crate) fn parse(markdown: &str) -> Vec<Block> {
+    let markdown = chat_lines(markdown);
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
-    let events: Vec<Event<'_>> = Parser::new_ext(markdown, options).collect();
+    let events: Vec<Event<'_>> = Parser::new_ext(&markdown, options).collect();
     let mut pos = 0;
     parse_blocks(&events, &mut pos, None)
+        .into_iter()
+        .map(|block| match block {
+            Block::Paragraph(mut inlines) => match inlines.first_mut() {
+                Some(Inline::Text(t)) if t.starts_with(NOTE) => {
+                    t.remove(0);
+                    Block::Note(inlines)
+                }
+                _ => Block::Paragraph(inlines),
+            },
+            other => other,
+        })
+        .collect()
+}
+
+/// Chat apps show every line break, and people (and agents) write for that: a line right after a
+/// list starts a new paragraph instead of continuing the last item, and a `-# ` line stands alone.
+/// Line breaks inside paragraphs are kept by the parser ([`Inline::Break`]). Code is left as is.
+fn chat_lines(markdown: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let (mut fence, mut in_list, mut after_note) = (None::<char>, false, false);
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        let indented = trimmed.len() < line.len();
+        if let Some(f) = fence {
+            if trimmed.starts_with(&String::from(f).repeat(3)) {
+                fence = None;
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        let blank = trimmed.is_empty();
+        let mut gap =
+            (after_note && !blank) || (in_list && !blank && !indented && !list_item(trimmed));
+        let mut line = line.to_string();
+        after_note = false;
+        if let Some(rest) = line.strip_prefix("-# ") {
+            line = format!("{NOTE}{rest}");
+            gap = true;
+            after_note = true;
+        }
+        if gap && out.last().is_some_and(|l| !l.trim().is_empty()) {
+            out.push(String::new());
+        }
+        if let Some(f) = ['`', '~']
+            .into_iter()
+            .find(|f| trimmed.starts_with(&String::from(*f).repeat(3)))
+        {
+            fence = Some(f);
+        }
+        in_list = if blank {
+            false
+        } else {
+            list_item(trimmed) || (in_list && indented)
+        };
+        out.push(line);
+    }
+    out.join("\n")
+}
+
+/// `- x`, `* x`, `+ x`, `1. x`, `1) x`.
+fn list_item(line: &str) -> bool {
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    let rest = &line[digits..];
+    if digits > 0 {
+        return rest.starts_with(". ") || rest.starts_with(") ");
+    }
+    ["- ", "* ", "+ "].iter().any(|m| line.starts_with(m))
 }
 
 fn parse_blocks(events: &[Event<'_>], pos: &mut usize, until: Option<TagEnd>) -> Vec<Block> {
@@ -243,11 +317,8 @@ fn parse_inline(events: &[Event<'_>], pos: &mut usize) -> Option<Inline> {
             *pos += 1;
             Inline::Code(c.to_string())
         }
-        Event::SoftBreak => {
-            *pos += 1;
-            Inline::Text(" ".into())
-        }
-        Event::HardBreak => {
+        // Chat apps show every line break, soft ones too.
+        Event::SoftBreak | Event::HardBreak => {
             *pos += 1;
             Inline::Break
         }
@@ -307,4 +378,39 @@ pub(crate) fn plain(inlines: &[Inline]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_lines_end_lists_and_keep_code() {
+        let text = "- a\n  more a\n- b\nafter\n-# note\nnext\n```\n- x\ny\n-# z\n```";
+        assert_eq!(
+            chat_lines(text),
+            "- a\n  more a\n- b\n\nafter\n\n\u{E000}note\n\nnext\n```\n- x\ny\n-# z\n```"
+        );
+        assert!(list_item("12. x") && list_item("3) x") && list_item("* x"));
+        assert!(!list_item("12.x") && !list_item("-x") && !list_item("2024 was"));
+    }
+
+    #[test]
+    fn notes_and_line_breaks() {
+        let blocks = parse("a\nb\n-# small *print*");
+        assert_eq!(
+            blocks,
+            vec![
+                Block::Paragraph(vec![
+                    Inline::Text("a".into()),
+                    Inline::Break,
+                    Inline::Text("b".into())
+                ]),
+                Block::Note(vec![
+                    Inline::Text("small ".into()),
+                    Inline::Emphasis(vec![Inline::Text("print".into())])
+                ]),
+            ]
+        );
+    }
 }

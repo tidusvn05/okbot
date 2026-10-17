@@ -27,3 +27,10 @@ fn main() {
 Ký tự đặc biệt: a*b_c~d `inline * code` <tag> & more.
 
 ---
+
+⚠️ **dogfood** · 2 things to fix
+- ❌ architect: Claude not signed in
+- ❌ assistant: Claude not signed in
+✅ 6/6 containers running
+Next line stays a line.
+-# vps01 · v0.4.0-rc.1

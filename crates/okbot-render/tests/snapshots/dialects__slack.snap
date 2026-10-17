@@ -5,7 +5,8 @@ expression: "render(MarkdownDialect::SlackMrkdwn, 3000)"
 ===== part 1 =====
 *Chính sách đổi trả*
 
-Khách hàng được *đổi trả trong 7 ngày* nếu sản phẩm _còn nguyên tem_. Xem chi tiết tại <https://shop.example.com/doi-tra|trang chính sách> hoặc https://shop.example.com.
+Khách hàng được *đổi trả trong 7 ngày* nếu sản phẩm _còn nguyên tem_. Xem chi tiết tại
+<https://shop.example.com/doi-tra|trang chính sách> hoặc https://shop.example.com.
 
 *Các bước*
 
@@ -29,3 +30,13 @@ fn main() {
 Ký tự đặc biệt: a*b_c~d `inline * code` &lt;tag&gt; &amp; more.
 
 ---
+
+⚠️ *dogfood* · 2 things to fix
+
+• ❌ architect: Claude not signed in
+• ❌ assistant: Claude not signed in
+
+✅ 6/6 containers running
+Next line stays a line.
+
+_vps01 · v0.4.0-rc.1_

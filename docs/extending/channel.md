@@ -48,6 +48,10 @@ Replies are rendered by `okbot-render` from CommonMark into `caps.dialect`. If t
 differs from every existing dialect, add a `MarkdownDialect` variant in `okbot-core` and its renderer in
 `okbot-render`, with snapshot tests (`insta`) for headings, lists, code, links and tables.
 
+The input is read the way chat apps show text ([ADR 0009](../adr/0009-chat-text-layout.md)): every line break
+is kept, a line after a list starts a new paragraph, and a `-# ` line is a note (small print: Discord subtext,
+emphasis elsewhere). A new dialect writes notes in its own small or quiet form.
+
 ## 4. Test
 
 - Unit tests for event conversion, with recorded platform payloads in `tests/fixtures/`.

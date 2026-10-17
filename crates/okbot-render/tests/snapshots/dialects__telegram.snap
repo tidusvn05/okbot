@@ -5,7 +5,8 @@ expression: "render(MarkdownDialect::TelegramHtml, 4096)"
 ===== part 1 =====
 <b>Chính sách đổi trả</b>
 
-Khách hàng được <b>đổi trả trong 7 ngày</b> nếu sản phẩm <i>còn nguyên tem</i>. Xem chi tiết tại <a href="https://shop.example.com/doi-tra">trang chính sách</a> hoặc https://shop.example.com.
+Khách hàng được <b>đổi trả trong 7 ngày</b> nếu sản phẩm <i>còn nguyên tem</i>. Xem chi tiết tại
+<a href="https://shop.example.com/doi-tra">trang chính sách</a> hoặc https://shop.example.com.
 
 <b>Các bước</b>
 
@@ -27,3 +28,13 @@ Khách hàng được <b>đổi trả trong 7 ngày</b> nếu sản phẩm <i>c�
 Ký tự đặc biệt: a*b_c~d <code>inline * code</code> &lt;tag&gt; &amp; more.
 
 ———
+
+⚠️ <b>dogfood</b> · 2 things to fix
+
+• ❌ architect: Claude not signed in
+• ❌ assistant: Claude not signed in
+
+✅ 6/6 containers running
+Next line stays a line.
+
+<i>vps01 · v0.4.0-rc.1</i>

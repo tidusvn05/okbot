@@ -117,7 +117,9 @@ get the usage line, without calling the tool. `/help` lists the commands the per
   offer to this person reads as "not available to you". Prompts work as in agent turns.
 - **Readable output.** The text blocks of the result are sent as Markdown, as is; an error result gets ⚠️. A
   server that also serves agents can check the `command` claim and answer in sentences instead of JSON. A tool
-  that only shows a prompt may return no text: okbot then sends nothing.
+  that only shows a prompt may return no text: okbot then sends nothing. Lay text out for chat
+  ([ADR 0009](../adr/0009-chat-text-layout.md)): the conclusion on the first line, one fact per line, `-# ` for
+  small print; every line break is shown.
 - **Not in the history.** Commands and their results are not part of the conversation the agent sees.
 - **Everywhere.** Commands are text messages starting with `/name` (`/name@bot` too), so every platform has
   them. Where the client claims `/` for itself (Slack, Google Chat), mention the bot first:

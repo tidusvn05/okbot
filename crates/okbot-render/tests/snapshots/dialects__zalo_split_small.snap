@@ -4,24 +4,24 @@ expression: "render(MarkdownDialect::ZaloMd, 120)"
 ---
 ===== part 1 =====
 **Chính sách đổi trả**
+
+Khách hàng được **đổi trả trong 7 ngày** nếu sản phẩm _còn nguyên tem_. Xem chi tiết tại
 ===== part 2 =====
-Khách hàng được **đổi trả trong 7 ngày** nếu sản phẩm _còn nguyên tem_. Xem chi tiết tại trang chính sách
-===== part 3 =====
-(https://shop.example.com/doi-tra) hoặc https://shop.example.com.
+trang chính sách (https://shop.example.com/doi-tra) hoặc https://shop.example.com.
 
 **Các bước**
-===== part 4 =====
+===== part 3 =====
 1. Mang hóa đơn đến cửa hàng.
 2. Nhân viên kiểm tra:
    - tem bảo hành
    - phụ kiện đi kèm
 3. Nhận phiếu đổi trả.
-===== part 5 =====
+===== part 4 =====
 > Lưu ý: hàng giảm giá ~~không~~ vẫn được đổi.
-===== part 6 =====
+===== part 5 =====
 - Gói: Cơ bản; Giá: 100k; Ghi chú: _phổ biến_
 - Gói: Nâng cao; Giá: 250k; Ghi chú: `PRO`
-===== part 7 =====
+===== part 6 =====
   fn main() {
       println!("x \* y\_z");
   }
@@ -29,3 +29,13 @@ Khách hàng được **đổi trả trong 7 ngày** nếu sản phẩm _còn ng
 Ký tự đặc biệt: a\*b\_c\~d `inline * code` <tag> & more.
 
 ———
+===== part 7 =====
+⚠️ **dogfood** · 2 things to fix
+
+- ❌ architect: Claude not signed in
+- ❌ assistant: Claude not signed in
+===== part 8 =====
+✅ 6/6 containers running
+Next line stays a line.
+
+_vps01 · v0.4.0-rc.1_

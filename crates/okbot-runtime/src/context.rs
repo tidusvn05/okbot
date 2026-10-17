@@ -57,11 +57,23 @@ fn format_rules(caps: &ChannelCaps) -> String {
              syntax; write URLs as plain text."
         }
         MarkdownDialect::Plain => "Write plain text without Markdown.",
-        _ => "Use Markdown. Prefer lists over tables.",
+        MarkdownDialect::DiscordMd => {
+            "Use Markdown: bold, lists, `code`, links, > quotes. Discord shows no tables. A line \
+             starting with `-# ` is small grey print, for side notes such as versions or sources."
+        }
+        _ => {
+            "Use Markdown. Prefer lists over tables. A line starting with `-# ` is shown as small \
+             print, for side notes such as versions or sources."
+        }
     };
     format!(
-        "{style} One chat message holds about {limit} characters; longer answers are split into \
-         several messages, so stay well below that unless detail is needed."
+        "{style}\n\
+         Chat layout: the first line answers the question or gives the conclusion. Then short \
+         lines and flat lists (no nested lists, no headings in short answers); every line break \
+         is shown. Give what matters to the reader; sum up routine details in one line instead \
+         of listing them. End with the next step when there is one.\n\
+         One chat message holds about {limit} characters; longer answers are split into several \
+         messages, so stay well below that unless detail is needed."
     )
 }
 
