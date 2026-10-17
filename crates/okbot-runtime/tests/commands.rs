@@ -100,6 +100,7 @@ fn start(
     let command = |name: &str, args: &[&str], admins_only| McpCommand {
         name: name.into(),
         description: "Status of a company".into(),
+        descriptions: vec![("ja".into(), "会社の状態".into())],
         mcp: "ops".into(),
         tool: "status".into(),
         args: args.iter().map(|a| CommandArg::parse(a)).collect(),
@@ -226,6 +227,19 @@ async fn commands_call_the_tool_without_the_agent() {
         say(&channel, &handle, "ana", "/help")
             .await
             .contains("/deploy")
+    );
+    // The person's reported language picks the description.
+    let mut ja = inbound("fake:test", "room", "bob", "/help");
+    ja.locale = Some("ja-JP".into());
+    let before = channel.sent_texts().len();
+    channel.inject(ja).await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    assert!(
+        channel.sent_texts()[before..]
+            .join("\n")
+            .contains("`/status <company> [deep]` — 会社の状態")
     );
 
     // Anything else still goes to the agent.

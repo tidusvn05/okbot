@@ -376,6 +376,19 @@ impl Config {
                     "[[command]] `{n}`: description must be one line of at most 100 characters"
                 ));
             }
+            for (code, text) in &c.descriptions {
+                let code_ok =
+                    (2..=3).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_lowercase());
+                if !code_ok
+                    || text.chars().count() > 100
+                    || text.contains('\n')
+                    || text.trim().is_empty()
+                {
+                    return invalid(format!(
+                        "[[command]] `{n}`: descriptions.{code}: a language code (en, ja) and one line of at most 100 characters"
+                    ));
+                }
+            }
             if !self.mcp.iter().any(|m| m.name == c.mcp) {
                 return invalid(format!(
                     "[[command]] `{n}`: mcp `{}` is not an [[mcp]] server",

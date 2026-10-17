@@ -205,6 +205,11 @@ pub(crate) fn commands(config: &Config) -> anyhow::Result<Vec<okbot_runtime::Mcp
             Ok(okbot_runtime::McpCommand {
                 name: c.name.clone(),
                 description: c.description.clone(),
+                descriptions: c
+                    .descriptions
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
                 mcp: c.mcp.clone(),
                 tool: c.tool.clone(),
                 args: c

@@ -187,6 +187,8 @@ pub struct McpCommand {
     pub name: String,
     /// One line for `/help` and command menus.
     pub description: String,
+    /// The description in other languages: (language code, text).
+    pub descriptions: Vec<(String, String)>,
     /// The [`ExtraMcp`] server name.
     pub mcp: String,
     /// The tool.
@@ -237,6 +239,15 @@ impl CommandArg {
 }
 
 impl McpCommand {
+    /// The description in `locale`'s language (`ja`, `en-US`), or the default one.
+    pub fn description_for(&self, locale: Option<&str>) -> &str {
+        let lang = locale
+            .and_then(|l| l.split(['-', '_']).next())
+            .map(str::to_ascii_lowercase);
+        lang.and_then(|l| self.descriptions.iter().find(|(code, _)| *code == l))
+            .map_or(self.description.as_str(), |(_, text)| text.as_str())
+    }
+
     /// `/name <a> [b] <c...>`.
     pub fn usage(&self) -> String {
         let mut out = format!("/{}", self.name);

@@ -64,7 +64,7 @@ async fn execute(
         return format!("Only administrators can use `/{}`.", command.name);
     }
     if matches!(rest, "help" | "?" | "-h" | "--help") {
-        return describe(command);
+        return describe(command, event.locale.as_deref());
     }
     let token = crate::identity::token_for(shared, extra, event, admin, Some(&command.name));
     let http = reqwest::Client::new();
@@ -81,7 +81,7 @@ async fn execute(
                     command.name
                 )));
             };
-            match arguments(command, rest, &schema) {
+            match arguments(command, rest, &schema, event.locale.as_deref()) {
                 Ok(args) => session.call(&command.tool, args).await.map(Ok),
                 Err(usage) => Ok(Err(usage)),
             }
@@ -108,17 +108,18 @@ async fn execute(
 }
 
 /// Usage and description.
-pub(crate) fn describe(command: &McpCommand) -> String {
+pub(crate) fn describe(command: &McpCommand, locale: Option<&str>) -> String {
     let mut out = format!("`{}`", command.usage());
-    if !command.description.is_empty() {
+    let description = command.description_for(locale);
+    if !description.is_empty() {
         out.push_str(" — ");
-        out.push_str(&command.description);
+        out.push_str(description);
     }
     out
 }
 
 /// The commands `admin` may run, for `/help`.
-pub(crate) fn help(shared: &Shared, admin: bool) -> String {
+pub(crate) fn help(shared: &Shared, admin: bool, locale: Option<&str>) -> String {
     let lines: Vec<String> = shared
         .config
         .commands
@@ -132,7 +133,7 @@ pub(crate) fn help(shared: &Shared, admin: bool) -> String {
                         .iter()
                         .any(|m| m.server.name == c.mcp && m.admins_only))
         })
-        .map(|c| format!("- {}", describe(c)))
+        .map(|c| format!("- {}", describe(c, locale)))
         .collect();
     if lines.is_empty() {
         String::new()
@@ -157,6 +158,7 @@ pub(crate) fn menu(config: &crate::RuntimeConfig) -> Vec<okbot_core::CommandInfo
             } else {
                 c.description.clone()
             },
+            descriptions: c.descriptions.clone(),
             params: c
                 .args
                 .iter()
@@ -177,6 +179,7 @@ pub(crate) fn menu(config: &crate::RuntimeConfig) -> Vec<okbot_core::CommandInfo
         out.push(okbot_core::CommandInfo {
             name: name.into(),
             description: description.into(),
+            descriptions: Vec::new(),
             params: Vec::new(),
         });
     }
@@ -222,12 +225,13 @@ fn arguments(
     command: &McpCommand,
     rest: &str,
     schema: &Value,
+    locale: Option<&str>,
 ) -> Result<Map<String, Value>, String> {
     let props = schema.get("properties").and_then(Value::as_object);
     let known = |k: &str| {
         props.is_some_and(|p| p.contains_key(k)) || command.args.iter().any(|a| a.name == k)
     };
-    let usage = |why: String| format!("{why}\nUsage: {}", describe(command));
+    let usage = |why: String| format!("{why}\nUsage: {}", describe(command, locale));
     let mut out = command.with.clone();
     let mut positional = command.args.iter();
     let mut next = positional.next();
@@ -306,6 +310,7 @@ mod tests {
         McpCommand {
             name: "logs".into(),
             description: "Log events".into(),
+            descriptions: vec![("ja".into(), "ログ".into())],
             mcp: "ops".into(),
             tool: "company_logs".into(),
             args: args.iter().map(|a| CommandArg::parse(a)).collect(),
@@ -336,13 +341,14 @@ mod tests {
             &c,
             "freach agent-sales limit=50 deep=yes level=error",
             &schema(),
+            None,
         )
         .unwrap();
         assert_eq!(
             Value::Object(args),
             json!({"company": "freach", "service": "agent-sales", "limit": 50, "deep": true, "level": "error"})
         );
-        let args = arguments(&c, "freach", &schema()).unwrap();
+        let args = arguments(&c, "freach", &schema(), None).unwrap();
         assert_eq!(
             Value::Object(args),
             json!({"company": "freach", "level": "warn"})
@@ -352,17 +358,17 @@ mod tests {
     #[test]
     fn rest_takes_the_line() {
         let c = command(&["company", "note..."]);
-        let args = arguments(&c, "acme  Lan (sales) a=b ", &schema()).unwrap();
+        let args = arguments(&c, "acme  Lan (sales) a=b ", &schema(), None).unwrap();
         assert_eq!(args["note"], "Lan (sales) a=b");
-        let args = arguments(&c, "acme \"quoted text\"", &schema()).unwrap();
+        let args = arguments(&c, "acme \"quoted text\"", &schema(), None).unwrap();
         assert_eq!(args["note"], "quoted text");
         // Named arguments may come before the rest; a quoted one is text.
-        let args = arguments(&c, "acme deep=yes Lan", &schema()).unwrap();
+        let args = arguments(&c, "acme deep=yes Lan", &schema(), None).unwrap();
         assert_eq!(
             (args["deep"].clone(), args["note"].clone()),
             (json!(true), json!("Lan"))
         );
-        let args = arguments(&c, "acme \"deep=yes Lan\"", &schema()).unwrap();
+        let args = arguments(&c, "acme \"deep=yes Lan\"", &schema(), None).unwrap();
         assert_eq!(args["note"], "deep=yes Lan");
     }
 
@@ -370,25 +376,28 @@ mod tests {
     fn usage_errors() {
         let c = command(&["company", "service?"]);
         assert!(
-            arguments(&c, "", &schema())
+            arguments(&c, "", &schema(), None)
                 .unwrap_err()
                 .starts_with("Missing `company`")
         );
         assert!(
-            arguments(&c, "a b c", &schema())
+            arguments(&c, "a b c", &schema(), None)
                 .unwrap_err()
                 .contains("Usage: `/logs <company> [service]`")
         );
         assert!(
-            arguments(&c, "a limit=x", &schema())
+            arguments(&c, "a limit=x", &schema(), None)
                 .unwrap_err()
                 .contains("integer")
         );
         // A key the tool does not know is an ordinary word.
-        assert_eq!(arguments(&c, "a x=1", &schema()).unwrap()["service"], "x=1");
+        assert_eq!(
+            arguments(&c, "a x=1", &schema(), None).unwrap()["service"],
+            "x=1"
+        );
         let c = command(&[]);
         assert!(
-            arguments(&c, "", &schema())
+            arguments(&c, "", &schema(), None)
                 .unwrap_err()
                 .contains("Missing `company`"),
             "schema requires it"

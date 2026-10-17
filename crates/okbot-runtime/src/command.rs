@@ -72,7 +72,8 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
     match command {
         Command::Help => {
             let admin = s.is_admin(event).await;
-            help_text(&s.config.bot_name) + &crate::mcp_command::help(s, admin)
+            help_text(&s.config.bot_name)
+                + &crate::mcp_command::help(s, admin, event.locale.as_deref())
         }
         Command::WhoAmI => whoami(s, event).await,
         // Personal bots handle `/pair` before commands reach a conversation (dispatch).

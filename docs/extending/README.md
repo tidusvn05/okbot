@@ -98,6 +98,7 @@ at once, and the same way every time. Use it for the everyday operations; leave 
 [[command]]
 name = "logs"                              # /logs — a-z, 0-9, _ (what every platform accepts)
 description = "Recent errors of a service" # /help and command menus
+descriptions = { ja = "サービスの最近のエラー" } # by the person's app language (menus, /help)
 mcp = "ops"                                # an [[mcp]] server
 tool = "company_logs"
 args = ["company", "service", "since?"]    # positional; `x?` optional, `x...` the rest of the line

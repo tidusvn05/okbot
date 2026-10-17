@@ -352,35 +352,51 @@ impl Channel for TelegramChannel {
 
     async fn set_commands(&self, commands: &[okbot_core::CommandInfo]) -> Result<(), ChannelError> {
         // The menu only inserts `/name `: the description shows what to type after it.
-        let list: Vec<(String, String)> = commands
-            .iter()
-            .map(|c| {
-                let mut d = c.description.trim().to_string();
-                let params: Vec<String> = c
-                    .params
-                    .iter()
-                    .map(|p| {
-                        if p.required {
-                            format!("<{}>", p.name)
-                        } else {
-                            format!("[{}]", p.name)
-                        }
-                    })
-                    .collect();
-                if !params.is_empty() {
-                    d = format!("{} — {d}", params.join(" "));
-                }
-                if d.is_empty() {
-                    d.clone_from(&c.name);
-                }
-                (c.name.clone(), d.chars().take(256).collect())
-            })
-            .collect();
-        self.shared
-            .api
-            .set_my_commands(&list)
+        let menu = |language: Option<&str>| -> Vec<(String, String)> {
+            commands
+                .iter()
+                .map(|c| {
+                    let description = language
+                        .and_then(|l| c.descriptions.iter().find(|(code, _)| code == l))
+                        .map_or(c.description.as_str(), |(_, text)| text.as_str());
+                    let params: Vec<String> = c
+                        .params
+                        .iter()
+                        .map(|p| {
+                            if p.required {
+                                format!("<{}>", p.name)
+                            } else {
+                                format!("[{}]", p.name)
+                            }
+                        })
+                        .collect();
+                    let mut d = description.trim().to_string();
+                    if !params.is_empty() {
+                        d = format!("{} — {d}", params.join(" "));
+                    }
+                    if d.is_empty() {
+                        d.clone_from(&c.name);
+                    }
+                    (c.name.clone(), d.chars().take(256).collect())
+                })
+                .collect()
+        };
+        let api = &self.shared.api;
+        api.set_my_commands(&menu(None), None)
             .await
-            .map_err(channel_error)
+            .map_err(channel_error)?;
+        let mut languages: Vec<&str> = commands
+            .iter()
+            .flat_map(|c| c.descriptions.iter().map(|(code, _)| code.as_str()))
+            .collect();
+        languages.sort_unstable();
+        languages.dedup();
+        for language in languages {
+            api.set_my_commands(&menu(Some(language)), Some(language))
+                .await
+                .map_err(channel_error)?;
+        }
+        Ok(())
     }
 
     async fn send(

@@ -48,6 +48,8 @@ pub struct CommandInfo {
     pub name: String,
     /// One line, at most 100 characters.
     pub description: String,
+    /// The description in other languages: (language code such as `en`, `ja`, text).
+    pub descriptions: Vec<(String, String)>,
     /// Positional parameters, required ones first.
     pub params: Vec<CommandParam>,
 }

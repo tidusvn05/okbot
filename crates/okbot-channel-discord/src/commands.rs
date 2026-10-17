@@ -10,6 +10,27 @@ use twilight_model::application::interaction::application_command::{
 };
 use twilight_model::id::Id;
 
+/// Discord's locales (application command localization).
+const LOCALES: &[&str] = &[
+    "id", "da", "de", "en-GB", "en-US", "es-ES", "es-419", "fr", "hr", "it", "lt", "hu", "nl",
+    "no", "pl", "pt-BR", "ro", "fi", "sv-SE", "vi", "tr", "cs", "el", "bg", "ru", "uk", "hi", "th",
+    "zh-CN", "ja", "zh-TW", "ko",
+];
+
+/// Language codes (`en`, `ja`) as Discord locales (`en-US` and `en-GB`, `ja`); unknown ones are left out.
+fn localizations(texts: &[(String, String)]) -> Option<std::collections::HashMap<String, String>> {
+    let map: std::collections::HashMap<String, String> = texts
+        .iter()
+        .flat_map(|(code, text)| {
+            LOCALES
+                .iter()
+                .filter(move |l| l.split('-').next() == Some(code.as_str()))
+                .map(move |l| ((*l).to_string(), clip(text, 100)))
+        })
+        .collect();
+    (!map.is_empty()).then_some(map)
+}
+
 fn clip(text: &str, max: usize) -> String {
     let text = text.trim();
     let text = if text.is_empty() { "-" } else { text };
@@ -28,7 +49,7 @@ pub(crate) fn definitions(commands: &[CommandInfo]) -> Vec<Command> {
                 default_member_permissions: None,
                 dm_permission: None,
                 description: clip(&c.description, 100),
-                description_localizations: None,
+                description_localizations: localizations(&c.descriptions),
                 guild_id: None,
                 id: None,
                 integration_types: None,
@@ -96,6 +117,10 @@ mod tests {
         let defs = definitions(&[CommandInfo {
             name: "allow".into(),
             description: "Allow a LINE user".into(),
+            descriptions: vec![
+                ("ja".into(), "LINE ユーザーを許可".into()),
+                ("en".into(), "Allow".into()),
+            ],
             params: vec![
                 CommandParam {
                     name: "company".into(),
@@ -115,6 +140,12 @@ mod tests {
         assert_eq!(json[0]["options"][0]["type"], 3);
         assert_eq!(json[0]["options"][0]["required"], true);
         assert_eq!(json[0]["options"][1]["required"], false);
+        assert_eq!(
+            json[0]["description_localizations"]["ja"],
+            "LINE ユーザーを許可"
+        );
+        assert_eq!(json[0]["description_localizations"]["en-GB"], "Allow");
+        assert_eq!(json[0]["description_localizations"]["en-US"], "Allow");
 
         let data: CommandData = serde_json::from_value(serde_json::json!({
             "id": "1", "name": "allow", "type": 1,

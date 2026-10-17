@@ -70,6 +70,10 @@ pub struct CommandSection {
     /// One line for `/help` and command menus (at most 100 characters).
     #[serde(default)]
     pub description: String,
+    /// The description in other languages, by language code (`{ en = "…", ja = "…" }`): menus show the
+    /// one matching the person's app language, `/help` the one matching their reported locale.
+    #[serde(default)]
+    pub descriptions: BTreeMap<String, String>,
     /// The `[[mcp]]` server.
     pub mcp: String,
     /// The tool to call.

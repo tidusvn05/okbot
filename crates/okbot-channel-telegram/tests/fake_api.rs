@@ -331,6 +331,7 @@ async fn command_menu_lists_parameters() {
         .set_commands(&[okbot_core::CommandInfo {
             name: "status".into(),
             description: "Company status".into(),
+            descriptions: vec![("ja".into(), "会社の状態".into())],
             params: vec![
                 okbot_core::CommandParam {
                     name: "company".into(),
@@ -346,9 +347,14 @@ async fn command_menu_lists_parameters() {
         }])
         .await
         .unwrap();
-    let set = &calls(&fake, "setMyCommands")[0];
+    let set = calls(&fake, "setMyCommands");
     assert_eq!(
-        set["commands"],
+        set[0]["commands"],
         json!([{"command": "status", "description": "<company> [deep] — Company status"}])
+    );
+    assert_eq!(set[1]["language_code"], "ja");
+    assert_eq!(
+        set[1]["commands"][0]["description"],
+        "<company> [deep] — 会社の状態"
     );
 }

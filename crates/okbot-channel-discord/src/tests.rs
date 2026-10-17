@@ -218,6 +218,7 @@ async fn slash_commands_register_and_arrive_as_text() {
         .set_commands(&[okbot_core::CommandInfo {
             name: "status".into(),
             description: "Status".into(),
+            descriptions: Vec::new(),
             params: vec![okbot_core::CommandParam {
                 name: "company".into(),
                 required: true,

@@ -224,15 +224,21 @@ impl TelegramApi {
     }
 
     /// `setMyCommands`: the command menu, as `(command, description)`.
+    /// `language_code`: the menu for users whose app is in that language (none: everyone else).
     pub(crate) async fn set_my_commands(
         &self,
         commands: &[(String, String)],
+        language_code: Option<&str>,
     ) -> Result<(), TelegramError> {
         let list: Vec<Value> = commands
             .iter()
             .map(|(c, d)| json!({"command": c, "description": d}))
             .collect();
-        self.call::<Value>("setMyCommands", &json!({ "commands": list }), Self::SHORT)
+        let mut body = json!({ "commands": list });
+        if let Some(code) = language_code {
+            body["language_code"] = json!(code);
+        }
+        self.call::<Value>("setMyCommands", &body, Self::SHORT)
             .await
             .map(drop)
     }
