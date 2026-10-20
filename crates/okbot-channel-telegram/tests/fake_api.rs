@@ -358,3 +358,28 @@ async fn command_menu_lists_parameters() {
         "<company> [deep] — 会社の状態"
     );
 }
+
+#[tokio::test]
+async fn a_users_direct_chat_is_their_id() {
+    let (_fake, base) = fake_api().await;
+    let channel = TelegramChannel::new(config(
+        &base,
+        Delivery::Polling {
+            timeout: Duration::from_secs(1),
+        },
+    ));
+    let key = channel
+        .open_direct(&okbot_core::UserId::new("12345"))
+        .await
+        .unwrap();
+    assert_eq!(
+        key,
+        okbot_core::ConversationKey::room("telegram:shop".parse().unwrap(), "12345")
+    );
+    assert!(
+        channel
+            .open_direct(&okbot_core::UserId::new("@lan"))
+            .await
+            .is_err()
+    );
+}

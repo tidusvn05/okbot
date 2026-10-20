@@ -349,3 +349,73 @@ fn people_link_accounts() {
         assert!(error.contains(needle), "{error}");
     }
 }
+
+#[test]
+fn notify_targets_load_and_their_tokens_are_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n\
+         [channels.discord.ops]\ntoken_env = \"D\"\n[people.luan]\naccounts = [\"discord:ops/1\"]\n\
+         [[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\nauth = \"signed\"\n\
+         [[notify]]\nname = \"alerts\"\ntoken_env = \"T\"\n\
+         to = [\"room:discord:ops|42|7|-\", \"admins\", \"person:luan\", \"user:discord:ops/2\"]\n",
+    );
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.notify[0].name, "alerts");
+    assert_eq!(config.notify[0].to.len(), 4);
+    // A signed [[mcp]] secret never reaches the agent, so callers may share it.
+    assert!(config.secret_names().contains(&"T".to_string()));
+}
+
+#[test]
+fn rejects_bad_notify_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[notify]]\nname = \"alerts\"\ntoken_env = \"N\"\nto = [\"admins\"]\n",
+            "[http] listen",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"Alerts\"\ntoken_env = \"N\"\nto = [\"admins\"]\n",
+            "name `Alerts`",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"admins\"]\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"admins\"]\n",
+            "defined twice",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"n\"\nto = [\"admins\"]\n",
+            "token_env must be",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[notify]]\nname = \"a\"\ntoken_env = \"T\"\nto = [\"admins\"]\n",
+            "agents get",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = []\n",
+            "no target",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"everyone\"]\n",
+            "`everyone`",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"person:luan\"]\n",
+            "not in [people]",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"user:zalo:shop/1\"]\n",
+            "not in [channels]",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"room:slack:corp|T1|C1|-\"]\n",
+            "not in [channels]",
+        ),
+    ];
+    for (text, expected) in cases {
+        write(dir.path(), text);
+        let error = Config::load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected:?} not in {error:?}");
+    }
+}

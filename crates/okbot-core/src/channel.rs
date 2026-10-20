@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::caps::ChannelCaps;
-use crate::id::ChannelId;
+use crate::id::{ChannelId, ConversationKey, UserId};
 use crate::message::{InboundEvent, RenderedMessage, ReplyTarget, SentRef};
 use crate::prompt::{Prompt, PromptAnswer};
 use crate::webhook::WebhookHandler;
@@ -137,6 +137,14 @@ pub trait Channel: Send + Sync {
         _keep_buttons: bool,
     ) -> Result<(), ChannelError> {
         Err(ChannelError::Unsupported("prompt"))
+    }
+
+    /// The direct chat with `user`, opened if needed, for messages the bot starts (notifications)
+    /// to someone who has not written to it yet. Platforms whose bots cannot start a direct chat,
+    /// or need an extra permission for it, return [`ChannelError::Unsupported`]; the runtime then
+    /// only uses direct chats it has already seen.
+    async fn open_direct(&self, _user: &UserId) -> Result<ConversationKey, ChannelError> {
+        Err(ChannelError::Unsupported("open_direct"))
     }
 
     /// Lists the bot's commands in the platform's command menu. Called once, before

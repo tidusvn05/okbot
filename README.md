@@ -35,6 +35,9 @@ touch your files.
   asked and where, and can ask that person directly with buttons and forms (approvals, one-time codes)
   that never pass through the agent. `[[command]]` turns a tool into a chat command (`/logs acme 24h`)
   that answers without the agent, with platform command menus. See [docs/extending](docs/extending/README.md).
+- **Notifications from your programs.** `[[notify]]` gives a monitor, CI job or service one HTTP call
+  (`POST /notify/alerts`, or `okbot send alerts "…"`) to reach the rooms and people you list, on every platform,
+  rendered for each, without an agent. See [docs/notify.md](docs/notify.md).
 - **Personal or team.** A `personal` bot answers only you, on every platform you pair with
   `okbot pair`, with one shared memory; a `team` bot keeps one memory per person.
 - **Many bots per machine.** A bot is a directory; `okbot` creates, checks, runs and supervises them

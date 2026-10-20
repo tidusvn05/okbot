@@ -25,6 +25,8 @@ pub(crate) struct File {
     pub(crate) mcp: Vec<McpSection>,
     #[serde(default)]
     pub(crate) command: Vec<CommandSection>,
+    #[serde(default)]
+    pub(crate) notify: Vec<NotifySection>,
 }
 
 /// `[[mcp]]`: an extra MCP server (streamable HTTP) the agent may call, next to `kb` and `bot`.
@@ -89,6 +91,22 @@ pub struct CommandSection {
     /// Only `[bot] admins` may run it (servers that are `admins_only` imply it).
     #[serde(default)]
     pub admins_only: bool,
+}
+
+/// `[[notify]]`: a named destination other programs post to (ADR 0010). `POST /notify/<name>` with
+/// `Authorization: Bearer <token>` sends a message to every target in `to`, rendered for each
+/// platform; callers cannot choose other chats.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotifySection {
+    /// The name in the URL (`alerts`): a-z, 0-9, `-` and `_`.
+    pub name: String,
+    /// Variable (environment or `.env`) holding the bearer token callers send. Never one that an
+    /// agent receives (a bearer `[[mcp]]` token).
+    pub token_env: String,
+    /// Where messages go: `room:<conversation>` (as `/whoami` shows it),
+    /// `user:<platform>:<instance>/<user id>`, `person:<id>` or `admins`.
+    pub to: Vec<String>,
 }
 
 /// `[schedule]`: reminders and routines (design §5.6).

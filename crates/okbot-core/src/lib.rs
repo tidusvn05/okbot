@@ -61,6 +61,7 @@ mod id;
 mod knowledge;
 mod memory;
 mod message;
+mod notify;
 mod prompt;
 mod render;
 mod secret;
@@ -83,6 +84,7 @@ pub use memory::{MemoryEntry, MemoryError, MemoryNote, MemoryScope, MemoryStore}
 pub use message::{
     Attachment, InboundEvent, OutboundMessage, RenderedMessage, ReplyTarget, SentRef,
 };
+pub use notify::NotifyTo;
 pub use prompt::{
     ButtonStyle, FieldStyle, Form, FormField, MAX_BUTTONS, MAX_FIELDS, Prompt, PromptAnswer,
     PromptButton,

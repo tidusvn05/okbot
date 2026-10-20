@@ -541,6 +541,19 @@ impl Channel for DiscordChannel {
         })
     }
 
+    async fn open_direct(&self, user: &UserId) -> Result<ConversationKey, ChannelError> {
+        let dm = self
+            .http
+            .create_private_channel(parse_id(user.as_str())?)
+            .await
+            .map_err(failed)?
+            .model()
+            .await
+            .map_err(failed)?;
+        // The same key as the direct messages that user sends (no guild).
+        Ok(ConversationKey::room(self.id.clone(), dm.id.to_string()))
+    }
+
     async fn edit(&self, sent: &SentRef, message: &RenderedMessage) -> Result<(), ChannelError> {
         let channel = parse_id(&sent.target.conversation.room)?;
         let none = AllowedMentions::default();

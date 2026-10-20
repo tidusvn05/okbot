@@ -176,6 +176,8 @@ pub trait Channel: Send + Sync + 'static {
     async fn send(&self, to: &ReplyTarget, msg: &RenderedMessage) -> Result<SentRef>;
     async fn edit(&self, _sent: &SentRef, _msg: &RenderedMessage) -> Result<()> { Err(Error::Unsupported) }
     async fn typing(&self, _to: &ReplyTarget) -> Result<()> { Ok(()) }
+    /// A direct chat with a user who never wrote (Discord, Telegram); others stay Unsupported.
+    async fn open_direct(&self, _user: &UserId) -> Result<ConversationKey> { Err(Error::Unsupported) }
 
     /// Webhook platforms (Google Chat, Slack Events API) return routes mounted on the shared HTTP server.
     fn http_routes(&self) -> Option<axum::Router> { None }
@@ -189,6 +191,10 @@ pub struct ChannelCaps {
     pub typing: bool,
 }
 ```
+
+Programs other than chat users reach the same channels through `[[notify]]` targets (`POST /notify/<name>`,
+ADR 0010): the operator lists rooms and people, okbot renders the text per platform, and direct chats come from
+those the bot has seen or from `open_direct`.
 
 The core depends only on `Channel` and `ChannelCaps`. A new platform needs: an adapter crate, a
 `MarkdownDialect` if none fits, a `[channels.<platform>.*]` config section, and a feature in `okbot`.

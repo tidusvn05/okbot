@@ -134,7 +134,11 @@ async fn whoami(s: &Shared, event: &InboundEvent) -> String {
         }
     }
     if s.is_admin(event).await {
-        reply.push_str(" You are an administrator.");
+        let _ = write!(
+            reply,
+            " You are an administrator. For `[[notify]] to`, this chat is `{}`.",
+            okbot_core::NotifyTo::room_address(&event.conversation)
+        );
     }
     reply
 }

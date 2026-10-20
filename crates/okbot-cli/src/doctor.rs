@@ -520,10 +520,86 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
                 check_owners(&store, &mut r).await;
             }
             check_reminders(&config, &store, &mut r).await;
+            check_notify(&config, &store, &mut r).await;
         }
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// Platforms whose bots open a direct chat themselves (the others need a first message).
+const OPENS_DIRECT: &[&str] = &["discord", "telegram"];
+
+/// `[[notify]]`: the caller token is set, and every person it names can be reached.
+async fn check_notify(config: &Config, store: &okbot_store::SqliteStore, r: &mut Report) {
+    use okbot_core::{ConversationStore as _, NotifyTo};
+    let reachable = async |account: &str| {
+        let Ok((channel, user)) = okbot_config::parse_account(account) else {
+            return false;
+        };
+        OPENS_DIRECT.contains(&channel.platform())
+            || matches!(store.direct_chat(&channel, &user).await, Ok(Some(_)))
+    };
+    for n in &config.notify {
+        let label = format!("notify {}", n.name);
+        if config.secret(&n.token_env).is_err() {
+            r.add(
+                &label,
+                Status::Fail,
+                format!(
+                    "{} is not set (callers send it as a bearer token)",
+                    n.token_env
+                ),
+            );
+            continue;
+        }
+        let mut waiting = Vec::new();
+        for target in n.to.iter().filter_map(|t| t.parse::<NotifyTo>().ok()) {
+            match target {
+                NotifyTo::User(channel, user) => {
+                    let account = format!("{channel}/{user}");
+                    if !reachable(&account).await {
+                        waiting.push(account);
+                    }
+                }
+                NotifyTo::Admins => {
+                    for account in &config.bot.admins {
+                        if !reachable(account).await {
+                            waiting.push(account.clone());
+                        }
+                    }
+                }
+                // One chat per person: reachable when any of their accounts is.
+                NotifyTo::Person(id) => {
+                    let accounts = config.people.get(&id).map(|p| p.accounts.as_slice());
+                    let mut any = false;
+                    for account in accounts.unwrap_or_default() {
+                        any = any || reachable(account).await;
+                    }
+                    if !any && id != okbot_runtime::OWNER {
+                        waiting.push(format!("person:{id}"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if waiting.is_empty() {
+            r.add(
+                &label,
+                Status::Ok,
+                format!("{} target(s); POST /notify/{}", n.to.len(), n.name),
+            );
+        } else {
+            r.add(
+                &label,
+                Status::Warn,
+                format!(
+                    "not reachable until they write to the bot in a direct chat: {}",
+                    waiting.join(", ")
+                ),
+            );
+        }
+    }
 }
 
 /// Reminders: the time zone they are read in, and firings that were not delivered.

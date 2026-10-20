@@ -19,6 +19,7 @@ mod live;
 mod mcp_client;
 mod mcp_command;
 mod metrics;
+mod notify;
 mod policy;
 mod schedule;
 #[cfg(test)]
@@ -37,7 +38,9 @@ use okbot_core::{
 };
 use tokio::sync::{Notify, mpsc};
 
-pub use config::{ArgKind, CommandArg, ExtraMcp, McpCommand, OWNER, RuntimeConfig, ScheduleConfig};
+pub use config::{
+    ArgKind, CommandArg, ExtraMcp, McpCommand, NotifyRoute, OWNER, RuntimeConfig, ScheduleConfig,
+};
 pub use http::HttpOptions;
 
 /// Building the runtime failed.
@@ -120,6 +123,8 @@ pub(crate) struct Shared {
     pub(crate) issued: identity::Issued,
     /// `http://<listen>/interact` once the HTTP server is up (for signed run tokens).
     pub(crate) interact_url: std::sync::OnceLock<String>,
+    /// Notification ids already delivered (`POST /notify`), to drop retries.
+    pub(crate) notified: notify::Recent,
 }
 
 impl Shared {
@@ -259,6 +264,7 @@ impl RuntimeBuilder {
             prompts: interact::Prompts::default(),
             issued: identity::Issued::default(),
             interact_url: std::sync::OnceLock::new(),
+            notified: crate::notify::Recent::default(),
         });
         Ok(Runtime {
             shared: shared.clone(),

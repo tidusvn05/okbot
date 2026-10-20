@@ -13,6 +13,7 @@ mod owner;
 mod people;
 mod registry;
 mod run;
+mod send;
 mod service;
 mod task;
 
@@ -80,6 +81,8 @@ enum Command {
     /// Link one person's accounts on several platforms (shared profile and memory).
     #[command(subcommand, alias = "person")]
     People(people::PeopleCommand),
+    /// Send a message through the running bot to a `[[notify]]` target (cron jobs, scripts).
+    Send(send::SendArgs),
     /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
@@ -141,6 +144,7 @@ async fn main() -> ExitCode {
     let json = match &cli.command {
         Command::New { args, .. } | Command::Init(args) => args.json,
         Command::Doctor(args) => args.json,
+        Command::Send(args) => args.json,
         _ => false,
     };
     let result = match cli.command {
@@ -164,6 +168,7 @@ async fn main() -> ExitCode {
         Command::Profile(args) => owner::profile(&args),
         Command::Pair(args) => owner::pair(&args).await,
         Command::People(command) => people::run(command),
+        Command::Send(args) => send::run(args).await,
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),

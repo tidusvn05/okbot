@@ -20,9 +20,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use okbot_core::{
-    Attachment, CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, InboundSink,
-    LengthUnit, MarkdownDialect, MessageId, RenderedMessage, ReplyTarget, Secret, SentRef,
-    WebhookHandler, WebhookRequest, WebhookResponse, async_trait,
+    Attachment, CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, ConversationKey,
+    InboundSink, LengthUnit, MarkdownDialect, MessageId, RenderedMessage, ReplyTarget, Secret,
+    SentRef, UserId, WebhookHandler, WebhookRequest, WebhookResponse, async_trait,
 };
 
 pub use api::{API_BASE, TelegramApi, TelegramError};
@@ -412,6 +412,17 @@ impl Channel for TelegramChannel {
             target: to.clone(),
             message_id: MessageId::new(id.to_string()),
         })
+    }
+
+    /// A private chat's id is the user's id. Telegram still refuses messages to someone who has
+    /// not started the bot; sending then fails.
+    async fn open_direct(&self, user: &UserId) -> Result<ConversationKey, ChannelError> {
+        if user.as_str().parse::<i64>().is_err() {
+            return Err(ChannelError::Failed(
+                format!("not a Telegram user id: {user}").into(),
+            ));
+        }
+        Ok(ConversationKey::room(self.shared.id.clone(), user.as_str()))
     }
 
     async fn edit(&self, sent: &SentRef, message: &RenderedMessage) -> Result<(), ChannelError> {
