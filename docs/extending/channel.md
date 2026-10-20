@@ -29,6 +29,7 @@ A channel crate may depend on `okbot-core` and `okbot-render` only (`scripts/che
 | `send(to, message)` | Post `message.text` (already rendered and split) to `to.conversation`; return the platform message id |
 | `edit` | Only when `caps.edit`; the default returns `Unsupported` |
 | `typing` | Best effort; the default does nothing |
+| `open_direct(user)` | Only when the platform lets a bot start a direct chat with someone who never wrote to it: return the same `ConversationKey` that person's direct messages arrive with. The default returns `Unsupported`, and the runtime then uses only direct chats it has seen ([notifications](../notify.md)) |
 | `webhook()` | For push delivery: an `Arc<dyn WebhookHandler>` mounted at `/<name>/<instance>` on `[http].listen`. Verify the platform's signature there |
 
 Normalizing events (`InboundEvent`):

@@ -172,6 +172,20 @@ async fn whoami_shows_the_linked_person() {
 }
 
 #[tokio::test]
+async fn whoami_gives_admins_the_notify_address_of_the_chat() {
+    let h = Harness::start_with(FakeAgent::echo("fake"), |c| {
+        c.access
+            .admins
+            .insert(("fake:test".parse().unwrap(), "ana".into()));
+    });
+    h.say("/whoami").await;
+    h.settle().await;
+    let sent = h.channel.sent_texts();
+    assert!(sent[0].contains("`room:fake:test|-|room|-`"), "{sent:?}");
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn coalesces_messages_sent_during_a_turn() {
     let h = Harness::start(FakeAgent::sleeping("fake", Duration::from_millis(300)));
     h.say("one").await;

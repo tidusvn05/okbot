@@ -121,6 +121,34 @@ pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
             ),
         );
     }
+    if !shared.config.notify.is_empty() {
+        let state = shared.clone();
+        router = router.route(
+            "/notify/{name}",
+            axum::routing::post(
+                move |axum::extract::Path(name): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let state = state.clone();
+                    async move {
+                        let bearer = headers
+                            .get(header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.strip_prefix("Bearer "))
+                            .map(str::trim);
+                        let reply = crate::notify::post(&state, &name, bearer, &body).await;
+                        let mut response = (reply.status, axum::Json(reply.body)).into_response();
+                        if let Some(wait) = reply.retry_after
+                            && let Ok(value) = wait.as_secs().max(1).to_string().parse()
+                        {
+                            response.headers_mut().insert(header::RETRY_AFTER, value);
+                        }
+                        response
+                    }
+                },
+            ),
+        );
+    }
     for channel in shared.channels.values() {
         if let Some(handler) = channel.webhook() {
             let path = format!("/{}", handler.path().trim_start_matches('/'));
@@ -236,11 +264,14 @@ mod tests {
     }
 
     fn shared() -> Arc<Shared> {
+        shared_with(RuntimeConfig::new("okbot", std::env::temp_dir()))
+    }
+
+    fn shared_with(config: RuntimeConfig) -> Arc<Shared> {
         let channel: Arc<dyn Channel> = Arc::new(HookChannel(
             "hook:test".parse().unwrap(),
             ChannelCaps::basic(),
         ));
-        let config = RuntimeConfig::new("okbot", std::env::temp_dir());
         Arc::new(Shared {
             gate: Gate::new(config.access.clone()),
             config,
@@ -257,6 +288,7 @@ mod tests {
             prompts: crate::interact::Prompts::default(),
             issued: crate::identity::Issued::default(),
             interact_url: std::sync::OnceLock::new(),
+            notified: crate::notify::Recent::default(),
         })
     }
 
@@ -313,5 +345,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(too_big.status(), 413);
+    }
+
+    #[tokio::test]
+    async fn notify_route_needs_the_targets_token() {
+        let app = router(&shared(), 1024);
+        let absent = app
+            .oneshot(
+                Request::post("/notify/alerts")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(absent.status(), 404, "no [[notify]]: no route");
+
+        let mut config = RuntimeConfig::new("okbot", std::env::temp_dir());
+        config.notify = vec![crate::NotifyRoute {
+            name: "alerts".into(),
+            token: okbot_core::Secret::new("t0k".into()),
+            to: vec!["room:hook:test|-|r1|-".parse().unwrap()],
+        }];
+        let app = router(&shared_with(config), 1024);
+        let call = |token: &'static str| {
+            Request::post("/notify/alerts")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::from(r#"{"text":"hi"}"#))
+                .unwrap()
+        };
+        let wrong = app.clone().oneshot(call("nope")).await.unwrap();
+        assert_eq!(wrong.status(), 401);
+        // The test channel cannot send: a permanent failure for its only chat.
+        let right = app.oneshot(call("t0k")).await.unwrap();
+        assert_eq!(right.status(), 502);
+        let json = body(right).await;
+        assert_eq!(json["failed"][0]["to"], "room:hook:test|-|r1|-");
+        assert_eq!(json["failed"][0]["retry"], false);
     }
 }

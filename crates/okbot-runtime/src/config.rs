@@ -164,6 +164,19 @@ pub struct RuntimeConfig {
     pub mcp: Vec<ExtraMcp>,
     /// Chat commands that call `[[mcp]]` tools directly (`[[command]]`).
     pub commands: Vec<McpCommand>,
+    /// Named destinations other programs post to (`[[notify]]`, `POST /notify/<name>`).
+    pub notify: Vec<NotifyRoute>,
+}
+
+/// A `[[notify]]` destination: the token callers present and where its messages go.
+#[derive(Debug, Clone)]
+pub struct NotifyRoute {
+    /// The name in `/notify/<name>`.
+    pub name: String,
+    /// The bearer token callers send.
+    pub token: Secret<String>,
+    /// The targets, in order.
+    pub to: Vec<okbot_core::NotifyTo>,
 }
 
 /// An MCP server from the configuration and the bearer token it expects.
@@ -350,6 +363,7 @@ impl RuntimeConfig {
             schedule: ScheduleConfig::default(),
             mcp: Vec::new(),
             commands: Vec::new(),
+            notify: Vec::new(),
         }
     }
 

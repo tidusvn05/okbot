@@ -26,6 +26,12 @@ pub enum IdError {
     /// A channel id is not `platform:instance`.
     #[error("channel id `{0}` must look like `platform:instance`, for example `zalo:shop`")]
     ChannelFormat(String),
+    /// A conversation key is not in its escaped four-part storage format.
+    #[error("invalid conversation key `{0}`")]
+    ConversationFormat(String),
+    /// A `[[notify]]` destination is not one of the accepted forms.
+    #[error("notify target {0}")]
+    NotifyTarget(String),
 }
 
 fn check_slug(kind: &'static str, value: &str) -> Result<(), IdError> {
@@ -200,6 +206,58 @@ impl ConversationKey {
     }
 }
 
+impl FromStr for ConversationKey {
+    type Err = IdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let invalid = || IdError::ConversationFormat(value.to_string());
+        let mut parts = Vec::new();
+        let mut part = String::new();
+        let mut chars = value.chars();
+        let mut escaped = false;
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    let next = chars.next().ok_or_else(invalid)?;
+                    if !matches!(next, '\\' | '|' | '-') {
+                        return Err(invalid());
+                    }
+                    escaped = true;
+                    part.push(next);
+                }
+                '|' => {
+                    parts.push(if part == "-" && !escaped {
+                        None
+                    } else {
+                        Some(part)
+                    });
+                    part = String::new();
+                    escaped = false;
+                }
+                _ => part.push(ch),
+            }
+        }
+        parts.push(if part == "-" && !escaped {
+            None
+        } else {
+            Some(part)
+        });
+        if parts.len() != 4 {
+            return Err(invalid());
+        }
+        let key = Self {
+            channel: parts[0].as_deref().ok_or_else(invalid)?.parse()?,
+            space: parts[1].clone(),
+            room: parts[2].clone().ok_or_else(invalid)?,
+            thread: parts[3].clone(),
+        };
+        if key.to_string() != value {
+            return Err(invalid());
+        }
+        Ok(key)
+    }
+}
+
 /// Stable text form used as a storage key: parts joined by `|`, with `\` and `|` escaped and `-`
 /// standing for a missing part (a literal `-` is escaped as `\-`).
 impl fmt::Display for ConversationKey {
@@ -267,6 +325,14 @@ mod tests {
 
     proptest! {
         #[test]
+        fn conversation_key_round_trip(
+            space in proptest::option::of(".{0,20}"), room in ".{0,20}",
+            thread in proptest::option::of(".{0,20}"),
+        ) {
+            let key = ConversationKey { channel: "discord:main".parse().unwrap(), space, room, thread };
+            prop_assert_eq!(key.to_string().parse::<ConversationKey>().unwrap(), key);
+        }
+        #[test]
         fn conversation_key_text_is_injective(
             a in proptest::option::of(".{0,6}"), b in ".{0,6}", c in proptest::option::of(".{0,6}"),
             d in proptest::option::of(".{0,6}"), e in ".{0,6}", g in proptest::option::of(".{0,6}"),
@@ -275,6 +341,21 @@ mod tests {
             let k1 = ConversationKey { channel: channel.clone(), space: a, room: b, thread: c };
             let k2 = ConversationKey { channel, space: d, room: e, thread: g };
             prop_assert_eq!(k1 == k2, k1.to_string() == k2.to_string());
+        }
+    }
+
+    #[test]
+    fn conversation_parser_checks_canonical_escaping() {
+        for value in ["discord:main|-|a\\|b|\\-", "discord:main|\\-|\\\\|-"] {
+            assert_eq!(value.parse::<ConversationKey>().unwrap().to_string(), value);
+        }
+        for value in [
+            "bad",
+            "discord:main|-|-|-",
+            "discord:main|-|x|dangling\\",
+            "discord:main|-|a\\q|-",
+        ] {
+            assert!(value.parse::<ConversationKey>().is_err(), "{value}");
         }
     }
 }

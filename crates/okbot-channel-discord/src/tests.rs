@@ -181,6 +181,30 @@ async fn sends_edits_and_types_without_pinging() {
     );
 }
 
+#[tokio::test]
+async fn opens_a_direct_chat_with_the_same_key_as_inbound_dms() {
+    let calls = Arc::new(Calls::default());
+    let app = axum::Router::new().fallback(fake).with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let channel = DiscordChannel::new(DiscordConfig {
+        id: channel(),
+        token: Secret::new("Bot test-token".into()),
+        message_content: false,
+        http_proxy: Some(addr.to_string()),
+    });
+    let key = channel.open_direct(&UserId::new("7")).await.unwrap();
+    assert_eq!(key, ConversationKey::room(self::channel(), "901"));
+    let calls = calls.0.lock().unwrap().clone();
+    let open = calls
+        .iter()
+        .find(|c| c.0 == "POST" && c.1.ends_with("/users/@me/channels"))
+        .unwrap();
+    assert_eq!(open.2["recipient_id"], "7");
+    assert!(channel.open_direct(&UserId::new("x")).await.is_err());
+}
+
 #[test]
 fn install_url_has_the_needed_permissions() {
     assert_eq!(BOT_PERMISSIONS, 274_877_975_552);

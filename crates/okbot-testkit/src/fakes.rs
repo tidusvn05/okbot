@@ -204,6 +204,7 @@ pub struct FakeChannel {
     prompt_updates: Mutex<Vec<(String, String, bool)>>,
     typing: AtomicUsize,
     ready: tokio::sync::Notify,
+    opens_direct: bool,
 }
 
 impl std::fmt::Debug for FakeChannel {
@@ -227,7 +228,15 @@ impl FakeChannel {
             prompt_updates: Mutex::new(Vec::new()),
             typing: AtomicUsize::new(0),
             ready: tokio::sync::Notify::new(),
+            opens_direct: false,
         }
+    }
+
+    /// Lets [`Channel::open_direct`](okbot_core::Channel::open_direct) open a direct chat with
+    /// anyone, as room `dm-<user id>` (Discord, Telegram); without it the call is unsupported.
+    pub fn opening_direct_chats(mut self) -> Self {
+        self.opens_direct = true;
+        self
     }
 
     /// Waits until the runtime started this channel, then delivers `event`.
@@ -328,6 +337,19 @@ impl okbot_core::Channel for FakeChannel {
         self.ready.notify_waiters();
         shutdown.cancelled().await;
         Ok(())
+    }
+
+    async fn open_direct(
+        &self,
+        user: &okbot_core::UserId,
+    ) -> Result<okbot_core::ConversationKey, okbot_core::ChannelError> {
+        if !self.opens_direct {
+            return Err(okbot_core::ChannelError::Unsupported("open_direct"));
+        }
+        Ok(okbot_core::ConversationKey::room(
+            self.id.clone(),
+            format!("dm-{user}"),
+        ))
     }
 
     async fn send(

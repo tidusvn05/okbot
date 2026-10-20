@@ -15,6 +15,8 @@ depend on each other; `okbot` is the only place that turns configuration into ob
 | Your own tools for the agent | an MCP server (streamable HTTP, bearer token) | `[[mcp]]` in `okbot.toml` | [below](#your-own-mcp-server) |
 | A chat command for one of your tools | nothing: config only | `[[command]]` in `okbot.toml` | [below](#commands-for-your-tools) |
 | A platform's command menu | `Channel::set_commands` | channel adapter | [below](#commands-for-your-tools) |
+| Notifications from your programs | nothing: config only | `[[notify]]` in `okbot.toml` | [../notify.md](../notify.md) |
+| Bot-started direct chats | `Channel::open_direct` | channel adapter | [channel.md](channel.md) |
 
 Every port has a conformance check in `okbot-testkit` where its contract can be tested generically:
 

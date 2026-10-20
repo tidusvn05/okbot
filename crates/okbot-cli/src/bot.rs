@@ -191,6 +191,20 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
         });
     }
     rc.commands = commands(config)?;
+    for n in &config.notify {
+        let token = config.secret(&n.token_env)?;
+        crate::logging::redact(&token);
+        let to =
+            n.to.iter()
+                .map(|t| t.parse())
+                .collect::<Result<_, _>>()
+                .with_context(|| format!("[[notify]] `{}`", n.name))?;
+        rc.notify.push(okbot_runtime::NotifyRoute {
+            name: n.name.clone(),
+            token,
+            to,
+        });
+    }
     Ok(rc)
 }
 

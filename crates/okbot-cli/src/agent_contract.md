@@ -62,6 +62,13 @@ arguments). `okbot doctor` checks the config; restart the bot afterwards. Detail
 `docs/extending/README.md`. Only add servers the user runs or trusts: the agent may call every tool
 of a server, so never point `[[mcp]]` at a server that offers a shell or file access.
 
+To let the user's programs post to chats (alerts, CI, deploys), add a `[[notify]]` target: `name`,
+`token_env` (a new variable in `.env`, never a bearer `[[mcp]]` token) and `to` (`room:<key>` from
+`/whoami` as an admin, `user:<platform>:<instance>/<id>`, `person:<id>`, `admins`). It needs
+`[http] listen`. Callers `POST /notify/<name>` with `Authorization: Bearer <token>` and
+`{"text": "…", "id": "…"}`, or run `okbot send <name> "text"` on the bot's machine. Details:
+`docs/notify.md`.
+
 ## Exit codes
 
 | Code | Meaning |

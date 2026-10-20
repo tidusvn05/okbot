@@ -19,8 +19,8 @@ pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection,
     CommandSection, Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection, McpAuth,
-    McpSection, PersonSection, ProviderSection, ReplyOn, RoomSection, ScheduleSection,
-    SlackSection, TelegramSection, ZaloSection,
+    McpSection, NotifySection, PersonSection, ProviderSection, ReplyOn, RoomSection,
+    ScheduleSection, SlackSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -97,6 +97,15 @@ pub fn parse_account(value: &str) -> Result<(okbot_core::ChannelId, okbot_core::
     Ok((channel, okbot_core::UserId::new(user)))
 }
 
+/// An environment variable name as okbot writes them (`OPS_MCP_TOKEN`).
+fn is_env_name(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with(|c: char| c.is_ascii_digit())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+}
+
 fn is_slug(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -125,6 +134,8 @@ pub struct Config {
     pub mcp: Vec<McpSection>,
     /// `[[command]]`: chat commands that call `[[mcp]]` tools directly.
     pub commands: Vec<CommandSection>,
+    /// `[[notify]]`: named destinations other programs post messages to.
+    pub notify: Vec<NotifySection>,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -171,6 +182,7 @@ impl Config {
             schedule: file.schedule,
             mcp: file.mcp,
             commands: file.command,
+            notify: file.notify,
             dotenv,
         };
         config.validate()?;
@@ -183,6 +195,7 @@ impl Config {
         self.validate_schedule()?;
         self.validate_mcp()?;
         self.validate_commands()?;
+        self.validate_notify()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -336,12 +349,7 @@ impl Config {
                     m.name
                 ));
             }
-            let plain = !m.token_env.is_empty()
-                && !m.token_env.starts_with(|c: char| c.is_ascii_digit())
-                && m.token_env
-                    .bytes()
-                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
-            if !plain {
+            if !is_env_name(&m.token_env) {
                 return invalid(format!(
                     "[[mcp]] `{}`: token_env must be a variable name such as OPS_MCP_TOKEN",
                     m.name
@@ -435,6 +443,80 @@ impl Config {
         Ok(())
     }
 
+    fn validate_notify(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        if !self.notify.is_empty() && self.http.listen.is_none() {
+            return invalid(
+                "[[notify]] needs [http] listen = \"127.0.0.1:<port>\" (callers post to it)".into(),
+            );
+        }
+        let channels: Vec<String> = self
+            .channels
+            .access()
+            .iter()
+            .map(|(platform, instance, _)| format!("{platform}:{instance}"))
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        for n in &self.notify {
+            let name = &n.name;
+            if !is_slug(name) || name.len() > 64 {
+                return invalid(format!(
+                    "[[notify]] name `{name}`: use a-z, 0-9, `-` and `_` only, at most 64"
+                ));
+            }
+            if !seen.insert(name.as_str()) {
+                return invalid(format!("[[notify]] `{name}` is defined twice"));
+            }
+            if !is_env_name(&n.token_env) {
+                return invalid(format!(
+                    "[[notify]] `{name}`: token_env must be a variable name such as OKBOT_NOTIFY_TOKEN"
+                ));
+            }
+            // The agent receives a bearer [[mcp]] token in its environment: it must not be able
+            // to post notifications with it.
+            if let Some(m) = self
+                .mcp
+                .iter()
+                .find(|m| m.auth == McpAuth::Bearer && m.token_env == n.token_env)
+            {
+                return invalid(format!(
+                    "[[notify]] `{name}`: token_env {} is the token agents get for [[mcp]] `{}`; use another variable",
+                    n.token_env, m.name
+                ));
+            }
+            if n.to.is_empty() {
+                return invalid(format!("[[notify]] `{name}`: `to` names no target"));
+            }
+            for target in &n.to {
+                let parsed: okbot_core::NotifyTo = target
+                    .parse()
+                    .map_err(|e| ConfigError::Invalid(format!("[[notify]] `{name}`: {e}")))?;
+                let channel = match &parsed {
+                    okbot_core::NotifyTo::Room(key) => Some(key.channel.to_string()),
+                    okbot_core::NotifyTo::User(channel, _) => Some(channel.to_string()),
+                    okbot_core::NotifyTo::Person(id) => {
+                        let owner = id == "owner" && self.bot.profile == BotProfile::Personal;
+                        if !owner && !self.people.contains_key(id) {
+                            return invalid(format!(
+                                "[[notify]] `{name}`: `{target}` is not in [people] (`okbot people link`)"
+                            ));
+                        }
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(channel) = channel
+                    && !channels.contains(&channel)
+                {
+                    return invalid(format!(
+                        "[[notify]] `{name}`: `{target}` is on {channel}, which is not in [channels]"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// A secret by variable name: the process environment first, then the bot's `.env`.
     pub fn secret(&self, name: &str) -> Result<Secret<String>, ConfigError> {
         std::env::var(name)
@@ -470,6 +552,7 @@ impl Config {
             names.extend(b.env.iter().cloned());
         }
         names.extend(self.mcp.iter().map(|m| m.token_env.clone()));
+        names.extend(self.notify.iter().map(|n| n.token_env.clone()));
         names.sort();
         names.dedup();
         names
