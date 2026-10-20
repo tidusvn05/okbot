@@ -4,6 +4,24 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.7.0] - 2026-10-20
+
+### Features
+
+- [[notify]] notifications from other programs (ADR 0010) (#28) (d09fb6e)
+
+### Documentation
+
+- [[mcp]] and [[command]] in the README and help-agent; v0.6.0 checklist results (#26) (902bd82)
+
+### Dependencies
+
+- **deps:** okbase 0.2.4 (741011b)
+
+### Other
+
+- reopen development as 0.7.0-dev (#25) (66c9e03)
+
 ## [0.6.0] - 2026-10-17
 
 ### Features
