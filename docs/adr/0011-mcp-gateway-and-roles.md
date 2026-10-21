@@ -47,6 +47,11 @@ admin check).
   and server-to-client requests (sampling, elicitation) are not relayed. Servers ask people through
   `/interact` instead. `GET` streams answer 405, which the protocol allows.
 - JSON-RPC batches are refused (the 2025-06-18 protocol removed them).
+- Only `initialize`, `ping`, notifications other than tool calls, `tools/list` and `tools/call` (with an id)
+  pass the gateway. Resources, prompts and completions would bypass the tool rules, so they are not offered.
+- A confirmation shows the arguments in full, in one message; a call whose request does not fit is
+  declined without asking, because a person can only approve what they can read. An answer that comes
+  after the call stopped waiting says that nothing was done.
 - Tool annotations come from the server the operator configured, so they are trusted as hints for
   confirmation, not as permissions: permissions come only from `okbot.toml` and grants.
 - Schema version 4 adds `tool_calls`, `role_grants` and `agent_runs.person`.

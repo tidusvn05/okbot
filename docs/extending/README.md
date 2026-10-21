@@ -80,7 +80,11 @@ roles = ["ops"]
   chat) can answer. Platforms with buttons (Discord, Telegram, Slack, Google Chat) show buttons; elsewhere the
   message ends with `/approve <code>` and `/deny <code>`, which are answered at once even while the turn waits.
   No answer before the turn's timeout is a refusal, and the agent is told not to retry. `always` asks for every
-  call. Annotations are hints from your server; the permissions are only what `okbot.toml` and grants say.
+  call. The arguments are shown in full; a call whose arguments do not fit one message (about 1500
+  characters) is declined without asking. Annotations are hints from your server; the permissions are only
+  what `okbot.toml` and grants say.
+- Only tools pass the gateway: `resources/*`, `prompts/*` and other methods are answered "not offered through
+  okbot", since they would bypass the tool rules.
 - **Temporary roles.** `okbot role grant ops discord:main/1234 --for 2h` (or `/grant ops discord:main/1234 2h`
   by an administrator in chat) adds a role from `[roles]` until it expires; `okbot role revoke`, `/revoke`,
   `okbot role list` and `/roles` manage them. `admins` and `everyone` cannot be granted, and a grant lasts at

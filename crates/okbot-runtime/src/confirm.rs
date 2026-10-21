@@ -15,22 +15,33 @@ use crate::config::{ConfirmBy, ExtraMcp};
 use crate::gateway::Grant;
 use crate::interact::{self, Kind, Pending};
 
-/// Longest argument text shown.
-const MAX_ARGS: usize = 800;
+/// Longest argument text shown. Longer arguments are not asked about: a person approves only what
+/// they can read in full.
+const MAX_ARGS: usize = 1500;
 
-/// The arguments as indented JSON, shortened.
-fn show_arguments(arguments: &Value) -> String {
+/// What became of a call that needs approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Approval {
+    /// The person allowed it.
+    Allowed,
+    /// Declined, unanswered, or impossible to ask.
+    Declined,
+    /// The request is too long to show in full, so nobody was asked.
+    Unreviewable,
+}
+
+/// The arguments as indented JSON, in full; `None` when longer than [`MAX_ARGS`].
+fn show_arguments(arguments: &Value) -> Option<String> {
     let text = match arguments {
-        Value::Null => return String::new(),
-        Value::Object(map) if map.is_empty() => return String::new(),
+        Value::Null => return Some(String::new()),
+        Value::Object(map) if map.is_empty() => return Some(String::new()),
         v => serde_json::to_string_pretty(v).unwrap_or_default(),
     };
-    let mut out: String = text.chars().take(MAX_ARGS).collect();
-    if out.len() < text.len() {
-        out.push('…');
+    if text.chars().count() > MAX_ARGS {
+        return None;
     }
     // The text sits in a code block: it cannot close it.
-    format!("\n```\n{}\n```", out.replace("```", "'''"))
+    Some(format!("\n```\n{}\n```", text.replace("```", "'''")))
 }
 
 fn button(id: &str, label: &str, style: ButtonStyle) -> PromptButton {
@@ -57,19 +68,37 @@ fn approvers(shared: &Shared, grant: &Grant, by: ConfirmBy) -> Vec<UserId> {
     }
 }
 
-/// Asks for approval of `tool` with `arguments` and waits for the answer. `false` when declined,
-/// unanswered before the turn ends, or impossible to ask.
+/// Asks for approval of `tool` with `arguments` and waits for the answer.
 pub(crate) async fn ask(
     shared: &Shared,
     grant: &Grant,
     server: &ExtraMcp,
     tool: &str,
     arguments: &Value,
-) -> bool {
+) -> Approval {
+    let Some(shown) = show_arguments(arguments) else {
+        tracing::warn!(mcp = %server.server.name, %tool, "arguments too long to review");
+        return Approval::Unreviewable;
+    };
+    match ask_shown(shared, grant, server, tool, &shown).await {
+        Some(true) => Approval::Allowed,
+        Some(false) => Approval::Declined,
+        None => Approval::Unreviewable,
+    }
+}
+
+/// Shows the request with `shown` arguments; `None` when it does not fit one message.
+async fn ask_shown(
+    shared: &Shared,
+    grant: &Grant,
+    server: &ExtraMcp,
+    tool: &str,
+    shown: &str,
+) -> Option<bool> {
     let allowed = approvers(shared, grant, server.rules.confirm_by);
     if allowed.is_empty() {
         tracing::warn!(mcp = %server.server.name, %tool, "no one on this channel can approve the call");
-        return false;
+        return Some(false);
     }
     let who = match server.rules.confirm_by {
         ConfirmBy::Requester => grant.event.author.display_name.clone(),
@@ -77,20 +106,19 @@ pub(crate) async fn ask(
     };
     let markdown = format!(
         "🔐 The assistant wants to use **{tool}** ({}) for {}:{}\nAllow it? ({who} decides)",
-        server.server.name,
-        grant.event.author.display_name,
-        show_arguments(arguments),
+        server.server.name, grant.event.author.display_name, shown,
     );
     let Some(channel) = shared.channels.get(&grant.event.conversation.channel) else {
-        return false;
+        return Some(false);
     };
-    let Some(text) = shared
+    // The whole request must be in the one message the buttons are under.
+    let mut parts = shared
         .renderer
         .render(&markdown, channel.caps())
-        .into_iter()
-        .next()
-    else {
-        return false;
+        .into_iter();
+    let (Some(text), None) = (parts.next(), parts.next()) else {
+        tracing::warn!(mcp = %server.server.name, %tool, "the approval request does not fit one message");
+        return None;
     };
     let prompt = Prompt {
         id: interact::short_id(),
@@ -109,7 +137,7 @@ pub(crate) async fn ask(
         Ok(shown) => shown,
         Err(interact::Shown::NoForms | interact::Shown::Failed(_)) => {
             tracing::warn!(mcp = %server.server.name, %tool, "cannot ask for approval");
-            return false;
+            return Some(false);
         }
     };
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -135,7 +163,7 @@ pub(crate) async fn ask(
         () = grant.done.cancelled() => None,
     };
     if let Some(allow) = answer {
-        return allow;
+        return Some(allow);
     }
     // Not answered: the prompt closes as expired, unless an answer just took it.
     let pending = shared.prompts.lock().remove(&prompt.id);
@@ -150,7 +178,7 @@ pub(crate) async fn ask(
         )
         .await;
     }
-    false
+    Some(false)
 }
 
 #[cfg(test)]
@@ -160,17 +188,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn arguments_are_shown_short_and_fenced() {
-        assert_eq!(show_arguments(&Value::Null), "");
-        assert_eq!(show_arguments(&json!({})), "");
+    fn arguments_are_shown_in_full_or_not_at_all() {
+        assert_eq!(show_arguments(&Value::Null).unwrap(), "");
+        assert_eq!(show_arguments(&json!({})).unwrap(), "");
         assert_eq!(
-            show_arguments(&json!({"env": "prod"})),
+            show_arguments(&json!({"env": "prod"})).unwrap(),
             "\n```\n{\n  \"env\": \"prod\"\n}\n```"
         );
-        let long = show_arguments(&json!({"x": "a".repeat(2000)}));
-        assert!(long.chars().count() < MAX_ARGS + 20, "{}", long.len());
-        assert!(long.contains('…'));
-        let fence = show_arguments(&json!({"x": "```\nboom"}));
+        // Never a shortened view: a hidden key could change what the call does.
+        assert_eq!(
+            show_arguments(&json!({"body": "a".repeat(2000), "to": "x@evil"})),
+            None
+        );
+        let fence = show_arguments(&json!({"x": "```\nboom"})).unwrap();
         assert_eq!(fence.matches("```").count(), 2, "{fence}");
     }
 }

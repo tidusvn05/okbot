@@ -508,15 +508,17 @@ fn same_room(a: &okbot_core::ConversationKey, b: &okbot_core::ConversationKey) -
 /// Releases a tool call waiting for approval and shows who decided.
 async fn release(shared: &Shared, p: Pending, answer: &PromptAnswer) {
     let allow = answer.button == "allow";
-    let outcome = if allow {
-        format!("✅ Allowed by {}", answer.user.display_name)
-    } else {
-        format!("❌ Declined by {}", answer.user.display_name)
+    // The call may have stopped waiting (the agent gave up): then nothing was allowed.
+    let waiting = match p.kind {
+        Kind::Confirm(Some(tx)) => tx.send(allow).is_ok(),
+        _ => false,
     };
-    tracing::info!(prompt = %answer.prompt, user = %answer.user.id, allow, "tool call answered");
-    if let Kind::Confirm(Some(tx)) = p.kind {
-        let _ = tx.send(allow);
-    }
+    let outcome = match (waiting, allow) {
+        (false, _) => "⌛ No longer waiting; nothing was done.".to_string(),
+        (true, true) => format!("✅ Allowed by {}", answer.user.display_name),
+        (true, false) => format!("❌ Declined by {}", answer.user.display_name),
+    };
+    tracing::info!(prompt = %answer.prompt, user = %answer.user.id, allow, waiting, "tool call answered");
     update(shared, &p.sent, p.text, &p.markdown, &outcome, false).await;
 }
 
@@ -581,11 +583,10 @@ pub(crate) async fn sweep(shared: Arc<Shared>, stop: okbot_core::CancellationTok
         }
         let expired: Vec<Pending> = {
             let mut prompts = shared.prompts.lock();
-            // Approvals are closed by the turn that waits for them.
+            // Approvals expire with their turn; one whose call was abandoned is closed here.
             let ids: Vec<String> = prompts
                 .iter()
                 .filter(|(_, p)| !p.busy && p.expires <= Instant::now())
-                .filter(|(_, p)| matches!(p.kind, Kind::Callback { .. }))
                 .map(|(id, _)| id.clone())
                 .collect();
             ids.iter().filter_map(|id| prompts.remove(id)).collect()

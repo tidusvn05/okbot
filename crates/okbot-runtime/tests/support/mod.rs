@@ -113,6 +113,8 @@ pub(crate) enum Step {
     List(&'static str),
     /// `tools/call` of a tool with arguments; the result text (or error) is recorded.
     Call(&'static str, &'static str, Value),
+    /// Any JSON-RPC message; the reply (or the HTTP status) is recorded.
+    Raw(&'static str, Value),
 }
 
 /// An agent that talks MCP to the servers of its turn, as Claude or Codex would.
@@ -221,7 +223,7 @@ impl AgentBackend for ToolAgent {
             std::collections::HashMap::new();
         for step in &self.steps {
             let name = match step {
-                Step::List(name) | Step::Call(name, ..) => *name,
+                Step::List(name) | Step::Call(name, ..) | Step::Raw(name, _) => *name,
             };
             let session = match server(name) {
                 Some((url, token)) if !sessions.contains_key(name) => {
@@ -267,6 +269,13 @@ impl AgentBackend for ToolAgent {
                             Err(status) => json!(status),
                         }
                     }
+                },
+                Step::Raw(name, message) => match server(name) {
+                    None => json!("not offered"),
+                    Some((url, token)) => match rpc_in(&url, &token, session, message).await {
+                        Ok((reply, _)) => reply,
+                        Err(status) => json!(status),
+                    },
                 },
             };
             out.push(result.to_string());

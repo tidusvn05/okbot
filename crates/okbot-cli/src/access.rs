@@ -79,6 +79,20 @@ fn lookback(text: &str) -> anyhow::Result<Duration> {
     Ok(Duration::from_secs(secs))
 }
 
+/// Text from chats and servers with control characters escaped, so it cannot move the cursor,
+/// set the window title or write the clipboard of the operator's terminal.
+fn printable(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            if c.is_control() {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+
 fn local(config: &Config, at: jiff::Timestamp) -> String {
     let tz = config
         .bot
@@ -211,11 +225,11 @@ pub(crate) async fn audit(args: AuditArgs) -> anyhow::Result<()> {
             println!(
                 "{}  {:<24} {}.{:<20} {:<8} {} ({} ms)",
                 local(&config, c.at),
-                c.person,
-                c.server,
-                c.tool,
-                via,
-                outcome,
+                printable(&c.person),
+                printable(&c.server),
+                printable(&c.tool),
+                printable(&via),
+                printable(&outcome),
                 c.duration.as_millis()
             );
         }
@@ -229,6 +243,16 @@ pub(crate) async fn audit(args: AuditArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_characters_are_escaped() {
+        assert_eq!(
+            printable("ok\u{1b}]0;title\u{7}"),
+            "ok\\u{1b}]0;title\\u{7}"
+        );
+        assert_eq!(printable("a\nb"), "a\\nb");
+        assert_eq!(printable("tiếng Việt"), "tiếng Việt");
+    }
 
     #[test]
     fn lookbacks() {

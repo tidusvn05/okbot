@@ -26,6 +26,11 @@ use crate::mcp_client::{self, McpError, SESSION};
 use crate::permission::{self, Who};
 use crate::stdio::Process;
 
+/// How long tool annotations from a listing are trusted.
+const HINTS_TTL: Duration = Duration::from_secs(600);
+/// Local server processes one turn may start.
+const MAX_LOCAL_SESSIONS: usize = 8;
+
 /// Request headers passed on to the server.
 const FORWARDED: [&str; 3] = [SESSION, "mcp-protocol-version", "last-event-id"];
 
@@ -36,7 +41,7 @@ pub(crate) struct Gateway {
     url: OnceLock<String>,
     /// Tool annotations by server and tool, from `tools/list` replies (`null` when a tool has
     /// none).
-    annotations: Mutex<HashMap<(String, String), Value>>,
+    annotations: Mutex<HashMap<(String, String), (Instant, Value)>>,
 }
 
 /// One turn's access: who asked, where, and the credential each server gets.
@@ -118,17 +123,22 @@ impl Gateway {
             if let Some(name) = tool.get("name").and_then(Value::as_str) {
                 known.insert(
                     (server.to_string(), name.to_string()),
-                    tool.get("annotations").cloned().unwrap_or(Value::Null),
+                    (
+                        Instant::now(),
+                        tool.get("annotations").cloned().unwrap_or(Value::Null),
+                    ),
                 );
             }
         }
     }
 
-    /// The annotations of a listed tool (`null`: it has none); `None` when never listed.
+    /// The annotations of a tool listed in the last [`HINTS_TTL`] (`null`: it has none); `None`
+    /// when not listed lately, so a server that changes a tool is asked again.
     fn known(&self, server: &str, tool: &str) -> Option<Value> {
         lock(&self.annotations)
             .get(&(server.to_string(), tool.to_string()))
-            .cloned()
+            .filter(|(at, _)| at.elapsed() < HINTS_TTL)
+            .map(|(_, hints)| hints.clone())
     }
 }
 
@@ -254,7 +264,30 @@ async fn post(
         (Some("tools/list"), Some(id)) => {
             list(&shared, &grant, server, &token, &headers, &message, id).await
         }
-        _ => relay(&shared, &grant, server, &token, &headers, &message).await,
+        (Some(method), _) if relayed(method, id.is_some()) => {
+            relay(&shared, &grant, server, &token, &headers, &message).await
+        }
+        // Resources, prompts and the rest would bypass the tool rules; a `tools/call` without an
+        // id (a notification) would bypass them too.
+        (Some(_), Some(id)) => json_response(
+            StatusCode::OK,
+            None,
+            &rpc_error(id, -32601, "not offered through okbot"),
+        ),
+        _ => json_response(
+            StatusCode::BAD_REQUEST,
+            None,
+            &rpc_error(&Value::Null, -32600, "not offered through okbot"),
+        ),
+    }
+}
+
+/// Methods passed on as they are: the session's own, and notifications other than tool calls.
+fn relayed(method: &str, request: bool) -> bool {
+    if request {
+        matches!(method, "initialize" | "ping")
+    } else {
+        method.starts_with("notifications/")
     }
 }
 
@@ -388,6 +421,9 @@ async fn exchange_local(
             _ => return Ok(not_found()),
         },
         None if message.get("method").and_then(Value::as_str) == Some("initialize") => {
+            if lock(&grant.local).len() >= MAX_LOCAL_SESSIONS {
+                return Err(McpError::Protocol("too many local server sessions".into()));
+            }
             let parent = shared.config.work_dir.join("mcp");
             let process = Process::spawn(local, &parent).map_err(|e| {
                 tracing::warn!(mcp = %server.server.name, error = %e, "cannot start the local MCP server");
@@ -585,16 +621,21 @@ async fn call(
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or(Value::Null);
-            if !crate::confirm::ask(shared, grant, server, &tool, &arguments).await {
-                audit(shared, record(ToolDecision::Declined, None)).await;
-                return json_response(
-                    StatusCode::OK,
+            let refusal = match crate::confirm::ask(shared, grant, server, &tool, &arguments).await
+            {
+                crate::confirm::Approval::Allowed => None,
+                crate::confirm::Approval::Declined => Some((
                     None,
-                    &tool_error(
-                        id,
-                        "The person did not approve this call. Do not retry it; tell them it was not done.",
-                    ),
-                );
+                    "The person did not approve this call. Do not retry it; tell them it was not done.",
+                )),
+                crate::confirm::Approval::Unreviewable => Some((
+                    Some("too long to review".to_string()),
+                    "This call is too long for a person to review, so it was not made. Use shorter arguments.",
+                )),
+            };
+            if let Some((error, text)) = refusal {
+                audit(shared, record(ToolDecision::Declined, error)).await;
+                return json_response(StatusCode::OK, None, &tool_error(id, text));
             }
         }
     }

@@ -459,11 +459,14 @@ impl Runtime {
                 })?;
             tasks.spawn(gateway);
         }
+        let sweep = http.is_some() || !shared.config.mcp.is_empty();
         if let Some(options) = http {
             let server = http::serve(options, shared.clone(), channel_stop.clone())
                 .await
                 .map_err(|(addr, source)| RunError::Http { addr, source })?;
             tasks.spawn(server);
+        }
+        if sweep {
             tasks.spawn(interact::sweep(shared.clone(), channel_stop.clone()));
         }
         if shared.tasks.is_some() && shared.config.schedule.enabled {

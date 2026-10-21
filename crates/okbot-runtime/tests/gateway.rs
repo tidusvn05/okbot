@@ -638,3 +638,55 @@ async fn local_servers_run_per_session_with_their_own_environment() {
     eventually(|| std::fs::read_dir(&local).map_or(true, |mut d| d.next().is_none())).await;
     bot.finish().await;
 }
+
+#[tokio::test]
+async fn only_tool_methods_pass_and_long_calls_are_not_asked_about() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (server, calls) = support::mcp_server(tools()).await;
+    let steps = vec![
+        Step::Raw(
+            "ops",
+            json!({"jsonrpc": "2.0", "id": 5, "method": "resources/read", "params": {"uri": "x"}}),
+        ),
+        Step::Raw(
+            "ops",
+            json!({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "drop_db"}}),
+        ),
+        Step::Raw("ops", json!({"jsonrpc": "2.0", "id": 6, "method": "ping"})),
+        Step::Call(
+            "ops",
+            "deploy",
+            json!({"note": "a".repeat(2000), "env": "prod"}),
+        ),
+    ];
+    let bot = Bot::start(server, steps, channel(), |c| {
+        c.mcp[0].rules.confirm = Confirm::Destructive;
+    });
+    bot.say("room", "bob", "go").await;
+    bot.idle().await;
+    let results = bot.agent.results();
+    assert_eq!(results[0]["error"]["message"], "not offered through okbot");
+    assert_eq!(
+        results[1],
+        json!(400),
+        "a tool call without an id is refused"
+    );
+    assert_eq!(results[2]["result"], json!({}), "ping passes");
+    assert!(
+        results[3]
+            .as_str()
+            .unwrap()
+            .contains("too long for a person to review"),
+        "{}",
+        results[3]
+    );
+    assert!(bot.channel.prompts().is_empty(), "nobody was asked");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "nothing reached the server"
+    );
+    let audit = bot.store.recorded_tool_calls();
+    assert_eq!(audit[0].decision, ToolDecision::Declined);
+    assert_eq!(audit[0].error.as_deref(), Some("too long to review"));
+    bot.finish().await;
+}
