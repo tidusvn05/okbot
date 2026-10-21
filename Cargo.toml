@@ -54,7 +54,7 @@ okbot-testkit = { path = "crates/okbot-testkit", version = "0.10.0-dev" }
 
 # External crates.
 # Agent CLI adapters (formerly agent-core).
-agent-call = "0.4.2"
+agent-call = "0.5.0"
 okbase = "0.2.4"
 okbase-mcp = "0.2.4"
 # Zalo Bot API client (unofficial); ring is installed by okbot, so no default TLS provider.
@@ -79,7 +79,7 @@ inquire = { version = "0.9", default-features = false, features = ["crossterm"] 
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)
-rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
+rustyline = { version = "19", default-features = false, features = ["with-file-history"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
 rand = "0.10"
