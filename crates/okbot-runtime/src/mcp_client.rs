@@ -6,9 +6,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 const PROTOCOL: &str = "2025-06-18";
-const SESSION: &str = "mcp-session-id";
+pub(crate) const SESSION: &str = "mcp-session-id";
 /// Larger replies are refused rather than buffered.
-const MAX_BODY: usize = 4 << 20;
+pub(crate) const MAX_BODY: usize = 8 << 20;
 
 /// Calling the server failed (not the tool: a tool's own error is [`ToolOutput::is_error`]).
 #[derive(Debug, thiserror::Error)]
@@ -27,7 +27,7 @@ pub(crate) enum McpError {
 
 /// A transport error without the URL: reqwest names it, and an `[[mcp]]` URL may hold a key and
 /// names internal hosts, while this text reaches logs and chats.
-fn http_error(error: reqwest::Error) -> McpError {
+pub(crate) fn http_error(error: reqwest::Error) -> McpError {
     McpError::Http(error.without_url().to_string())
 }
 
@@ -83,8 +83,9 @@ impl Session {
         Ok(s)
     }
 
-    /// Every tool's input schema, by name (`tools/list`, all pages).
-    pub(crate) async fn tool_schema(&mut self, tool: &str) -> Result<Option<Value>, McpError> {
+    /// Every tool the server lists (`tools/list`, all pages), as the server describes them.
+    pub(crate) async fn tools(&mut self) -> Result<Vec<Value>, McpError> {
+        let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..20 {
             let params = match &cursor {
@@ -92,20 +93,25 @@ impl Session {
                 None => json!({}),
             };
             let page = self.request("tools/list", params).await?;
-            let tools = page.get("tools").and_then(Value::as_array);
-            if let Some(found) = tools
-                .into_iter()
-                .flatten()
-                .find(|t| t.get("name").and_then(Value::as_str) == Some(tool))
-            {
-                return Ok(Some(found.get("inputSchema").cloned().unwrap_or(json!({}))));
+            if let Some(tools) = page.get("tools").and_then(Value::as_array) {
+                out.extend(tools.iter().cloned());
             }
             match page.get("nextCursor").and_then(Value::as_str) {
                 Some(c) if !c.is_empty() => cursor = Some(c.to_string()),
-                _ => return Ok(None),
+                _ => break,
             }
         }
-        Ok(None)
+        Ok(out)
+    }
+
+    /// The input schema of `tool`, when the server lists it.
+    pub(crate) async fn tool_schema(&mut self, tool: &str) -> Result<Option<Value>, McpError> {
+        Ok(self
+            .tools()
+            .await?
+            .into_iter()
+            .find(|t| t.get("name").and_then(Value::as_str) == Some(tool))
+            .map(|t| t.get("inputSchema").cloned().unwrap_or(json!({}))))
     }
 
     /// `tools/call`.
@@ -152,7 +158,7 @@ impl Session {
         let reply = self
             .post(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
             .await?;
-        let message = find_response(&reply, id)
+        let message = find_response(&reply, &json!(id))
             .ok_or_else(|| McpError::Protocol(format!("no answer to {method}")))?;
         if let Some(error) = message.get("error") {
             let text = error
@@ -189,29 +195,38 @@ impl Session {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.starts_with("text/event-stream"));
         let want = message.get("id").cloned();
-        let mut body = Vec::new();
-        while let Some(chunk) = resp.chunk().await.map_err(http_error)? {
-            body.extend_from_slice(&chunk);
-            if body.len() > MAX_BODY {
-                return Err(McpError::Protocol("reply too large".into()));
-            }
-            // An event stream may stay open after the answer: stop once it is there.
-            if sse
-                && let Some(id) = want.as_ref().and_then(Value::as_u64)
-                && find_response(&String::from_utf8_lossy(&body), id).is_some()
-            {
-                break;
-            }
-        }
+        let body = read_reply(&mut resp, sse, want.as_ref()).await?;
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 }
 
-/// The JSON-RPC response with `id` in a JSON body or an event stream.
-fn find_response(body: &str, id: u64) -> Option<Value> {
+/// Reads a reply body. An event stream may stay open after the answer to `want`: reading stops
+/// once it is there.
+pub(crate) async fn read_reply(
+    resp: &mut reqwest::Response,
+    sse: bool,
+    want: Option<&Value>,
+) -> Result<Vec<u8>, McpError> {
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(http_error)? {
+        body.extend_from_slice(&chunk);
+        if body.len() > MAX_BODY {
+            return Err(McpError::Protocol("reply too large".into()));
+        }
+        if sse
+            && let Some(id) = want
+            && find_response(&String::from_utf8_lossy(&body), id).is_some()
+        {
+            break;
+        }
+    }
+    Ok(body)
+}
+
+/// The JSON-RPC response with `id` (a number or a string) in a JSON body or an event stream.
+pub(crate) fn find_response(body: &str, id: &Value) -> Option<Value> {
     let matches = |v: &Value| {
-        v.get("id").and_then(Value::as_u64) == Some(id)
-            && (v.get("result").is_some() || v.get("error").is_some())
+        v.get("id") == Some(id) && (v.get("result").is_some() || v.get("error").is_some())
     };
     let pick = |v: Value| match v {
         Value::Array(items) => items.into_iter().find(|m| matches(m)),
@@ -266,14 +281,26 @@ mod tests {
     #[test]
     fn finds_the_response_in_json_and_events() {
         let json = r#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#;
-        assert_eq!(find_response(json, 2).unwrap()["result"]["ok"], true);
-        assert!(find_response(json, 3).is_none());
+        assert_eq!(
+            find_response(json, &json!(2)).unwrap()["result"]["ok"],
+            true
+        );
+        assert!(find_response(json, &json!(3)).is_none());
+        assert!(
+            find_response(json, &json!("2")).is_none(),
+            "ids keep their type"
+        );
+        let named = r#"{"jsonrpc":"2.0","id":"a-1","result":{}}"#;
+        assert!(find_response(named, &json!("a-1")).is_some());
         let sse = "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\r\n\r\n\
                    id: 7\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\n\
                    data: \"error\":{\"code\":-1,\"message\":\"no\"}}\n\n";
-        assert_eq!(find_response(sse, 2).unwrap()["error"]["message"], "no");
+        assert_eq!(
+            find_response(sse, &json!(2)).unwrap()["error"]["message"],
+            "no"
+        );
         assert!(
-            find_response("data: {\"id\":2}\n\n", 2).is_none(),
+            find_response("data: {\"id\":2}\n\n", &json!(2)).is_none(),
             "not a response"
         );
     }

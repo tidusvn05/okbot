@@ -65,3 +65,6 @@ path to okbot's `[http] listen` address.
   turned into lists. Messages hold 4096 characters.
 - **Ids**: users are `users/<id>` and spaces `spaces/<id>`; `/whoami` shows them for `allow_users`,
   `admins` and per-space `rooms`.
+- **Buttons**: prompts and tool approvals are card buttons; a click arrives as a `CARD_CLICKED` event
+  through the same endpoint or subscription. Only the people a prompt is for can answer; other clicks are
+  ignored. Forms are not offered on Google Chat.

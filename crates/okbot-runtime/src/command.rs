@@ -36,6 +36,18 @@ pub(crate) enum Command {
     Pause(String),
     /// `/note <text>`: append to today's journal.
     Note(String),
+    /// `/approve <code>`: allow a tool call waiting for approval.
+    Approve(String),
+    /// `/deny <code>`: refuse it.
+    Deny(String),
+    /// `/answer <code> <n>`: press button `n` of a prompt shown as text.
+    Answer(String),
+    /// `/roles`: the asker's roles (and, for admins, the temporary grants).
+    Roles,
+    /// `/grant <role> <account> <duration>`: give a role for a while (admins).
+    Grant(String),
+    /// `/revoke <role> <account>`: end a grant (admins).
+    Revoke(String),
 }
 
 impl Command {
@@ -62,6 +74,12 @@ impl Command {
             "resume" | "start" => Some(Self::Resume(rest)),
             "pause" => Some(Self::Pause(rest)),
             "note" => Some(Self::Note(rest)),
+            "approve" => Some(Self::Approve(rest)),
+            "deny" => Some(Self::Deny(rest)),
+            "answer" => Some(Self::Answer(rest)),
+            "roles" => Some(Self::Roles),
+            "grant" => Some(Self::Grant(rest)),
+            "revoke" => Some(Self::Revoke(rest)),
             _ => None,
         }
     }
@@ -71,9 +89,9 @@ impl Command {
 pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) -> String {
     match command {
         Command::Help => {
-            let admin = s.is_admin(event).await;
+            let who = crate::permission::Who::new(s.roles_of(event).await, event);
             help_text(&s.config.bot_name)
-                + &crate::mcp_command::help(s, admin, event.locale.as_deref())
+                + &crate::mcp_command::help(s, &who, event.locale.as_deref())
         }
         Command::WhoAmI => whoami(s, event).await,
         // Personal bots handle `/pair` before commands reach a conversation (dispatch).
@@ -100,6 +118,13 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
         }
         Command::Snooze(when) => snooze(s, &when, event).await,
         Command::Note(text) => note(s, &text, event).await,
+        // Answers are handled before the conversation queue (dispatch); here nothing waits.
+        Command::Approve(_) | Command::Deny(_) | Command::Answer(_) => {
+            "There is no such question waiting for an answer.".to_string()
+        }
+        Command::Roles | Command::Grant(_) | Command::Revoke(_) => {
+            crate::roles::execute(s, command, event).await
+        }
     }
 }
 
@@ -139,6 +164,15 @@ async fn whoami(s: &Shared, event: &InboundEvent) -> String {
             " You are an administrator. For `[[notify]] to`, this chat is `{}`.",
             okbot_core::NotifyTo::room_address(&event.conversation)
         );
+    }
+    let roles: Vec<String> = s
+        .roles_of(event)
+        .await
+        .into_iter()
+        .filter(|r| r != crate::config::ROLE_EVERYONE && r != crate::config::ROLE_ADMINS)
+        .collect();
+    if !roles.is_empty() {
+        let _ = write!(reply, " Your roles: {}.", roles.join(", "));
     }
     reply
 }
@@ -472,6 +506,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/pause <number>`, `/resume <number>`: stop or start a task; new routines start paused\n\
          - `/note <text>`: add a line to today's notes\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
+         - `/roles`: your roles in this assistant\n\
          - `/help`: this message"
     )
 }

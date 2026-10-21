@@ -7,7 +7,8 @@ use std::time::Duration;
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{
     AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, Fire, FireState,
-    NewMessage, PAIRING_MAX_FAILURES, StoreError, StoredMessage, UserId, async_trait,
+    NewMessage, PAIRING_MAX_FAILURES, RoleGrant, StoreError, StoredMessage, ToolCallRecord, Usage,
+    UserId, async_trait,
 };
 
 #[derive(Default)]
@@ -23,6 +24,8 @@ struct State {
     codes: HashMap<String, (Timestamp, u32)>,
     fires: HashMap<(String, Timestamp), Fire>,
     direct: HashMap<(ChannelId, UserId), ConversationKey>,
+    tool_calls: Vec<ToolCallRecord>,
+    grants: HashMap<(String, String), RoleGrant>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -55,6 +58,11 @@ impl MemoryStore {
     /// Recorded agent runs, oldest first.
     pub fn runs(&self) -> Vec<AgentRunRecord> {
         self.lock().runs.clone()
+    }
+
+    /// Recorded tool calls, oldest first.
+    pub fn recorded_tool_calls(&self) -> Vec<ToolCallRecord> {
+        self.lock().tool_calls.clone()
     }
 }
 
@@ -258,13 +266,85 @@ impl ConversationStore for MemoryStore {
             .cloned())
     }
 
+    async fn usage_since(&self, person: &str, since: Timestamp) -> Result<Usage, StoreError> {
+        let state = self.lock();
+        let mut usage = Usage::default();
+        for run in state
+            .runs
+            .iter()
+            .filter(|r| r.person.as_deref() == Some(person) && r.started_at >= since)
+        {
+            usage.turns += 1;
+            usage.tokens += run.usage.map_or(0, |u| u.input + u.output);
+        }
+        Ok(usage)
+    }
+
+    async fn record_tool_call(&self, call: ToolCallRecord) -> Result<(), StoreError> {
+        self.lock().tool_calls.push(call);
+        Ok(())
+    }
+
+    async fn tool_calls(
+        &self,
+        since: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<ToolCallRecord>, StoreError> {
+        Ok(self
+            .lock()
+            .tool_calls
+            .iter()
+            .rev()
+            .filter(|c| c.at >= since)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn grant_role(&self, grant: RoleGrant) -> Result<(), StoreError> {
+        self.lock()
+            .grants
+            .insert((grant.role.clone(), grant.account.clone()), grant);
+        Ok(())
+    }
+
+    async fn revoke_role(&self, role: &str, account: &str) -> Result<bool, StoreError> {
+        let now = self.clock.now();
+        Ok(self
+            .lock()
+            .grants
+            .remove(&(role.to_string(), account.to_string()))
+            .is_some_and(|g| g.expires_at > now))
+    }
+
+    async fn role_grants(&self, now: Timestamp) -> Result<Vec<RoleGrant>, StoreError> {
+        let mut grants: Vec<RoleGrant> = self
+            .lock()
+            .grants
+            .values()
+            .filter(|g| g.expires_at > now)
+            .cloned()
+            .collect();
+        grants.sort_by(|a, b| (&a.role, &a.account).cmp(&(&b.role, &b.account)));
+        Ok(grants)
+    }
+
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError> {
         let now = self.clock.now();
         let mut state = self.lock();
-        let count = |s: &State| s.messages.len() + s.runs.len() + s.seen.len() + s.fires.len();
+        let count = |s: &State| {
+            s.messages.len()
+                + s.runs.len()
+                + s.seen.len()
+                + s.fires.len()
+                + s.tool_calls.len()
+                + s.grants.len()
+        };
         let start = count(&state);
         state.messages.retain(|(_, m)| m.at >= before);
         state.runs.retain(|r| r.started_at >= before);
+        state.tool_calls.retain(|c| c.at >= before);
+        state.grants.retain(|_, g| g.expires_at > now);
         state.seen.retain(|_, expires| *expires > now);
         state
             .fires

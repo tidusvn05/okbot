@@ -1,6 +1,6 @@
 //! Runtime settings. `okbot` builds these from `okbot.toml`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -98,6 +98,8 @@ pub struct FixedReplies {
     pub thinking: String,
     /// To accounts that are not the owner's, on a personal bot.
     pub private: String,
+    /// When a person used up their `[limits]` for the day.
+    pub limit_reached: String,
 }
 
 impl Default for FixedReplies {
@@ -113,6 +115,9 @@ impl Default for FixedReplies {
             thinking: "_Thinking…_".into(),
             private: "This is a private assistant. If it is yours, run `okbot pair` where the bot \
                       runs, then send me `/pair <code>` in a direct message."
+                .into(),
+            limit_reached: "You have reached today's limit for this assistant. Please try again \
+                            later."
                 .into(),
         }
     }
@@ -166,6 +171,10 @@ pub struct RuntimeConfig {
     pub commands: Vec<McpCommand>,
     /// Named destinations other programs post to (`[[notify]]`, `POST /notify/<name>`).
     pub notify: Vec<NotifyRoute>,
+    /// Roles from `[roles]`.
+    pub roles: Roles,
+    /// Per-person limits (`[limits]`).
+    pub limits: Limits,
 }
 
 /// A `[[notify]]` destination: the token callers present and where its messages go.
@@ -179,6 +188,103 @@ pub struct NotifyRoute {
     pub to: Vec<okbot_core::NotifyTo>,
 }
 
+/// Members of the roles in `[roles]` (ADR 0011). `admins` and `everyone` are built in and never
+/// listed here; temporary grants live in the store.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Roles {
+    /// The defined role names.
+    pub names: BTreeSet<String>,
+    /// Roles of single accounts.
+    pub accounts: HashMap<(ChannelId, UserId), BTreeSet<String>>,
+    /// Roles of linked people (`person:<id>`), by person id.
+    pub people: HashMap<String, BTreeSet<String>>,
+}
+
+impl Roles {
+    /// Adds `member` (`platform:instance/user-id` or `person:<id>`) to `role`.
+    pub fn add(&mut self, role: &str, member: Member) {
+        self.names.insert(role.to_string());
+        let set = match member {
+            Member::Account(channel, user) => self.accounts.entry((channel, user)).or_default(),
+            Member::Person(id) => self.people.entry(id).or_default(),
+        };
+        set.insert(role.to_string());
+    }
+}
+
+/// A member of a role.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Member {
+    /// One account.
+    Account(ChannelId, UserId),
+    /// Every account of a linked person.
+    Person(String),
+}
+
+/// The built-in role of `[bot] admins` and the owner of a personal bot.
+pub const ROLE_ADMINS: &str = "admins";
+/// The built-in role everyone the bot answers has.
+pub const ROLE_EVERYONE: &str = "everyone";
+
+/// What one person may use over a rolling 24 hours; zero means no limit. Admins are exempt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Limits {
+    /// Agent turns.
+    pub turns_per_day: u32,
+    /// Input plus output tokens.
+    pub tokens_per_day: u64,
+}
+
+/// Which agent calls wait for a person's approval.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Confirm {
+    /// None.
+    #[default]
+    Never,
+    /// Tools not marked read-only that may be destructive (MCP tool annotations).
+    Destructive,
+    /// Every call.
+    Always,
+}
+
+/// Who approves a call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConfirmBy {
+    /// The person whose message started the turn.
+    #[default]
+    Requester,
+    /// A `[bot] admin` in that chat.
+    Admins,
+}
+
+/// Tools that only some roles may call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restrict {
+    /// Names or patterns with `*`.
+    pub tools: Vec<String>,
+    /// Roles that may call them.
+    pub roles: Vec<String>,
+}
+
+/// Who may use an [`ExtraMcp`] server, where, which tools, and what needs approval (ADR 0011).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct McpRules {
+    /// Roles that may use the server; empty: everyone.
+    pub roles: Vec<String>,
+    /// Rooms where it is offered; empty: everywhere.
+    pub rooms: Vec<(ChannelId, String)>,
+    /// Tools offered (names or patterns); empty: all.
+    pub tools: Vec<String>,
+    /// Tools never offered.
+    pub deny_tools: Vec<String>,
+    /// Tools only some roles may call.
+    pub restrict: Vec<Restrict>,
+    /// Calls that need approval.
+    pub confirm: Confirm,
+    /// Who approves.
+    pub confirm_by: ConfirmBy,
+}
+
 /// An MCP server from the configuration and the bearer token it expects.
 #[derive(Debug, Clone)]
 pub struct ExtraMcp {
@@ -188,9 +294,22 @@ pub struct ExtraMcp {
     pub token: Secret<String>,
     /// Offered only to `[bot] admins`.
     pub admins_only: bool,
-    /// Give the agent a signed run token (who asked, where) instead of the secret itself; the
+    /// Give the server a signed run token (who asked, where) instead of the secret itself; the
     /// server verifies it with the secret and may show prompts through `POST /interact`.
     pub signed: bool,
+    /// Who may use it and how.
+    pub rules: McpRules,
+    /// A local server started per agent session instead of `server.url`.
+    pub stdio: Option<StdioServer>,
+}
+
+/// A local MCP server speaking stdio (ADR 0011).
+#[derive(Debug, Clone)]
+pub struct StdioServer {
+    /// Program and arguments.
+    pub command: Vec<String>,
+    /// The variables it receives; nothing else from okbot's environment.
+    pub env: Vec<(String, Secret<String>)>,
 }
 
 /// A chat command that calls one tool of an [`ExtraMcp`] server, without the agent.
@@ -212,6 +331,8 @@ pub struct McpCommand {
     pub with: serde_json::Map<String, serde_json::Value>,
     /// Only `[bot] admins` may run it.
     pub admins_only: bool,
+    /// Roles that may run it; empty: whoever may call the tool.
+    pub roles: Vec<String>,
 }
 
 /// A positional argument of an [`McpCommand`].
@@ -364,6 +485,8 @@ impl RuntimeConfig {
             mcp: Vec::new(),
             commands: Vec::new(),
             notify: Vec::new(),
+            roles: Roles::default(),
+            limits: Limits::default(),
         }
     }
 

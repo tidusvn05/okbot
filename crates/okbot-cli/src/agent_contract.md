@@ -54,13 +54,20 @@ Only link accounts the user confirms are theirs: linked accounts see each other'
 
 ## Your own MCP servers and chat commands
 
-To give the bot the user's own tools, add an `[[mcp]]` server to `okbot.toml` (`name`, `url`,
-`token_env` naming a variable in `.env`; `auth = "signed"` gives the server who asked and where, and
-lets it show buttons and forms). `[[command]]` turns one of its tools into a chat command that runs
-without the agent (`name`, `mcp`, `tool`, `args = ["company", "since?"]`, `with = {…}` fixed
-arguments). `okbot doctor` checks the config; restart the bot afterwards. Details:
-`docs/extending/README.md`. Only add servers the user runs or trusts: the agent may call every tool
-of a server, so never point `[[mcp]]` at a server that offers a shell or file access.
+To give the bot the user's own tools, add an `[[mcp]]` server to `okbot.toml`: `name`, then either
+`url` and `token_env` (a variable in `.env`; `auth = "signed"` gives the server who asked and where,
+and lets it show buttons and forms) or `command = ["npx", "-y", "…"]` with `env = ["VAR"]` for a
+local stdio server. The agent reaches it through okbot's gateway, which applies the server's rules:
+`roles` and `rooms` (who and where), `tools` / `deny_tools` (patterns with `*`),
+`[[mcp.restrict]] tools = […] roles = […]`, and `confirm = "destructive"` (the person approves each
+risky call with a button or `/approve <code>`). Roles are defined in `[roles] ops = ["discord:main/1",
+"person:lan"]`; `admins` and `everyone` are built in. `okbot role grant ops <account> --for 2h` gives
+one for a while, `okbot audit` lists the tool calls, `[limits] turns_per_day` caps each person.
+`[[command]]` turns one tool into a chat command that runs without the agent (`name`, `mcp`, `tool`,
+`args = ["company", "since?"]`, `with = {…}` fixed arguments, `roles`). `okbot doctor` checks the
+config; restart the bot afterwards. Details: `docs/extending/README.md`. Only add servers the user
+runs or trusts, and never one that offers a shell or file access; prefer `tools = [...]` with
+the tools the bot needs.
 
 To let the user's programs post to chats (alerts, CI, deploys), add a `[[notify]]` target: `name`,
 `token_env` (a new variable in `.env`, never a bearer `[[mcp]]` token) and `to` (`room:<key>` from

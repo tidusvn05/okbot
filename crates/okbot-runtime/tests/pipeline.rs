@@ -686,6 +686,8 @@ async fn configured_mcp_servers_reach_the_agent() {
         token: okbot_core::Secret::new(format!("{name}-secret")),
         admins_only,
         signed: false,
+        rules: okbot_runtime::McpRules::default(),
+        stdio: None,
     };
     let caps = okbot_core::AgentCaps {
         mcp: true,
@@ -703,11 +705,15 @@ async fn configured_mcp_servers_reach_the_agent() {
         ["ops"],
         "admins_only servers are not offered to others"
     );
+    // Through the gateway, with a token for this turn instead of the secret.
+    assert!(turn.mcp[0].url.ends_with("/mcp/ops"), "{}", turn.mcp[0].url);
     let env: Vec<(&str, &str)> = turn
         .env
         .iter()
         .map(|(k, v)| (k.as_str(), v.expose().as_str()))
         .collect();
-    assert_eq!(env, [("OPS_TOKEN", "ops-secret")]);
+    assert_eq!(env.len(), 1);
+    assert_eq!(env[0].0, "OPS_TOKEN");
+    assert_ne!(env[0].1, "ops-secret");
     h.stop().await;
 }

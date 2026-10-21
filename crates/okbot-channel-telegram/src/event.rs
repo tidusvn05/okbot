@@ -7,12 +7,43 @@ use serde::Deserialize;
 /// The largest photo size okbot asks for (the attachment tool reads at most 8 MiB).
 const MAX_PHOTO_BYTES: u64 = 8 * 1024 * 1024;
 
-/// One update; okbot asks only for `message`.
+/// One update; okbot asks for `message` and `callback_query` (button presses).
 #[derive(Debug, Clone, Deserialize)]
+#[expect(clippy::struct_field_names, reason = "the Bot API's field names")]
 pub(crate) struct Update {
     pub(crate) update_id: i64,
     #[serde(default)]
     pub(crate) message: Option<Message>,
+    #[serde(default)]
+    pub(crate) callback_query: Option<CallbackQuery>,
+}
+
+/// A press of an inline button.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CallbackQuery {
+    pub(crate) id: String,
+    from: User,
+    #[serde(default)]
+    pub(crate) message: Option<CallbackMessage>,
+    #[serde(default)]
+    pub(crate) data: Option<String>,
+}
+
+impl CallbackQuery {
+    /// Who pressed.
+    pub(crate) fn user(&self) -> UserRef {
+        UserRef {
+            id: UserId::new(self.from.id.to_string()),
+            display_name: display_name(&self.from),
+            is_bot: self.from.is_bot,
+        }
+    }
+}
+
+/// The message a button belongs to (possibly too old to be returned whole).
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CallbackMessage {
+    pub(crate) message_id: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

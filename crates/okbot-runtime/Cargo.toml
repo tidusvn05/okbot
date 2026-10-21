@@ -34,6 +34,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 okbot-testkit.workspace = true
+futures.workspace = true
 insta.workspace = true
 tempfile.workspace = true
 tower.workspace = true

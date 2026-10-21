@@ -177,18 +177,7 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
         rc.access.allow_users = Some(allow_users);
     }
     for m in &config.mcp {
-        let token = config.secret(&m.token_env)?;
-        crate::logging::redact(&token);
-        rc.mcp.push(okbot_runtime::ExtraMcp {
-            server: okbot_core::McpServer {
-                name: m.name.clone(),
-                url: m.url.clone(),
-                bearer_token_env: m.token_env.clone(),
-            },
-            token,
-            admins_only: m.admins_only,
-            signed: m.auth == okbot_config::McpAuth::Signed,
-        });
+        rc.mcp.push(extra_mcp(config, m)?);
     }
     rc.commands = commands(config)?;
     for n in &config.notify {
@@ -205,7 +194,114 @@ fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             to,
         });
     }
+    rc.roles = roles(config)?;
+    rc.limits = okbot_runtime::Limits {
+        turns_per_day: config.limits.turns_per_day,
+        tokens_per_day: config.limits.tokens_per_day,
+    };
     Ok(rc)
+}
+
+/// One `[[mcp]]` server for the runtime, with its secrets (redacted from logs).
+pub(crate) fn extra_mcp(
+    config: &Config,
+    m: &okbot_config::McpSection,
+) -> anyhow::Result<okbot_runtime::ExtraMcp> {
+    let (token, token_env, stdio) = if m.command.is_empty() {
+        let token = config.secret(&m.token_env)?;
+        (token, m.token_env.clone(), None)
+    } else {
+        let env = m
+            .env
+            .iter()
+            .map(|name| {
+                let value = config.secret(name)?;
+                crate::logging::redact(&value);
+                Ok((name.clone(), value))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        // The agent's variable for its gateway token; the local server needs no token.
+        let name = format!(
+            "OKBOT_MCP_{}_TOKEN",
+            m.name.to_ascii_uppercase().replace('-', "_")
+        );
+        let stdio = okbot_runtime::StdioServer {
+            command: m.command.clone(),
+            env,
+        };
+        (okbot_core::Secret::new(String::new()), name, Some(stdio))
+    };
+    if !token.expose().is_empty() {
+        crate::logging::redact(&token);
+    }
+    Ok(okbot_runtime::ExtraMcp {
+        server: okbot_core::McpServer {
+            name: m.name.clone(),
+            url: m.url.clone(),
+            bearer_token_env: token_env,
+        },
+        token,
+        admins_only: m.admins_only,
+        signed: m.auth == okbot_config::McpAuth::Signed,
+        rules: mcp_rules(m)?,
+        stdio,
+    })
+}
+
+/// `[roles]` for the runtime.
+fn roles(config: &Config) -> anyhow::Result<okbot_runtime::Roles> {
+    let mut roles = okbot_runtime::Roles::default();
+    for (role, members) in &config.roles {
+        // A role without members still exists: grants can fill it.
+        roles.names.insert(role.clone());
+        for member in members {
+            let member = match member.strip_prefix("person:") {
+                Some(id) => okbot_runtime::Member::Person(id.to_string()),
+                None => {
+                    let (channel, user) =
+                        okbot_config::parse_account(member).map_err(anyhow::Error::msg)?;
+                    okbot_runtime::Member::Account(channel, user)
+                }
+            };
+            roles.add(role, member);
+        }
+    }
+    Ok(roles)
+}
+
+/// The rules of one `[[mcp]]` server for the runtime.
+pub(crate) fn mcp_rules(m: &okbot_config::McpSection) -> anyhow::Result<okbot_runtime::McpRules> {
+    let rooms = m
+        .rooms
+        .iter()
+        .map(|r| {
+            let (channel, room) = okbot_config::parse_account(r).map_err(anyhow::Error::msg)?;
+            Ok((channel, room.to_string()))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(okbot_runtime::McpRules {
+        roles: m.roles.clone(),
+        rooms,
+        tools: m.tools.clone(),
+        deny_tools: m.deny_tools.clone(),
+        restrict: m
+            .restrict
+            .iter()
+            .map(|r| okbot_runtime::Restrict {
+                tools: r.tools.clone(),
+                roles: r.roles.clone(),
+            })
+            .collect(),
+        confirm: match m.confirm {
+            okbot_config::Confirm::Never => okbot_runtime::Confirm::Never,
+            okbot_config::Confirm::Destructive => okbot_runtime::Confirm::Destructive,
+            okbot_config::Confirm::Always => okbot_runtime::Confirm::Always,
+        },
+        confirm_by: match m.confirm_by {
+            okbot_config::ConfirmBy::Requester => okbot_runtime::ConfirmBy::Requester,
+            okbot_config::ConfirmBy::Admins => okbot_runtime::ConfirmBy::Admins,
+        },
+    })
 }
 
 /// `[[command]]` for the runtime.
@@ -233,6 +329,7 @@ pub(crate) fn commands(config: &Config) -> anyhow::Result<Vec<okbot_runtime::Mcp
                     .collect(),
                 with: with.as_object().cloned().unwrap_or_default(),
                 admins_only: c.admins_only,
+                roles: c.roles.clone(),
             })
         })
         .collect()

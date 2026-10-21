@@ -93,6 +93,102 @@ pub struct AgentRunRecord {
     pub error: Option<String>,
     /// When the run started.
     pub started_at: Timestamp,
+    /// Who the run was for ([`person_key`]), counted against `[limits]`; `None` for runs nobody
+    /// asked for in chat.
+    pub person: Option<String>,
+}
+
+/// The key a person's usage and audit entries are stored under: `person:<id>` for linked
+/// accounts (`[people]`, or the owner of a personal bot), else the account
+/// `platform:instance/user-id`.
+pub fn person_key(channel: &ChannelId, user: &UserId, person: Option<&str>) -> String {
+    match person {
+        Some(id) => format!("person:{id}"),
+        None => format!("{channel}/{user}"),
+    }
+}
+
+/// What one person used over a period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Usage {
+    /// Agent turns.
+    pub turns: u64,
+    /// Input plus output tokens, as reported.
+    pub tokens: u64,
+}
+
+/// What happened to a tool call (ADR 0011).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ToolDecision {
+    /// Sent to the server.
+    Allowed,
+    /// Refused by the rules (role, room, tool lists).
+    Denied,
+    /// A person declined it (or did not answer) when asked to confirm.
+    Declined,
+}
+
+impl ToolDecision {
+    /// The name stored and shown.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::Denied => "denied",
+            Self::Declined => "declined",
+        }
+    }
+
+    /// Parses [`ToolDecision::as_str`].
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "allowed" => Some(Self::Allowed),
+            "denied" => Some(Self::Denied),
+            "declined" => Some(Self::Declined),
+            _ => None,
+        }
+    }
+}
+
+/// One call of an `[[mcp]]` tool, by an agent or a chat command. Arguments and results are not
+/// kept: they may hold secrets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallRecord {
+    /// The agent run, when an agent made the call.
+    pub run_id: Option<RunId>,
+    /// The `[[command]]`, when a person ran one.
+    pub command: Option<String>,
+    /// Who it was for ([`person_key`]).
+    pub person: String,
+    /// Where.
+    pub conversation: ConversationKey,
+    /// The `[[mcp]]` server.
+    pub server: String,
+    /// The tool.
+    pub tool: String,
+    /// What happened.
+    pub decision: ToolDecision,
+    /// The transport error or the tool's own error flag, when the call failed.
+    pub error: Option<String>,
+    /// Time from the request to the answer (including a confirmation).
+    pub duration: Duration,
+    /// When the call was made.
+    pub at: Timestamp,
+}
+
+/// A role given to an account for a limited time (`okbot role grant`, `/grant`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleGrant {
+    /// A role from `[roles]`.
+    pub role: String,
+    /// The account, as `platform:instance/user-id`.
+    pub account: String,
+    /// Who granted it (an account, or `operator` for the terminal).
+    pub granted_by: String,
+    /// When it was granted.
+    pub granted_at: Timestamp,
+    /// When it ends.
+    pub expires_at: Timestamp,
 }
 
 /// Where one firing of a task is (design §5.6).
@@ -245,7 +341,30 @@ pub trait ConversationStore: Send + Sync {
         user: &UserId,
     ) -> Result<Option<ConversationKey>, StoreError>;
 
-    /// Deletes messages, runs, dedupe marks and finished firings older than `before`. Returns rows
-    /// removed.
+    /// Turns and tokens of `person` ([`person_key`]) in runs started at or after `since`.
+    async fn usage_since(&self, person: &str, since: Timestamp) -> Result<Usage, StoreError>;
+
+    /// Records a tool call.
+    async fn record_tool_call(&self, call: ToolCallRecord) -> Result<(), StoreError>;
+
+    /// Tool calls made at or after `since`, newest first, at most `limit`.
+    async fn tool_calls(
+        &self,
+        since: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<ToolCallRecord>, StoreError>;
+
+    /// Grants a role until `grant.expires_at`, replacing an earlier grant of the same role to the
+    /// same account.
+    async fn grant_role(&self, grant: RoleGrant) -> Result<(), StoreError>;
+
+    /// Ends a grant before it expires. Returns whether there was one.
+    async fn revoke_role(&self, role: &str, account: &str) -> Result<bool, StoreError>;
+
+    /// Grants that have not expired at `now`.
+    async fn role_grants(&self, now: Timestamp) -> Result<Vec<RoleGrant>, StoreError>;
+
+    /// Deletes messages, runs, tool calls, expired grants, dedupe marks and finished firings older
+    /// than `before`. Returns rows removed.
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError>;
 }

@@ -15,3 +15,4 @@ by a new ADR that supersedes the old one; old ADRs are kept.
 | [0008](0008-commands-for-mcp-tools.md) | Chat commands for MCP tools | Accepted |
 | [0009](0009-chat-text-layout.md) | Chat line breaks, `-# ` notes and the reply layout convention | Accepted |
 | [0010](0010-notifications.md) | Notifications from other programs (`[[notify]]`) | Accepted |
+| [0011](0011-mcp-gateway-and-roles.md) | An MCP gateway, roles and per-person limits | Accepted |

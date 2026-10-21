@@ -7,8 +7,10 @@ okbot answers on Slack through **Socket Mode** (`slack` feature, on by default):
 2. Bot token scopes: `app_mentions:read`, `chat:write`, `im:history`, `im:read`.
 3. Event subscriptions (bot events): `app_mention`, `message.im`. Allow users to message the app
    (App Home → Messages tab).
-4. Install the app to the workspace and copy the **bot token** (`xoxb-…`).
-5. `okbot new acme --platform slack` (paste both tokens; they go to `.env`).
+4. Turn on **Interactivity & Shortcuts** (no request URL is needed with Socket Mode): prompts and tool
+   approvals use buttons.
+5. Install the app to the workspace and copy the **bot token** (`xoxb-…`).
+6. `okbot new acme --platform slack` (paste both tokens; they go to `.env`).
 
 ```toml
 [channels.slack.acme]
@@ -21,5 +23,7 @@ reply_on = ["dm", "mention"]
 - Mentions in channels are answered **in a thread**, which is the conversation; direct messages are
   one conversation per person.
 - Slack bots have no typing indicator, so okbot posts "_Thinking…_" and edits it into the answer.
+- Prompts (approvals of tool calls, prompts of your MCP servers) are Block Kit buttons; a press by someone
+  else gets a private "not yours" notice. Forms are not offered on Slack.
 - Formatting uses mrkdwn (`*bold*`, `_italic_`, `<url|text>`); okbot keeps messages under 3000
   characters and splits longer answers.

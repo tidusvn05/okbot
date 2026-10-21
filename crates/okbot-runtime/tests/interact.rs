@@ -1,6 +1,8 @@
 //! Signed run tokens and prompts for `[[mcp]]` servers, end to end over loopback HTTP.
 #![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -8,21 +10,23 @@ use std::time::Duration;
 
 use axum::http::HeaderMap;
 use okbot_core::{
-    AgentCaps, CancellationToken, ChannelCaps, PromptAnswer, Renderer, Secret, SentRef, ToolPolicy,
-    UserRef,
+    CancellationToken, ChannelCaps, PromptAnswer, Renderer, Secret, SentRef, UserRef,
 };
 use okbot_runtime::identity;
 use okbot_runtime::{ExtraMcp, HttpOptions, Runtime, RuntimeConfig};
-use okbot_testkit::{FakeAgent, FakeChannel, ManualClock, MemoryStore, PlainRenderer, inbound};
+use okbot_testkit::{FakeChannel, ManualClock, MemoryStore, PlainRenderer, inbound};
 use serde_json::{Value, json};
 
 const KEY: &str = "server-secret";
 
-/// A stand-in MCP server: records signed callbacks and answers with `reply`.
-async fn callback_server(reply: Value) -> (SocketAddr, Arc<Mutex<Vec<(HeaderMap, String)>>>) {
+type Seen = Arc<Mutex<Vec<(HeaderMap, String)>>>;
+type Calls = Arc<Mutex<Vec<support::Received>>>;
+
+/// A stand-in MCP server: records tool calls and signed callbacks, answers them with `reply`.
+async fn callback_server(reply: Value) -> (SocketAddr, Seen, Calls) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let state = seen.clone();
-    let app = axum::Router::new().route(
+    let callbacks = axum::Router::new().route(
         "/answers",
         axum::routing::post(move |headers: HeaderMap, body: String| {
             let state = state.clone();
@@ -33,10 +37,9 @@ async fn callback_server(reply: Value) -> (SocketAddr, Arc<Mutex<Vec<(HeaderMap,
             }
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (addr, seen)
+    let tools = json!([{"name": "deploy", "inputSchema": {"type": "object"}}]);
+    let (addr, calls) = support::mcp_server_with(tools, callbacks).await;
+    (addr, seen, calls)
 }
 
 async fn eventually(mut check: impl FnMut() -> bool) {
@@ -54,7 +57,7 @@ fn start(
     server: SocketAddr,
 ) -> (
     Arc<FakeChannel>,
-    Arc<FakeAgent>,
+    Arc<support::ToolAgent>,
     okbot_runtime::RuntimeHandle,
     CancellationToken,
     tokio::task::JoinHandle<()>,
@@ -69,20 +72,19 @@ fn start(
         token: Secret::new(KEY.into()),
         admins_only: false,
         signed: true,
+        rules: okbot_runtime::McpRules::default(),
+        stdio: None,
     }];
     config
         .access
         .admins
         .insert(("fake:test".parse().unwrap(), okbot_core::UserId::new("ana")));
     let channel = Arc::new(FakeChannel::new("fake:test", ChannelCaps::basic()));
-    let agent = Arc::new(
-        FakeAgent::echo("fake")
-            .with_caps(AgentCaps {
-                mcp: true,
-                ..AgentCaps::default()
-            })
-            .enforcing(&[ToolPolicy::Web, ToolPolicy::McpOnly]),
-    );
+    let agent = Arc::new(support::ToolAgent::new(vec![support::Step::Call(
+        "ops",
+        "deploy",
+        json!({}),
+    )]));
     let renderer: Arc<dyn Renderer> = Arc::new(PlainRenderer);
     let runtime = Runtime::builder(config)
         .store(Arc::new(MemoryStore::new(Arc::new(ManualClock::default()))))
@@ -116,12 +118,14 @@ fn minted_elsewhere(claims: &identity::Claims) -> String {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one story, told in order
 async fn signed_token_prompt_and_signed_callback() {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let (server, seen) = callback_server(json!({"text": "**done**"})).await;
+    let (server, seen, calls) = callback_server(json!({"text": "**done**"})).await;
     let (channel, agent, handle, stop, task) = start(server);
 
-    // The agent gets a signed token naming the requester, not the secret.
+    // Through the gateway, the server gets a signed token naming the requester; the agent holds
+    // neither it nor the secret.
     channel
         .inject(inbound("fake:test", "room", "ana", "deploy"))
         .await;
@@ -129,9 +133,16 @@ async fn signed_token_prompt_and_signed_callback() {
         .await
         .unwrap();
     let turn = &agent.turns()[0];
-    let (_, token) = turn.env.iter().find(|(k, _)| k == "OPS_TOKEN").unwrap();
-    let token = token.expose().clone();
+    let (_, given) = turn.env.iter().find(|(k, _)| k == "OPS_TOKEN").unwrap();
+    let given = given.expose().clone();
+    let token = calls.lock().unwrap()[0]
+        .bearer
+        .strip_prefix("Bearer ")
+        .unwrap()
+        .to_string();
     assert_ne!(token, KEY);
+    assert_ne!(given, token);
+    assert_ne!(given, KEY);
     let now = jiff::Timestamp::now().as_second();
     let claims = identity::verify(KEY.as_bytes(), &token, now).unwrap();
     assert_eq!(claims.user, "fake:test/ana");
@@ -172,6 +183,32 @@ async fn signed_token_prompt_and_signed_callback() {
     let shown = &channel.prompts()[0];
     assert_eq!(shown.id, id);
     assert_eq!(shown.allowed, [okbot_core::UserId::new("ana")]);
+
+    // A typed answer cannot skip the form behind a button.
+    channel
+        .inject(inbound(
+            "fake:test",
+            "room",
+            "ana",
+            &format!("/answer {id} 1"),
+        ))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent_texts()
+            .last()
+            .unwrap()
+            .contains("with its button"),
+        "{:?}",
+        channel.sent_texts()
+    );
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "nothing reached the callback"
+    );
 
     // An answer goes to the callback, signed, and its reply replaces the buttons.
     channel
@@ -217,6 +254,7 @@ async fn signed_token_prompt_and_signed_callback() {
         "form values never reach the chat"
     );
     assert!(!agent.turns().iter().any(|t| t.prompt.contains("123456")));
+    assert_eq!(agent.results(), [json!("deploy ok")]);
 
     stop.cancel();
     task.await.unwrap();

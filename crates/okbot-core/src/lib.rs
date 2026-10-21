@@ -93,7 +93,8 @@ pub use render::Renderer;
 pub use secret::{Redactor, Secret};
 pub use store::{
     AgentRunRecord, ConversationStore, Fire, FireState, MessageRole, NewMessage,
-    PAIRING_MAX_FAILURES, StoreError, StoredMessage,
+    PAIRING_MAX_FAILURES, RoleGrant, StoreError, StoredMessage, ToolCallRecord, ToolDecision,
+    Usage, person_key,
 };
 pub use task::{
     NewTask, Repeat, Task, TaskChange, TaskError, TaskKind, TaskStatus, TaskStore, format_time,

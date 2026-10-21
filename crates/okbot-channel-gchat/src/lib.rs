@@ -10,6 +10,7 @@ mod api;
 mod auth;
 mod event;
 mod jwt;
+mod prompt;
 mod pubsub;
 mod verify;
 
@@ -18,7 +19,7 @@ use std::time::Duration;
 
 use okbot_core::{
     CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, InboundSink, LengthUnit,
-    MarkdownDialect, MessageId, RenderedMessage, ReplyTarget, SentRef, WebhookHandler,
+    MarkdownDialect, MessageId, Prompt, RenderedMessage, ReplyTarget, SentRef, WebhookHandler,
     WebhookRequest, WebhookResponse, async_trait,
 };
 
@@ -82,10 +83,55 @@ pub struct GChatConfig {
 struct Shared {
     id: ChannelId,
     sink: OnceLock<Arc<dyn InboundSink>>,
+    /// Prompts with buttons, by prompt id.
+    prompts: std::sync::Mutex<std::collections::HashMap<String, prompt::Open>>,
+}
+
+fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Shared {
+    /// A click on a prompt button: checked against the prompt's allowed people, then handed to
+    /// the runtime. Others' clicks are ignored (Chat has no private notice for them here).
+    async fn clicked(&self, click: event::Click) {
+        let found = lock(&self.prompts).get(&click.prompt).map(|open| {
+            (
+                open.allowed.is_empty() || open.allowed.contains(&click.user.id),
+                open.target.clone(),
+                open.name.clone(),
+            )
+        });
+        let Some((allowed, target, name)) = found else {
+            return;
+        };
+        if !allowed {
+            tracing::info!(channel = %self.id, user = %click.user.id, "a prompt was clicked by someone it is not for");
+            return;
+        }
+        let Some(sink) = self.sink.get() else {
+            return;
+        };
+        let answer = okbot_core::PromptAnswer {
+            prompt: click.prompt,
+            button: click.button,
+            values: std::collections::BTreeMap::new(),
+            user: click.user,
+            conversation: target.conversation.clone(),
+            sent: SentRef {
+                target,
+                message_id: MessageId::new(name),
+            },
+        };
+        if sink.answer(answer).await.is_err() {
+            tracing::debug!(channel = %self.id, "runtime stopped; answer dropped");
+        }
+    }
+
     async fn deliver(&self, event: &serde_json::Value) {
+        if let Some(click) = event::to_click(event) {
+            return self.clicked(click).await;
+        }
         let Some(inbound) = event::to_inbound(&self.id, event, jiff::Timestamp::now()) else {
             return;
         };
@@ -173,6 +219,7 @@ impl GChatChannel {
             shared: Arc::new(Shared {
                 id: config.id,
                 sink: OnceLock::new(),
+                prompts: std::sync::Mutex::default(),
             }),
             api,
             caps: ChannelCaps {
@@ -288,6 +335,7 @@ impl Channel for GChatChannel {
                 &to.conversation.room,
                 to.conversation.thread.as_deref(),
                 &message.text,
+                None,
             )
             .await
             .map_err(channel_error)?;
@@ -299,7 +347,66 @@ impl Channel for GChatChannel {
 
     async fn edit(&self, sent: &SentRef, message: &RenderedMessage) -> Result<(), ChannelError> {
         self.api
-            .update_message(sent.message_id.as_str(), &message.text)
+            .update_message(sent.message_id.as_str(), &message.text, None)
+            .await
+            .map_err(channel_error)
+    }
+
+    async fn prompt(&self, to: &ReplyTarget, prompt: &Prompt) -> Result<SentRef, ChannelError> {
+        // Dialogs need a synchronous answer to a click; forms are not offered here.
+        if prompt.buttons.iter().any(|b| b.form.is_some()) {
+            return Err(ChannelError::Unsupported("forms"));
+        }
+        let cards = prompt::cards(prompt);
+        let name = self
+            .api
+            .create_message(
+                &to.conversation.room,
+                to.conversation.thread.as_deref(),
+                &prompt.text,
+                Some(&cards),
+            )
+            .await
+            .map_err(channel_error)?;
+        lock(&self.shared.prompts).insert(
+            prompt.id.clone(),
+            prompt::Open {
+                allowed: prompt.allowed.clone(),
+                cards,
+                target: to.clone(),
+                name: name.clone(),
+            },
+        );
+        Ok(SentRef {
+            target: to.clone(),
+            message_id: MessageId::new(name),
+        })
+    }
+
+    async fn close_prompt(
+        &self,
+        sent: &SentRef,
+        message: &RenderedMessage,
+        keep_buttons: bool,
+    ) -> Result<(), ChannelError> {
+        let kept = {
+            let mut prompts = lock(&self.shared.prompts);
+            let id = prompts
+                .iter()
+                .find(|(_, p)| p.name == sent.message_id.as_str())
+                .map(|(id, _)| id.clone());
+            match id {
+                Some(id) if keep_buttons => prompts.get(&id).map(|p| p.cards.clone()),
+                Some(id) => {
+                    prompts.remove(&id);
+                    None
+                }
+                None => None,
+            }
+        };
+        let cards = kept.unwrap_or_else(|| serde_json::json!([]));
+        self.api
+            .update_message(sent.message_id.as_str(), &message.text, Some(&cards))
             .await
             .map_err(channel_error)
     }

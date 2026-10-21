@@ -97,17 +97,21 @@ impl SlackWeb {
         Ok(answer["user_id"].as_str().unwrap_or_default().to_string())
     }
 
-    /// `chat.postMessage`; returns the message `ts`.
+    /// `chat.postMessage`, with Block Kit `blocks` when given; returns the message `ts`.
     pub async fn post_message(
         &self,
         channel: &str,
         thread_ts: Option<&str>,
         text: &str,
+        blocks: Option<&Value>,
     ) -> Result<String, SlackError> {
         let mut body =
             json!({ "channel": channel, "text": text, "mrkdwn": true, "unfurl_links": false });
         if let Some(ts) = thread_ts {
             body["thread_ts"] = json!(ts);
+        }
+        if let Some(blocks) = blocks {
+            body["blocks"] = blocks.clone();
         }
         let answer = self
             .call("chat.postMessage", &self.bot_token, &body)
@@ -115,14 +119,37 @@ impl SlackWeb {
         Ok(answer["ts"].as_str().unwrap_or_default().to_string())
     }
 
-    /// `chat.update`.
-    pub async fn update(&self, channel: &str, ts: &str, text: &str) -> Result<(), SlackError> {
-        self.call(
-            "chat.update",
-            &self.bot_token,
-            &json!({ "channel": channel, "ts": ts, "text": text }),
-        )
-        .await
-        .map(drop)
+    /// `chat.update`; `blocks` replaces the message's blocks (an empty list removes them).
+    pub async fn update(
+        &self,
+        channel: &str,
+        ts: &str,
+        text: &str,
+        blocks: Option<&Value>,
+    ) -> Result<(), SlackError> {
+        let mut body = json!({ "channel": channel, "ts": ts, "text": text });
+        if let Some(blocks) = blocks {
+            body["blocks"] = blocks.clone();
+        }
+        self.call("chat.update", &self.bot_token, &body)
+            .await
+            .map(drop)
+    }
+
+    /// `chat.postEphemeral`: a message only `user` sees.
+    pub async fn post_ephemeral(
+        &self,
+        channel: &str,
+        user: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+    ) -> Result<(), SlackError> {
+        let mut body = json!({ "channel": channel, "user": user, "text": text });
+        if let Some(ts) = thread_ts {
+            body["thread_ts"] = json!(ts);
+        }
+        self.call("chat.postEphemeral", &self.bot_token, &body)
+            .await
+            .map(drop)
     }
 }

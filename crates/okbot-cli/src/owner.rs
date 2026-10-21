@@ -76,7 +76,7 @@ fn describe(profile: BotProfile) -> &'static str {
     }
 }
 
-async fn store(config: &Config) -> anyhow::Result<SqliteStore> {
+pub(crate) async fn store(config: &Config) -> anyhow::Result<SqliteStore> {
     let state = config.state_dir();
     std::fs::create_dir_all(&state)
         .with_context(|| format!("cannot create {}", state.display()))?;

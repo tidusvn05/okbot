@@ -27,19 +27,46 @@ pub(crate) struct File {
     pub(crate) command: Vec<CommandSection>,
     #[serde(default)]
     pub(crate) notify: Vec<NotifySection>,
+    #[serde(default)]
+    pub(crate) roles: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub(crate) limits: LimitsSection,
+}
+
+/// `[limits]`: what one person may use over a rolling 24 hours (ADR 0011). Administrators are
+/// exempt; zero means no limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LimitsSection {
+    /// Agent turns per person.
+    #[serde(default)]
+    pub turns_per_day: u32,
+    /// Input plus output tokens per person, as the agents report them.
+    #[serde(default)]
+    pub tokens_per_day: u64,
 }
 
 /// `[[mcp]]`: an extra MCP server (streamable HTTP) the agent may call, next to `kb` and `bot`.
-/// The agent sees its tools as `mcp__<name>__<tool>`; every tool of the server is allowed.
+/// The agent sees its tools as `mcp__<name>__<tool>` and reaches them through okbot's gateway,
+/// which applies the rules below (ADR 0011).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpSection {
     /// Server name as the agent sees it (`ops`); `kb` and `bot` are taken.
     pub name: String,
-    /// Endpoint, `http://` or `https://`.
+    /// Endpoint, `http://` or `https://` (or `command` for a local server).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
-    /// Variable (environment or `.env`) holding the bearer token the server expects.
+    /// Variable (environment or `.env`) holding the bearer token the server expects (with `url`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub token_env: String,
+    /// A local server speaking MCP over stdio, started for each agent session:
+    /// `["npx", "-y", "@scope/server"]`. It gets an empty environment and directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
+    /// Variables (environment or `.env`) passed to the `command` server, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<String>,
     /// Offer the server only in turns of `[bot] admins`.
     #[serde(default)]
     pub admins_only: bool,
@@ -47,6 +74,61 @@ pub struct McpSection {
     /// requester (and lets the server show prompts).
     #[serde(default)]
     pub auth: McpAuth,
+    /// Roles that may use the server (`[roles]`, `admins`, `everyone`); empty: everyone.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Rooms where the server is offered, as `platform:instance/room-id`; empty: everywhere.
+    #[serde(default)]
+    pub rooms: Vec<String>,
+    /// Tools offered, as names or patterns with `*`; empty: every tool.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Tools never offered (wins over `tools`).
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+    /// Tools only some roles may call.
+    #[serde(default)]
+    pub restrict: Vec<RestrictSection>,
+    /// Which calls the agent makes need a person's approval first.
+    #[serde(default)]
+    pub confirm: Confirm,
+    /// Who approves them.
+    #[serde(default)]
+    pub confirm_by: ConfirmBy,
+}
+
+/// `[[mcp.restrict]]`: tools matching `tools` may only be called by `roles`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestrictSection {
+    /// Names or patterns with `*`.
+    pub tools: Vec<String>,
+    /// Roles allowed to call them.
+    pub roles: Vec<String>,
+}
+
+/// Which agent calls of an `[[mcp]]` server wait for a person's approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Confirm {
+    /// None.
+    #[default]
+    Never,
+    /// Tools that are not read-only and do not say they are harmless (MCP tool annotations).
+    Destructive,
+    /// Every call.
+    Always,
+}
+
+/// Who approves a call that needs confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfirmBy {
+    /// The person whose message started the turn.
+    #[default]
+    Requester,
+    /// A `[bot] admin` in the same chat.
+    Admins,
 }
 
 /// How the agent authenticates to an `[[mcp]]` server.
@@ -91,9 +173,12 @@ pub struct CommandSection {
     /// Only `[bot] admins` may run it (servers that are `admins_only` imply it).
     #[serde(default)]
     pub admins_only: bool,
+    /// Roles that may run it; empty: whoever may use the tool on its server.
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
-/// `[[notify]]`: a named destination other programs post to (ADR 0010). `POST /notify/<name>` with
+/// `[[notify]]`: a named destination other programs post to (ADR 0011). `POST /notify/<name>` with
 /// `Authorization: Bearer <token>` sends a message to every target in `to`, rendered for each
 /// platform; callers cannot choose other chats.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

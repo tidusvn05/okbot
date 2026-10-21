@@ -131,12 +131,20 @@ fn config(env: &Env, delivery: Delivery) -> GChatConfig {
 }
 
 #[derive(Default)]
-struct Collect(Mutex<Vec<InboundEvent>>);
+struct Collect(
+    Mutex<Vec<InboundEvent>>,
+    Mutex<Vec<okbot_core::PromptAnswer>>,
+);
 
 #[async_trait]
 impl InboundSink for Collect {
     async fn deliver(&self, event: InboundEvent) -> Result<(), SinkClosed> {
         self.0.lock().unwrap().push(event);
+        Ok(())
+    }
+
+    async fn answer(&self, answer: okbot_core::PromptAnswer) -> Result<(), SinkClosed> {
+        self.1.lock().unwrap().push(answer);
         Ok(())
     }
 }
@@ -283,4 +291,91 @@ async fn webhook_accepts_only_google_signed_requests() {
     assert_eq!(sink.0.lock().unwrap()[0].text, "hello");
     stop.cancel();
     run.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn prompts_are_card_buttons() {
+    let env = env().await;
+    let channel = Arc::new(GChatChannel::new(config(
+        &env,
+        Delivery::PubSub {
+            subscription: "projects/p/subscriptions/s".into(),
+        },
+    )));
+    let sink = Arc::new(Collect::default());
+    let stop = CancellationToken::new();
+    let run = tokio::spawn({
+        let (c, s, t) = (channel.clone(), sink.clone(), stop.clone());
+        async move { c.run(s, t).await }
+    });
+    let mut conversation =
+        okbot_core::ConversationKey::room("gchat:corp".parse().unwrap(), "spaces/AAA");
+    conversation.thread = Some("spaces/AAA/threads/T".into());
+    let to = ReplyTarget {
+        conversation: conversation.clone(),
+        in_reply_to: None,
+    };
+    let button = |id: &str| okbot_core::PromptButton {
+        id: id.into(),
+        label: id.into(),
+        style: okbot_core::ButtonStyle::Primary,
+        form: None,
+    };
+    let prompt = okbot_core::Prompt {
+        id: "abc123".into(),
+        text: "Deploy?".into(),
+        buttons: vec![button("allow"), button("deny")],
+        allowed: vec![okbot_core::UserId::new("users/7")],
+    };
+    let sent = channel.prompt(&to, &prompt).await.unwrap();
+    let click = |user: &str, button: &str| {
+        json!({"type": "CARD_CLICKED", "user": {"name": user, "displayName": "U"},
+               "action": {"actionMethodName": "okp", "parameters": [
+                   {"key": "prompt", "value": "abc123"}, {"key": "button", "value": button}]},
+               "space": {"name": "spaces/AAA"}})
+    };
+    env.fake
+        .pulls
+        .lock()
+        .unwrap()
+        .extend([click("users/7", "deny"), click("users/8", "allow")]);
+    for _ in 0..100 {
+        if env.fake.pulls.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let answers = sink.1.lock().unwrap().clone();
+    assert_eq!(answers.len(), 1, "only the allowed person's click");
+    assert_eq!(answers[0].button, "deny");
+    assert_eq!(answers[0].conversation, conversation);
+    channel
+        .close_prompt(
+            &sent,
+            &RenderedMessage {
+                text: "Deploy? ❌".into(),
+            },
+            false,
+        )
+        .await
+        .unwrap();
+    stop.cancel();
+    run.await.unwrap().unwrap();
+
+    let calls = env.fake.calls.lock().unwrap().clone();
+    let create = calls
+        .iter()
+        .find(|c| c.0 == "POST" && c.1.starts_with("/v1/spaces/AAA/messages"))
+        .unwrap();
+    let buttons =
+        &create.3["cardsV2"][0]["card"]["sections"][0]["widgets"][0]["buttonList"]["buttons"];
+    assert_eq!(buttons[1]["onClick"]["action"]["function"], "okp");
+    assert_eq!(
+        buttons[1]["onClick"]["action"]["parameters"][1]["value"],
+        "deny"
+    );
+    let patch = calls.iter().find(|c| c.0 == "PATCH").unwrap();
+    assert!(patch.1.ends_with("updateMask=text,cardsV2"), "{}", patch.1);
+    assert_eq!(patch.3["cardsV2"], json!([]));
 }
