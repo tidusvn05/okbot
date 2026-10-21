@@ -8,6 +8,7 @@ mod chain;
 mod cli;
 pub mod detect;
 mod env;
+mod model;
 mod prompt;
 mod slots;
 
@@ -15,6 +16,7 @@ pub use agent_call::Provider;
 pub use chain::AgentChain;
 pub use cli::{CliBackend, CliBackendConfig};
 pub use env::EnvScrub;
+pub use model::{model_parts, validate_model};
 pub use prompt::inline_system_prompt;
 pub use slots::{MachineSlots, Slot};
 

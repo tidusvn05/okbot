@@ -30,6 +30,41 @@ okbase knowledge bundle. One bot = one directory with `okbot.toml`, `.env` (secr
 - `okbot channel remove <platform:instance> [--purge-secrets]`.
 - Restart the bot afterwards (`okbot restart NAME`).
 
+## Manage the agent behind an existing bot
+
+- `okbot agent detect [--bot NAME_OR_PATH] --json`: find known CLIs and check version/login without
+  calling a model. Outside a bot directory, without `--bot`, checks the current user's environment.
+- `okbot agent status [--bot NAME_OR_PATH] --json`: configured fallback order, model, effort,
+  executable, login and tool-policy readiness. Exit 4 means findings; unknown login is not proof
+  that a provider can run. Model/effort null means the CLI default, not a detected model name.
+- `okbot agent use codex`: promote Codex, keeping other providers as fallbacks. `agent chain
+  codex,claude` replaces the order and preserves inactive providers' overrides.
+- `okbot agent set [PROVIDER] --model MODEL_ID --effort high`: defaults to the primary provider.
+  Effort requires a configured or explicit model and is supported for Claude/Codex. `--effort`
+  overrides a model suffix; changing model without an effort keeps the previous effort.
+- Clear overrides with `--default-model` (also clears effort), `--default-effort` or `--default-cli`.
+  `--cli PATH` records an absolute executable path. Every edit supports `--print` and `--json`.
+- Edits save configuration; apply with `okbot restart` or the edit's `--restart`. A failed restart
+  leaves the saved configuration in place and returns `saved: true`, `pending_restart: true` and
+  `error.code: restart_failed`. Foreground bots need their supervisor restarted manually.
+- `okbot agent test [PROVIDER] --json` intentionally spends quota on one small isolated request,
+  without fallback or access to bot knowledge. Run it only when the user requests a live test.
+  Exit 4 means the probe failed. Detect/status never run this probe automatically.
+
+## Read retained history
+
+`okbot history list|show ID|search TEXT|runs [--bot NAME_OR_PATH] --json` reads the existing SQLite
+history without creating or migrating it. `show` includes messages before the latest `/reset` and
+marks them `before_reset`; normal agent context still excludes those messages. Missing history
+returns an empty `items` array. Records removed by retention are no longer available.
+
+All history reads accept `--channel PLATFORM:INSTANCE`, `--since RFC3339`, `--until RFC3339`,
+`--limit 1..1000` (default 50) and `--offset` (default 0). The lower time bound is inclusive; the
+upper bound is exclusive. `search` and `runs` also accept `--conversation ID`; `runs --errors`
+selects failed/cancelled turns. Search uses literal Unicode lowercase matching, not regex or SQL.
+Pages select from the newest end; `show` presents its selected page oldest first. JSON timestamps
+are UTC. Each run is the existing turn-level audit record; unknown model/usage stay null.
+
 ## Personal assistant
 
 If the bot is only for the user, create it with `--profile personal` (or `okbot profile personal`

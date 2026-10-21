@@ -81,6 +81,15 @@ fn machine_slots() -> anyhow::Result<Option<okbot_agent::MachineSlots>> {
 
 /// The agent chain from `[agent]`.
 pub(crate) fn agent_chain(config: &Config) -> anyhow::Result<AgentChain> {
+    agent_chain_with_sessions(config, true)
+}
+
+/// An isolated operator probe uses the usual policy/limits without retaining native sessions.
+pub(crate) fn agent_probe_chain(config: &Config) -> anyhow::Result<AgentChain> {
+    agent_chain_with_sessions(config, false)
+}
+
+fn agent_chain_with_sessions(config: &Config, sessions: bool) -> anyhow::Result<AgentChain> {
     let env = agent_env(config);
     let mut scrub = EnvScrub::default();
     for name in config.secret_names() {
@@ -98,12 +107,17 @@ pub(crate) fn agent_chain(config: &Config) -> anyhow::Result<AgentChain> {
             .unwrap_or_default();
         let backend = CliBackend::new(CliBackendConfig {
             provider,
-            binary: settings.cli,
+            binary: settings.cli.as_ref().map(|path| config.path(path)),
             model: settings.model,
             scrub: scrub.clone(),
             env: env.clone(),
         })
         .with_context(|| format!("agent `{name}`"))?;
+        let backend = if sessions {
+            backend
+        } else {
+            backend.without_sessions()
+        };
         backends.push(Arc::new(backend));
     }
     let mut chain = AgentChain::new(backends, config.agent.max_concurrent)

@@ -168,6 +168,19 @@ pub async fn detect_one_with_env(
     env: &[(String, String)],
 ) -> Option<DetectedCli> {
     let path = paths.find(provider.executable())?;
+    detect_path(provider, &path, env).await
+}
+
+/// Checks exactly this executable, including custom names and paths outside `PATH`.
+pub async fn detect_path(
+    provider: Provider,
+    path: &Path,
+    env: &[(String, String)],
+) -> Option<DetectedCli> {
+    if !is_executable(path) {
+        return None;
+    }
+    let path = std::fs::canonicalize(path).ok()?;
     let out = output(&path, &["--version"], env).await?;
     if !out.status.success() {
         return None;

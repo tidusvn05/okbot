@@ -171,7 +171,13 @@ impl Config {
             path: path.clone(),
             source,
         })?;
-        let file: schema::File = toml::from_str(&text).map_err(|e| ConfigError::Parse {
+        Self::from_text(dir, &text)
+    }
+
+    /// Parses candidate configuration text without writing it; resolves `.env` from `dir`.
+    pub fn from_text(dir: &Path, text: &str) -> Result<Self, ConfigError> {
+        let path = dir.join(CONFIG_FILE);
+        let file: schema::File = toml::from_str(text).map_err(|e| ConfigError::Parse {
             path: path.clone(),
             message: e.to_string(),
         })?;
@@ -236,8 +242,8 @@ impl Config {
             }
         }
         for name in self.agent.providers.keys() {
-            if !self.agent.chain.contains(name) {
-                return invalid(format!("[agent.providers.{name}] is not in [agent] chain"));
+            if !matches!(name.as_str(), "claude" | "codex" | "opencode" | "devin") {
+                return invalid(format!("[agent.providers.{name}]: unknown provider"));
             }
         }
         if self.agent.max_concurrent == 0 {

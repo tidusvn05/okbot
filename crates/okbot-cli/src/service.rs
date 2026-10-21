@@ -217,8 +217,7 @@ pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
             println!("stopped {bot}");
         }
         Action::Restart => {
-            install(&bot, &dir)?;
-            check(&systemctl(&["restart", &unit])?, "systemctl restart")?;
+            restart(&dir)?;
             println!("restarted {bot}");
         }
         Action::Status => {
@@ -238,6 +237,16 @@ pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Restarts one service without printing, so callers can produce a single JSON document.
+pub(crate) fn restart(dir: &Path) -> anyhow::Result<()> {
+    let name = crate::registry::name_of(dir);
+    install(&name, dir)?;
+    check(
+        &systemctl(&["restart", &unit_name(&name)])?,
+        "systemctl restart",
+    )
 }
 
 pub(crate) fn logs(args: &LogsArgs) -> anyhow::Result<()> {

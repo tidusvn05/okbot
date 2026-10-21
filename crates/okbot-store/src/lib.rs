@@ -4,7 +4,9 @@
 //! on Tokio's blocking pool behind a single connection, which is ample for chat traffic and keeps
 //! writes serialized.
 
+mod history;
 mod schema;
+pub use history::{ConversationSummary, HistoryMessage, HistoryQuery, HistoryReader, HistoryRun};
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

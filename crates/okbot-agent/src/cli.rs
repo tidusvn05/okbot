@@ -35,12 +35,16 @@ pub struct CliBackend {
     model: Option<String>,
     scrub: EnvScrub,
     env: Vec<(String, String)>,
+    sessions: bool,
 }
 
 impl CliBackend {
     /// Finds the CLI and checks that it starts (`--version`).
     pub fn new(config: CliBackendConfig) -> Result<Self, AgentError> {
         let provider = config.provider;
+        if let Some(model) = &config.model {
+            crate::validate_model(provider, model)?;
+        }
         let cli = match &config.binary {
             Some(path) => AgentCli::with_binary(provider, path.clone()),
             None => AgentCli::discover(provider),
@@ -52,12 +56,20 @@ impl CliBackend {
             model: config.model,
             scrub: config.scrub,
             env: config.env,
+            sessions: true,
         })
     }
 
     /// The CLI this backend runs.
     pub fn provider(&self) -> Provider {
         self.cli.provider()
+    }
+
+    /// Disables native session persistence and resume, for isolated operator probes.
+    #[must_use]
+    pub fn without_sessions(mut self) -> Self {
+        self.sessions = false;
+        self
     }
 }
 
@@ -147,11 +159,14 @@ impl CliBackend {
             };
         }
         // Resume this backend's own session; otherwise start one (kept for the next turn).
-        let resume = turn.resume.as_ref().filter(|r| r.backend == self.name);
+        let resume = turn
+            .resume
+            .as_ref()
+            .filter(|r| self.sessions && r.backend == self.name);
         RunRequest {
             prompt: resume.map_or_else(|| turn.prompt.clone(), |r| r.prompt.clone()),
             resume: resume.map(|r| r.session.clone()),
-            persist_session: native.resume,
+            persist_session: native.resume && self.sessions,
             system_prompt: Some(turn.system.clone()).filter(|s| !s.trim().is_empty()),
             tool_policy: match turn.tools {
                 ToolPolicy::McpOnly => CoreToolPolicy::McpOnly,
@@ -208,7 +223,7 @@ impl AgentBackend for CliBackend {
         let started = Instant::now();
         let result = match self.cli.run(request).await {
             // The session is gone (expired, CLI data cleared): start over with the full history.
-            Err(agent_call::Error::SessionNotFound(id)) => {
+            Err(agent_call::Error::SessionNotFound(id)) if self.sessions => {
                 tracing::info!(backend = %self.name, session = %id, "session not found; starting a new one");
                 let fresh = AgentTurn {
                     resume: None,

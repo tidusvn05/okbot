@@ -1,6 +1,7 @@
 //! `okbot run` end to end through a bridge adapter (the Node reference adapter) and a fake
 //! `claude`.
 #![cfg(unix)]
+#![cfg(feature = "bridge")]
 #![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
 use std::fmt::Write as _;

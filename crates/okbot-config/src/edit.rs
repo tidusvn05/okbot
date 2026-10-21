@@ -19,6 +19,70 @@ pub struct ConfigEditor {
 }
 
 impl ConfigEditor {
+    /// Replaces the active fallback order, keeping per-provider settings for later reuse.
+    pub fn set_agent_chain(&mut self, chain: &[String]) -> Result<(), ConfigError> {
+        let mut seen = std::collections::HashSet::new();
+        if chain.iter().any(|name| !seen.insert(name)) {
+            return Err(ConfigError::Invalid(
+                "agent chain must not repeat a provider".into(),
+            ));
+        }
+        let values: Array = chain.iter().map(String::as_str).collect();
+        self.set_agent_value(None, "chain", Some(toml_edit::Value::Array(values)))
+    }
+
+    /// Sets or removes one provider override (`model` or `cli`).
+    pub fn set_agent_provider(
+        &mut self,
+        provider: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), ConfigError> {
+        self.set_agent_value(Some(provider), key, value.map(toml_edit::Value::from))
+    }
+
+    fn set_agent_value(
+        &mut self,
+        provider: Option<&str>,
+        key: &str,
+        value: Option<toml_edit::Value>,
+    ) -> Result<(), ConfigError> {
+        let mut table: &mut dyn toml_edit::TableLike = self.doc.as_table_mut();
+        let mut path = vec!["agent"];
+        if let Some(provider) = provider {
+            path.extend(["providers", provider]);
+        }
+        for part in path {
+            if !table.contains_key(part) {
+                if value.is_none() {
+                    return Ok(());
+                }
+                let mut child = Table::new();
+                child.set_implicit(true);
+                table.insert(part, Item::Table(child));
+            }
+            table = table
+                .get_mut(part)
+                .and_then(Item::as_table_like_mut)
+                .ok_or_else(|| {
+                    ConfigError::Invalid(format!("agent configuration `{part}` must be a table"))
+                })?;
+        }
+        if let Some(mut value) = value {
+            if let Some(existing) = table.get(key).and_then(Item::as_value) {
+                *value.decor_mut() = existing.decor().clone();
+            }
+            table.insert(key, Item::Value(value));
+        } else {
+            table.remove(key);
+        }
+        Ok(())
+    }
+
+    /// Validates the edited text without writing it.
+    pub fn validate(&self) -> Result<Config, ConfigError> {
+        Config::from_text(&self.dir, &self.doc.to_string())
+    }
     /// Reads `dir/okbot.toml`.
     pub fn open(dir: &Path) -> Result<Self, ConfigError> {
         let path = dir.join(CONFIG_FILE);
@@ -179,7 +243,17 @@ impl ConfigEditor {
     /// Writes the file and loads it again; on a validation error the previous text is restored
     /// and the error returned.
     pub fn save(self) -> Result<Config, ConfigError> {
+        self.validate()?;
         let path = self.dir.join(CONFIG_FILE);
+        let current = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        if current != self.original {
+            return Err(ConfigError::Invalid(
+                "okbot.toml changed while editing; retry the command".into(),
+            ));
+        }
         let write = |text: &str| {
             std::fs::write(&path, text).map_err(|source| ConfigError::Read {
                 path: path.clone(),
@@ -256,6 +330,85 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap(),
             BASE
+        );
+    }
+
+    #[test]
+    fn agent_edits_preview_before_saving_and_keep_inactive_overrides() {
+        let dir = bot();
+        let original = format!(
+            "{BASE}\n[agent]\nchain = [\"claude\"] # order\n\n[agent.providers.claude]\nmodel = \"sonnet@high\" # model\n"
+        );
+        std::fs::write(dir.path().join(CONFIG_FILE), &original).unwrap();
+        let mut e = ConfigEditor::open(dir.path()).unwrap();
+        e.set_agent_chain(&["codex".into()]).unwrap();
+        e.set_agent_provider("claude", "model", Some("sonnet@low"))
+            .unwrap();
+        assert_eq!(e.validate().unwrap().agent.chain, ["codex"]);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap(),
+            original
+        );
+        let c = e.save().unwrap();
+        assert_eq!(
+            c.agent.providers["claude"].model.as_deref(),
+            Some("sonnet@low")
+        );
+        let text = std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap();
+        assert!(text.contains("# order") && text.contains("# model") && text.contains("# keep me"));
+        let mut e = ConfigEditor::open(dir.path()).unwrap();
+        assert!(
+            e.set_agent_chain(&["codex".into(), "codex".into()])
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap(),
+            text
+        );
+    }
+
+    #[test]
+    fn edits_inline_agent_tables_without_panicking() {
+        let dir = bot();
+        std::fs::write(dir.path().join(CONFIG_FILE),
+            "config_version = 1\nagent = { chain = [\"claude\"], providers = { claude = { model = \"sonnet\" } } }\n[bot]\nname = \"x\"\n").unwrap();
+        let mut e = ConfigEditor::open(dir.path()).unwrap();
+        e.set_agent_provider("claude", "model", Some("sonnet@high"))
+            .unwrap();
+        assert_eq!(
+            e.save().unwrap().agent.providers["claude"].model.as_deref(),
+            Some("sonnet@high")
+        );
+    }
+
+    #[test]
+    fn changed_files_and_invalid_table_shapes_are_preserved() {
+        let dir = bot();
+        let mut editor = ConfigEditor::open(dir.path()).unwrap();
+        editor.set_agent_chain(&["codex".into()]).unwrap();
+        let external = format!("{BASE}\n# an operator changed this file\n");
+        std::fs::write(dir.path().join(CONFIG_FILE), &external).unwrap();
+        assert!(editor.save().is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap(),
+            external
+        );
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            "config_version = 1\nagent = \"bad\"\n[bot]\nname = \"x\"\n",
+        )
+        .unwrap();
+        let mut editor = ConfigEditor::open(dir.path()).unwrap();
+        assert!(editor.set_agent_chain(&["codex".into()]).is_err());
+    }
+
+    #[test]
+    fn legacy_repeated_providers_still_load() {
+        let dir = bot();
+        let text = format!("{BASE}\n[agent]\nchain = [\"claude\", \"claude\"]\n");
+        assert_eq!(
+            Config::from_text(dir.path(), &text).unwrap().agent.chain,
+            ["claude", "claude"]
         );
     }
 
