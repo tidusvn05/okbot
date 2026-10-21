@@ -56,6 +56,22 @@ impl AsyncWrite for EditorOutput {
     }
 }
 
+/// Whether `line` may be saved: not blank, and not a `:press` with form values (they are never
+/// stored).
+fn keep_in_history(line: &str) -> bool {
+    let line = line.trim();
+    let form_values = line.starts_with(":press") && line.contains('=');
+    !line.is_empty() && !form_values
+}
+
+/// Saves the history, readable by the user only (it holds the conversation).
+fn save(editor: &mut DefaultEditor, path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    if editor.save_history(path).is_ok() {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
 impl ConsoleChannel {
     /// Reads the terminal with line editing and `history` (saved after each line), and writes
     /// above the input line. Call it inside a Tokio runtime, for an interactive terminal only.
@@ -79,10 +95,10 @@ impl ConsoleChannel {
                 loop {
                     match editor.readline("> ") {
                         Ok(line) => {
-                            if !line.trim().is_empty() {
+                            if keep_in_history(&line) {
                                 let _ = editor.add_history_entry(line.as_str());
                                 if let Some(path) = &history {
-                                    let _ = editor.save_history(path);
+                                    save(&mut editor, path);
                                 }
                             }
                             let sent = runtime.block_on(async {
@@ -105,5 +121,16 @@ impl ConsoleChannel {
             Box::new(BufReader::new(input)),
             Box::new(output),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn form_values_stay_out_of_the_history() {
+        assert!(super::keep_in_history("hello"));
+        assert!(super::keep_in_history(":press 1"));
+        assert!(!super::keep_in_history(" :press 2 code=123456"));
+        assert!(!super::keep_in_history("   "));
     }
 }

@@ -576,3 +576,17 @@ async fn lists_the_bots_commands() {
         "[console] the bot's commands:\n[console]   /order <id> [note...]  Track an order\n"
     );
 }
+
+#[tokio::test]
+async fn escapes_terminal_control_characters() {
+    let (channel, out) = console(Preset::Console, "");
+    let to = ReplyTarget {
+        conversation: ConversationKey::room(channel.id().clone(), "console"),
+        in_reply_to: None,
+    };
+    channel
+        .send(&to, &text("a\u{1b}]52;c;ZXZpbA==\u{7}b\nnext"))
+        .await
+        .unwrap();
+    assert_eq!(out.text(), "a\\u{1b}]52;c;ZXZpbA==\\u{7}b\nnext\n\n");
+}

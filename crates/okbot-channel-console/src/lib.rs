@@ -365,6 +365,7 @@ impl ConsoleChannel {
             block.push('\n');
         }
         block.push('\n');
+        let block = printable(&block);
         let mut out = self.output.lock().await;
         out.write_all(block.as_bytes()).await.map_err(io_error)?;
         out.flush().await.map_err(io_error)
@@ -374,7 +375,7 @@ impl ConsoleChannel {
     async fn note(&self, text: &str) -> Result<(), ChannelError> {
         let mut out = self.output.lock().await;
         for line in text.lines() {
-            out.write_all(format!("[console] {line}\n").as_bytes())
+            out.write_all(format!("[console] {}\n", printable(line)).as_bytes())
                 .await
                 .map_err(io_error)?;
         }
@@ -612,6 +613,20 @@ impl ConsoleChannel {
             sent: sent.clone(),
         })
     }
+}
+
+/// Terminal text with control characters other than line breaks escaped: a reply built from web
+/// pages or tool results cannot move the cursor, set the window title or write the clipboard.
+fn printable(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            if c.is_control() && c != '\n' {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }
 
 /// An attachment for a path or URL, by its extension.
