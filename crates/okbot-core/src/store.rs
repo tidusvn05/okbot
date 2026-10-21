@@ -117,7 +117,7 @@ pub struct Usage {
     pub tokens: u64,
 }
 
-/// What happened to a tool call (ADR 0010).
+/// What happened to a tool call (ADR 0011).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ToolDecision {

@@ -641,3 +641,87 @@ fn documents_and_notes() {
     let (code, out, err) = env.run(&["kb", "lint", "me"]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+#[test]
+fn roles_and_audit_from_the_terminal() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "shop",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    let path = env.root().join("shop/okbot.toml");
+    let mut toml = std::fs::read_to_string(&path).unwrap();
+    toml.push_str("\n[roles]\nops = [\"discord:main/1\"]\n");
+    std::fs::write(&path, toml).unwrap();
+
+    let (code, out, err) = env.run(&["role", "list", "shop"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("ops: discord:main/1"), "{out}");
+    let (code, _, err) = env.run(&[
+        "role",
+        "grant",
+        "admins",
+        "discord:main/2",
+        "--for",
+        "2h",
+        "--bot",
+        "shop",
+    ]);
+    assert_ne!(code, 0);
+    assert!(err.contains("not in [roles]"), "{err}");
+    let (code, _, err) = env.run(&[
+        "role",
+        "grant",
+        "ops",
+        "discord:main/2",
+        "--for",
+        "40d",
+        "--bot",
+        "shop",
+    ]);
+    assert_ne!(code, 0);
+    assert!(err.contains("1m to 30d"), "{err}");
+    let (code, _, err) = env.run(&[
+        "role",
+        "grant",
+        "ops",
+        "person:nobody",
+        "--for",
+        "2h",
+        "--bot",
+        "shop",
+    ]);
+    assert_ne!(code, 0, "{err}");
+    let (code, _, err) = env.run(&[
+        "role",
+        "grant",
+        "ops",
+        "discord:main/2",
+        "--for",
+        "2h",
+        "--bot",
+        "shop",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("discord:main/2 has `ops` until"), "{err}");
+    let (_, out, _) = env.run(&["role", "list", "shop"]);
+    assert!(out.contains("ops: discord:main/2 until"), "{out}");
+    let (code, _, err) = env.run(&["role", "revoke", "ops", "discord:main/2", "--bot", "shop"]);
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = env.run(&["role", "revoke", "ops", "discord:main/2", "--bot", "shop"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("no grant"), "{err}");
+
+    let (code, out, err) = env.run(&["audit", "shop", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "", "no calls yet");
+    let (code, _, err) = env.run(&["audit", "shop", "--since", "2w"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("not a duration"), "{err}");
+}

@@ -23,13 +23,29 @@ const MAX_TTL: Duration = Duration::from_secs(24 * 3600);
 /// The server's callback may run a long operation.
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
-struct Pending {
-    mcp: String,
-    callback: String,
-    markdown: String,
-    sent: SentRef,
-    expires: Instant,
-    busy: bool,
+/// Where an answer goes.
+pub(crate) enum Kind {
+    /// To an `[[mcp]]` server's callback (ADR 0007).
+    Callback { mcp: String, callback: String },
+    /// To a tool call waiting in the gateway for approval (ADR 0011): `true` to allow.
+    Confirm(Option<tokio::sync::oneshot::Sender<bool>>),
+}
+
+pub(crate) struct Pending {
+    pub(crate) kind: Kind,
+    pub(crate) markdown: String,
+    pub(crate) sent: SentRef,
+    pub(crate) expires: Instant,
+    pub(crate) busy: bool,
+    /// Who may answer; anyone in the conversation when empty.
+    pub(crate) allowed: Vec<UserId>,
+    /// Button ids in order (`/answer <code> <n>` picks one).
+    pub(crate) buttons: Vec<String>,
+    /// Buttons that open a form: only the platform's own form can answer them, never a typed
+    /// command (which would skip the form).
+    pub(crate) forms: Vec<String>,
+    /// Shown as text (the platform has no buttons): answered with commands.
+    pub(crate) text: bool,
 }
 
 /// Prompts waiting for an answer, by id.
@@ -37,7 +53,7 @@ struct Pending {
 pub(crate) struct Prompts(Mutex<HashMap<String, Pending>>);
 
 impl Prompts {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Pending>> {
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Pending>> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -172,7 +188,7 @@ pub(crate) async fn create(
         return error(StatusCode::BAD_REQUEST, "text is too long for one message");
     };
     let prompt = Prompt {
-        id: hex::encode(rand::random::<[u8; 8]>()),
+        id: short_id(),
         text: text.text.clone(),
         buttons: request.buttons,
         allowed: allowed(shared, &claims, request.answer_by),
@@ -187,12 +203,15 @@ pub(crate) async fn create(
         conversation: claims.conversation.clone(),
         in_reply_to: None,
     };
-    let sent = match channel.prompt(&target, &prompt).await {
-        Ok(sent) => sent,
-        Err(okbot_core::ChannelError::Unsupported(_)) => {
-            return error(StatusCode::NOT_IMPLEMENTED, "this platform has no buttons");
+    let (sent, text) = match show(shared, &target, &prompt, &request.text).await {
+        Ok(shown) => shown,
+        Err(Shown::NoForms) => {
+            return error(
+                StatusCode::NOT_IMPLEMENTED,
+                "this platform has no forms; use buttons without a form",
+            );
         }
-        Err(e) => return error(StatusCode::BAD_GATEWAY, e.to_string()),
+        Err(Shown::Failed(e)) => return error(StatusCode::BAD_GATEWAY, e),
     };
     let ttl = request
         .expires_in
@@ -202,15 +221,90 @@ pub(crate) async fn create(
     shared.prompts.lock().insert(
         prompt.id.clone(),
         Pending {
-            mcp: server.server.name.clone(),
-            callback: request.callback,
+            kind: Kind::Callback {
+                mcp: server.server.name.clone(),
+                callback: request.callback,
+            },
             markdown: request.text,
             sent,
             expires: Instant::now() + ttl,
             busy: false,
+            allowed: prompt.allowed.clone(),
+            buttons: prompt.buttons.iter().map(|b| b.id.clone()).collect(),
+            forms: prompt
+                .buttons
+                .iter()
+                .filter(|b| b.form.is_some())
+                .map(|b| b.id.clone())
+                .collect(),
+            text,
         },
     );
     (StatusCode::OK, json!({"prompt": prompt.id}))
+}
+
+/// Why a prompt could not be shown.
+pub(crate) enum Shown {
+    /// The platform has no buttons, and a button needs a form.
+    NoForms,
+    /// Sending failed.
+    Failed(String),
+}
+
+/// A short code for a prompt answered by command (`/approve 4f2a9c`).
+pub(crate) fn short_id() -> String {
+    hex::encode(rand::random::<[u8; 3]>())
+}
+
+/// The commands that answer a prompt shown as text.
+pub(crate) fn text_choices(prompt: &Prompt) -> String {
+    let id = &prompt.id;
+    let ids: Vec<&str> = prompt.buttons.iter().map(|b| b.id.as_str()).collect();
+    if ids == ["allow", "deny"] {
+        return format!("Reply `/approve {id}` or `/deny {id}`.");
+    }
+    let choices: Vec<String> = prompt
+        .buttons
+        .iter()
+        .enumerate()
+        .map(|(i, b)| format!("`/answer {id} {}` for **{}**", i + 1, b.label))
+        .collect();
+    format!("Reply {}.", choices.join(", "))
+}
+
+/// Shows `prompt` with buttons, or as text with answer commands on platforms without buttons.
+/// Returns the message and whether it is text.
+pub(crate) async fn show(
+    shared: &Shared,
+    target: &ReplyTarget,
+    prompt: &Prompt,
+    markdown: &str,
+) -> Result<(SentRef, bool), Shown> {
+    let Some(channel) = shared.channels.get(&target.conversation.channel) else {
+        return Err(Shown::Failed(
+            "the conversation's channel is not running".into(),
+        ));
+    };
+    match channel.prompt(target, prompt).await {
+        Ok(sent) => return Ok((sent, false)),
+        Err(okbot_core::ChannelError::Unsupported(_)) => {}
+        Err(e) => return Err(Shown::Failed(e.to_string())),
+    }
+    if prompt.buttons.iter().any(|b| b.form.is_some()) {
+        return Err(Shown::NoForms);
+    }
+    let full = format!("{markdown}\n\n{}", text_choices(prompt));
+    let mut sent = None;
+    for part in shared.renderer.render(&full, channel.caps()) {
+        match channel.send(target, &part).await {
+            Ok(s) => {
+                sent.get_or_insert(s);
+            }
+            Err(e) => return Err(Shown::Failed(e.to_string())),
+        }
+    }
+    sent.map(|s| (s, true))
+        .ok_or_else(|| Shown::Failed("nothing to send".into()))
 }
 
 /// The first rendered message of `markdown` for the channel of `sent`.
@@ -223,14 +317,35 @@ fn render(shared: &Shared, sent: &SentRef, markdown: &str) -> Option<RenderedMes
         .next()
 }
 
-async fn update(shared: &Shared, sent: &SentRef, markdown: &str, keep_buttons: bool) {
-    let (Some(channel), Some(message)) = (
-        shared.channels.get(&sent.target.conversation.channel),
-        render(shared, sent, markdown),
-    ) else {
+/// Shows the prompt's new state: replaces its text (and buttons), or for a text prompt on a
+/// platform that cannot edit, sends `outcome` as a new message.
+pub(crate) async fn update(
+    shared: &Shared,
+    sent: &SentRef,
+    text: bool,
+    markdown: &str,
+    outcome: &str,
+    keep_buttons: bool,
+) {
+    let Some(channel) = shared.channels.get(&sent.target.conversation.channel) else {
         return;
     };
-    if let Err(error) = channel.close_prompt(sent, &message, keep_buttons).await {
+    let full = format!("{markdown}\n\n{outcome}");
+    let result = if !text {
+        match render(shared, sent, &full) {
+            Some(message) => channel.close_prompt(sent, &message, keep_buttons).await,
+            None => return,
+        }
+    } else if channel.caps().edit && !keep_buttons {
+        match render(shared, sent, &full) {
+            Some(message) => channel.edit(sent, &message).await,
+            None => return,
+        }
+    } else {
+        // A text prompt the platform cannot edit: the outcome follows as a message.
+        crate::turn::send_to(shared, &sent.target, outcome).await
+    };
+    if let Err(error) = result {
         tracing::warn!(%error, "cannot update a prompt");
     }
 }
@@ -293,39 +408,60 @@ async fn post_callback(
     }
 }
 
-/// Sends an answer to the server's callback and shows its reply under the prompt.
+/// Handles an answer: checks who answered, then releases a waiting tool call or sends the
+/// answer to the server's callback, and shows the outcome under the prompt.
 pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     enum Next {
         Skip,
         Expired(Pending),
-        Go(String, String, String, SentRef),
+        NotYours(SentRef),
+        Confirm(Pending),
+        Go(String, String, String, SentRef, bool),
     }
     let next = {
         let mut prompts = shared.prompts.lock();
         match prompts.get_mut(&answer.prompt) {
             None => Next::Skip,
+            Some(p) if !same_room(&p.sent.target.conversation, &answer.conversation) => Next::Skip,
+            Some(p) if !p.buttons.contains(&answer.button) => Next::Skip,
+            Some(p) if !p.allowed.is_empty() && !p.allowed.contains(&answer.user.id) => {
+                Next::NotYours(p.sent.clone())
+            }
             Some(p) if p.busy => Next::Skip,
             Some(p) if p.expires <= Instant::now() => {
                 Next::Expired(prompts.remove(&answer.prompt).expect("present"))
             }
-            Some(p) => {
-                p.busy = true;
-                Next::Go(
-                    p.mcp.clone(),
-                    p.callback.clone(),
-                    p.markdown.clone(),
-                    p.sent.clone(),
-                )
-            }
+            Some(p) => match &p.kind {
+                Kind::Confirm(_) => Next::Confirm(prompts.remove(&answer.prompt).expect("present")),
+                Kind::Callback { mcp, callback } => {
+                    let go = Next::Go(
+                        mcp.clone(),
+                        callback.clone(),
+                        p.markdown.clone(),
+                        p.sent.clone(),
+                        p.text,
+                    );
+                    p.busy = true;
+                    go
+                }
+            },
         }
     };
-    let (mcp, callback, markdown, sent) = match next {
+    let (mcp, callback, markdown, sent, text) = match next {
         Next::Skip => return,
-        Next::Expired(p) => {
-            update(&shared, &p.sent, &format!("{}\n\n⌛", p.markdown), false).await;
+        Next::NotYours(sent) => {
+            // Only reached for text answers: buttons are checked by the platform adapter.
+            crate::turn::send_to(&shared, &sent.target, "⛔ This is not yours to answer.")
+                .await
+                .ok();
             return;
         }
-        Next::Go(mcp, callback, markdown, sent) => (mcp, callback, markdown, sent),
+        Next::Expired(p) => {
+            update(&shared, &p.sent, p.text, &p.markdown, "⌛", false).await;
+            return;
+        }
+        Next::Confirm(p) => return release(&shared, p, &answer).await,
+        Next::Go(mcp, callback, markdown, sent, text) => (mcp, callback, markdown, sent, text),
     };
     let Some(server) = shared.config.mcp.iter().find(|m| m.server.name == mcp) else {
         return;
@@ -336,26 +472,24 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
         .access
         .admins
         .contains(&(channel.clone(), answer.user.id.clone()));
-    update(
-        &shared,
-        &sent,
-        &format!("{markdown}\n\n⏳ {}", answer.user.display_name),
-        true,
-    )
-    .await;
+    if !text {
+        update(
+            &shared,
+            &sent,
+            false,
+            &markdown,
+            &format!("⏳ {}", answer.user.display_name),
+            true,
+        )
+        .await;
+    }
     let reply = post_callback(&shared, server, &callback, &answer, admin).await;
-    let text = if reply.text.trim().is_empty() {
+    let outcome = if reply.text.trim().is_empty() {
         "✅".to_string()
     } else {
         reply.text
     };
-    update(
-        &shared,
-        &sent,
-        &format!("{markdown}\n\n{text}"),
-        reply.keep_open,
-    )
-    .await;
+    update(&shared, &sent, text, &markdown, &outcome, reply.keep_open).await;
     let mut prompts = shared.prompts.lock();
     if reply.keep_open {
         if let Some(p) = prompts.get_mut(&answer.prompt) {
@@ -364,6 +498,78 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     } else {
         prompts.remove(&answer.prompt);
     }
+}
+
+/// The same chat: channel and room (adapters may fill the thread of an answer differently).
+fn same_room(a: &okbot_core::ConversationKey, b: &okbot_core::ConversationKey) -> bool {
+    a.channel == b.channel && a.room == b.room
+}
+
+/// Releases a tool call waiting for approval and shows who decided.
+async fn release(shared: &Shared, p: Pending, answer: &PromptAnswer) {
+    let allow = answer.button == "allow";
+    let outcome = if allow {
+        format!("✅ Allowed by {}", answer.user.display_name)
+    } else {
+        format!("❌ Declined by {}", answer.user.display_name)
+    };
+    tracing::info!(prompt = %answer.prompt, user = %answer.user.id, allow, "tool call answered");
+    if let Kind::Confirm(Some(tx)) = p.kind {
+        let _ = tx.send(allow);
+    }
+    update(shared, &p.sent, p.text, &p.markdown, &outcome, false).await;
+}
+
+/// `/approve <code>`, `/deny <code>` or `/answer <code> <n>` from `event`: the answer to a
+/// prompt shown as text (or with buttons, typed instead).
+pub(crate) async fn answer_text(
+    shared: Arc<Shared>,
+    event: &okbot_core::InboundEvent,
+    code: &str,
+    choice: Choice,
+) {
+    let found = shared.prompts.lock().get(code).map(|p| {
+        let button = match &choice {
+            Choice::Id(id) => Some(id.clone()),
+            Choice::Number(n) => n.checked_sub(1).and_then(|i| p.buttons.get(i)).cloned(),
+        };
+        let form = button.as_ref().is_some_and(|b| p.forms.contains(b));
+        (button, form, p.sent.clone())
+    });
+    if let Some((_, true, _)) = found {
+        crate::turn::reply(&shared, event, "Answer this one with its button.").await;
+        return;
+    }
+    let Some((Some(button), _, sent)) = found else {
+        crate::turn::reply(
+            &shared,
+            event,
+            "There is no such question waiting for an answer.",
+        )
+        .await;
+        return;
+    };
+    answer(
+        shared,
+        PromptAnswer {
+            prompt: code.to_string(),
+            button,
+            values: std::collections::BTreeMap::new(),
+            user: event.author.clone(),
+            conversation: event.conversation.clone(),
+            sent,
+        },
+    )
+    .await;
+}
+
+/// The button a text answer picks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Choice {
+    /// By id (`allow`, `deny`).
+    Id(String),
+    /// By position, from 1.
+    Number(usize),
 }
 
 /// Closes expired prompts (their buttons disappear). Runs until `stop`.
@@ -375,15 +581,17 @@ pub(crate) async fn sweep(shared: Arc<Shared>, stop: okbot_core::CancellationTok
         }
         let expired: Vec<Pending> = {
             let mut prompts = shared.prompts.lock();
+            // Approvals are closed by the turn that waits for them.
             let ids: Vec<String> = prompts
                 .iter()
                 .filter(|(_, p)| !p.busy && p.expires <= Instant::now())
+                .filter(|(_, p)| matches!(p.kind, Kind::Callback { .. }))
                 .map(|(id, _)| id.clone())
                 .collect();
             ids.iter().filter_map(|id| prompts.remove(id)).collect()
         };
         for p in expired {
-            update(&shared, &p.sent, &format!("{}\n\n⌛", p.markdown), false).await;
+            update(&shared, &p.sent, p.text, &p.markdown, "⌛", false).await;
         }
     }
 }

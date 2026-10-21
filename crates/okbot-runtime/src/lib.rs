@@ -10,8 +10,10 @@
 
 mod command;
 pub mod config;
+mod confirm;
 mod context;
 mod dispatch;
+mod gateway;
 mod http;
 pub mod identity;
 mod interact;
@@ -20,8 +22,11 @@ mod mcp_client;
 mod mcp_command;
 mod metrics;
 mod notify;
+mod permission;
 mod policy;
+mod roles;
 mod schedule;
+mod stdio;
 #[cfg(test)]
 mod test_support;
 mod turn;
@@ -39,9 +44,12 @@ use okbot_core::{
 use tokio::sync::{Notify, mpsc};
 
 pub use config::{
-    ArgKind, CommandArg, ExtraMcp, McpCommand, NotifyRoute, OWNER, RuntimeConfig, ScheduleConfig,
+    ArgKind, CommandArg, Confirm, ConfirmBy, ExtraMcp, Limits, McpCommand, McpRules, Member,
+    NotifyRoute, OWNER, ROLE_ADMINS, ROLE_EVERYONE, Restrict, Roles, RuntimeConfig, ScheduleConfig,
+    StdioServer,
 };
 pub use http::HttpOptions;
+pub use roles::{MAX_GRANT, parse_duration};
 
 /// Building the runtime failed.
 #[derive(Debug, thiserror::Error)]
@@ -125,6 +133,8 @@ pub(crate) struct Shared {
     pub(crate) interact_url: std::sync::OnceLock<String>,
     /// Notification ids already delivered (`POST /notify`), to drop retries.
     pub(crate) notified: notify::Recent,
+    /// The loopback gateway to `[[mcp]]` servers.
+    pub(crate) gateway: Arc<gateway::Gateway>,
 }
 
 impl Shared {
@@ -163,6 +173,56 @@ impl Shared {
     /// An administrator: listed in `[bot] admins`, or the owner of a personal bot.
     pub(crate) async fn is_admin(&self, event: &InboundEvent) -> bool {
         self.gate.is_admin(event) || (self.config.personal && self.person_of(event).await.is_some())
+    }
+
+    /// The author's roles (ADR 0011): `everyone`, `admins` for administrators, `[roles]` of the
+    /// account or its linked person, and grants that have not expired. A store error drops the
+    /// grants (fails closed).
+    pub(crate) async fn roles_of(
+        &self,
+        event: &InboundEvent,
+    ) -> std::collections::BTreeSet<String> {
+        let mut roles = std::collections::BTreeSet::from([config::ROLE_EVERYONE.to_string()]);
+        if self.is_admin(event).await {
+            roles.insert(config::ROLE_ADMINS.to_string());
+        }
+        let account = (event.conversation.channel.clone(), event.author.id.clone());
+        if let Some(r) = self.config.roles.accounts.get(&account) {
+            roles.extend(r.iter().cloned());
+        }
+        let person = self.person_of(event).await;
+        if let Some(r) = person
+            .as_ref()
+            .and_then(|p| self.config.roles.people.get(&p.id))
+        {
+            roles.extend(r.iter().cloned());
+        }
+        if self.config.roles.names.is_empty() {
+            return roles;
+        }
+        let account = format!("{}/{}", account.0, account.1);
+        let person = person.map(|p| format!("person:{}", p.id));
+        match self.store.role_grants(self.clock.now()).await {
+            Ok(grants) => roles.extend(
+                grants
+                    .into_iter()
+                    .filter(|g| g.account == account || Some(&g.account) == person.as_ref())
+                    .filter(|g| self.config.roles.names.contains(&g.role))
+                    .map(|g| g.role),
+            ),
+            Err(error) => tracing::error!(%error, "cannot read role grants"),
+        }
+        roles
+    }
+
+    /// The key the author's usage and tool calls are recorded under.
+    pub(crate) async fn person_key(&self, event: &InboundEvent) -> String {
+        let person = self.person_of(event).await;
+        okbot_core::person_key(
+            &event.conversation.channel,
+            &event.author.id,
+            person.as_ref().map(|p| p.id.as_str()),
+        )
     }
 }
 
@@ -265,6 +325,7 @@ impl RuntimeBuilder {
             issued: identity::Issued::default(),
             interact_url: std::sync::OnceLock::new(),
             notified: crate::notify::Recent::default(),
+            gateway: Arc::default(),
         });
         Ok(Runtime {
             shared: shared.clone(),
@@ -388,6 +449,15 @@ impl Runtime {
                     Err(error) => tracing::error!(channel = %id, %error, "channel failed"),
                 }
             });
+        }
+        if !shared.config.mcp.is_empty() {
+            let gateway = gateway::serve(shared.clone(), channel_stop.clone())
+                .await
+                .map_err(|source| RunError::Http {
+                    addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+                    source,
+                })?;
+            tasks.spawn(gateway);
         }
         if let Some(options) = http {
             let server = http::serve(options, shared.clone(), channel_stop.clone())

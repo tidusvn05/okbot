@@ -96,6 +96,8 @@ fn start(
         token: Secret::new(KEY.into()),
         admins_only: false,
         signed: true,
+        rules: okbot_runtime::McpRules::default(),
+        stdio: None,
     }];
     let command = |name: &str, args: &[&str], admins_only| McpCommand {
         name: name.into(),
@@ -106,6 +108,7 @@ fn start(
         args: args.iter().map(|a| CommandArg::parse(a)).collect(),
         with: serde_json::Map::new(),
         admins_only,
+        roles: Vec::new(),
     };
     config.commands = vec![
         command("status", &["company", "deep?"], false),

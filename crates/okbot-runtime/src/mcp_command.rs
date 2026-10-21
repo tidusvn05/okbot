@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::config::{ArgKind, McpCommand};
 use crate::mcp_client::{self, McpError};
+use crate::permission::{self, Who};
 use crate::{Shared, turn};
 
 /// The `[[command]]` a message invokes, and the text after the command word.
@@ -59,9 +60,13 @@ async fn execute(
     else {
         return format!("`/{}` is not available.", command.name);
     };
-    let admin = shared.is_admin(event).await;
-    if (command.admins_only || extra.admins_only) && !admin {
-        return format!("Only administrators can use `/{}`.", command.name);
+    let who = Who::new(shared.roles_of(event).await, event);
+    let admin = who.admin();
+    if !permission::may_run(command, extra, &who) {
+        if command.admins_only || extra.admins_only {
+            return format!("Only administrators can use `/{}`.", command.name);
+        }
+        return format!("`/{}` is not available to you here.", command.name);
     }
     if matches!(rest, "help" | "?" | "-h" | "--help") {
         return describe(command, event.locale.as_deref());
@@ -95,6 +100,31 @@ async fn execute(
         ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         "command"
     );
+    let error = match &result {
+        Ok(Ok(out)) if out.is_error => Some("the tool reported an error".to_string()),
+        Ok(Ok(_)) => None,
+        Ok(Err(_)) => Some("usage".to_string()),
+        Err(e) => Some(e.to_string()),
+    };
+    // A usage message never reached the tool.
+    if error.as_deref() != Some("usage") {
+        crate::gateway::audit(
+            shared,
+            okbot_core::ToolCallRecord {
+                run_id: None,
+                command: Some(command.name.clone()),
+                person: shared.person_key(event).await,
+                conversation: event.conversation.clone(),
+                server: extra.server.name.clone(),
+                tool: command.tool.clone(),
+                decision: okbot_core::ToolDecision::Allowed,
+                error,
+                duration: started.elapsed(),
+                at: shared.clock.now(),
+            },
+        )
+        .await;
+    }
     match result {
         // A server that leads with its own icon (❌, 🔑…) keeps it.
         Ok(Ok(out)) if out.is_error && starts_with_icon(&out.text) => out.text,
@@ -128,20 +158,19 @@ pub(crate) fn describe(command: &McpCommand, locale: Option<&str>) -> String {
     out
 }
 
-/// The commands `admin` may run, for `/help`.
-pub(crate) fn help(shared: &Shared, admin: bool, locale: Option<&str>) -> String {
+/// The commands `who` may run here, for `/help`.
+pub(crate) fn help(shared: &Shared, who: &Who, locale: Option<&str>) -> String {
     let lines: Vec<String> = shared
         .config
         .commands
         .iter()
         .filter(|c| {
-            admin
-                || !(c.admins_only
-                    || shared
-                        .config
-                        .mcp
-                        .iter()
-                        .any(|m| m.server.name == c.mcp && m.admins_only))
+            shared
+                .config
+                .mcp
+                .iter()
+                .find(|m| m.server.name == c.mcp)
+                .is_some_and(|m| permission::may_run(c, m, who))
         })
         .map(|c| format!("- {}", describe(c, locale)))
         .collect();
@@ -337,6 +366,7 @@ mod tests {
             args: args.iter().map(|a| CommandArg::parse(a)).collect(),
             with: json!({"level": "warn"}).as_object().unwrap().clone(),
             admins_only: false,
+            roles: Vec::new(),
         }
     }
 

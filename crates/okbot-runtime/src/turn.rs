@@ -46,6 +46,21 @@ pub(crate) async fn reply_over(
     true
 }
 
+/// Renders `markdown` and sends it to `target` (no reply threading beyond the target's own).
+pub(crate) async fn send_to(
+    shared: &Shared,
+    target: &okbot_core::ReplyTarget,
+    markdown: &str,
+) -> Result<(), okbot_core::ChannelError> {
+    let Some(channel) = shared.channels.get(&target.conversation.channel) else {
+        return Err(okbot_core::ChannelError::Unsupported("channel"));
+    };
+    for part in shared.renderer.render(markdown, channel.caps()) {
+        channel.send(target, &part).await?;
+    }
+    Ok(())
+}
+
 fn run_id() -> RunId {
     RunId::new(hex::encode(rand::random::<[u8; 8]>()))
 }
@@ -111,26 +126,99 @@ impl Drop for Typing {
     }
 }
 
-/// The knowledge servers plus `[[mcp]]` servers this requester may use (agents with MCP only).
-/// Signed servers get a token naming the requester instead of their secret.
-fn with_extra_mcp(
+/// The knowledge servers plus the `[[mcp]]` servers this requester may use here (agents with
+/// MCP only), reached through the gateway with a token bound to this turn (ADR 0011).
+async fn with_extra_mcp(
     shared: &Shared,
     grant: &RunGrant,
     event: &InboundEvent,
-    admin: bool,
-) -> (
-    Vec<okbot_core::McpServer>,
-    Vec<(String, okbot_core::Secret<String>)>,
-) {
-    let (mut mcp, mut env) = (grant.mcp.clone(), grant.env.clone());
-    if shared.agent.caps().mcp {
-        for extra in shared.config.mcp.iter().filter(|m| admin || !m.admins_only) {
-            mcp.push(extra.server.clone());
-            let token = crate::identity::token_for(shared, extra, event, admin, None);
-            env.push((extra.server.bearer_token_env.clone(), token));
+    run_id: RunId,
+    person: String,
+) -> TurnMcp {
+    let mut out = TurnMcp {
+        servers: grant.mcp.clone(),
+        env: grant.env.clone(),
+        guard: None,
+    };
+    let Some(base) = shared.gateway.url().map(str::to_string) else {
+        return out;
+    };
+    if !shared.agent.caps().mcp {
+        return out;
+    }
+    let who = crate::permission::Who::new(shared.roles_of(event).await, event);
+    let servers: Vec<&crate::ExtraMcp> = shared
+        .config
+        .mcp
+        .iter()
+        .filter(|m| crate::permission::may_use(m, &who))
+        .collect();
+    if servers.is_empty() {
+        return out;
+    }
+    let admin = who.admin();
+    let upstream = servers
+        .iter()
+        .map(|m| {
+            (
+                m.server.name.clone(),
+                crate::identity::token_for(shared, m, event, admin, None),
+            )
+        })
+        .collect();
+    let (token, guard) = shared.gateway.issue(crate::gateway::Grant {
+        event: event.clone(),
+        run_id,
+        person,
+        who,
+        upstream,
+        expires: std::time::Instant::now() + shared.config.agent_timeout,
+        done: CancellationToken::new(),
+        local: std::sync::Mutex::default(),
+    });
+    for m in servers {
+        out.servers.push(okbot_core::McpServer {
+            name: m.server.name.clone(),
+            url: format!("{base}/mcp/{}", m.server.name),
+            bearer_token_env: m.server.bearer_token_env.clone(),
+        });
+        out.env
+            .push((m.server.bearer_token_env.clone(), token.clone()));
+    }
+    out.guard = Some(guard);
+    out
+}
+
+/// A turn's MCP servers, the environment carrying their tokens, and the gateway grant that
+/// ends with the turn.
+struct TurnMcp {
+    servers: Vec<okbot_core::McpServer>,
+    env: Vec<(String, okbot_core::Secret<String>)>,
+    guard: Option<crate::gateway::GrantGuard>,
+}
+
+/// The requester used up `[limits]` (administrators never do). A store error lets the turn run.
+async fn over_limit(shared: &Shared, person: &str, admin: bool) -> bool {
+    let limits = shared.config.limits;
+    if admin || (limits.turns_per_day == 0 && limits.tokens_per_day == 0) {
+        return false;
+    }
+    let since = shared.clock.now() - jiff::SignedDuration::from_hours(24);
+    match shared.store.usage_since(person, since).await {
+        Ok(usage) => {
+            let over = (limits.turns_per_day > 0 && usage.turns >= u64::from(limits.turns_per_day))
+                || (limits.tokens_per_day > 0 && usage.tokens >= limits.tokens_per_day);
+            if over {
+                tracing::info!(%person, "over the daily limit");
+                shared.metrics.ignored();
+            }
+            over
+        }
+        Err(error) => {
+            tracing::warn!(%error, "usage unavailable; the limit is not applied");
+            false
         }
     }
-    (mcp, env)
 }
 
 /// Answers a batch of messages from one conversation.
@@ -140,9 +228,17 @@ pub(crate) async fn answer(shared: &Shared, batch: &[Tracked], cancel: &Cancella
     };
     let span =
         tracing::info_span!("turn", conversation = %event.conversation, messages = batch.len());
-    answer_batch(shared, batch, event, cancel)
-        .instrument(span)
-        .await;
+    async {
+        let admin = shared.is_admin(event).await;
+        let person = shared.person_key(event).await;
+        if over_limit(shared, &person, admin).await {
+            reply(shared, event, &shared.config.replies.limit_reached).await;
+            return;
+        }
+        answer_batch(shared, batch, event, cancel, admin, person).await;
+    }
+    .instrument(span)
+    .await;
 }
 
 async fn answer_batch(
@@ -150,6 +246,8 @@ async fn answer_batch(
     batch: &[Tracked],
     event: &InboundEvent,
     cancel: &CancellationToken,
+    admin: bool,
+    person: String,
 ) {
     let Some(channel) = shared.channels.get(&event.conversation.channel) else {
         return;
@@ -164,7 +262,6 @@ async fn answer_batch(
     let requester = crate::command::requester(shared, event).await;
     let timeout = shared.config.agent_timeout;
 
-    let admin = shared.is_admin(event).await;
     let (knowledge, grant, excerpts) =
         gather_knowledge(shared, batch, &requester, tools, admin).await;
 
@@ -207,25 +304,26 @@ async fn answer_batch(
         }
         None => (None, None),
     };
-    let (mcp, env) = with_extra_mcp(shared, &grant, event, admin);
+    let run_id = run_id();
+    let mcp = with_extra_mcp(shared, &grant, event, run_id.clone(), person.clone()).await;
     let turn = AgentTurn {
         system: prompt.system,
         prompt: prompt.prompt,
         tools,
-        mcp,
-        env,
+        mcp: mcp.servers,
+        env: mcp.env,
         workdir: workdir(shared, event),
         timeout,
         resume,
         progress,
     };
-    let run_id = run_id();
     let started = Instant::now();
     let outcome = tokio::select! {
         result = shared.agent.run(turn) => Some(result),
         () = cancel.cancelled() => None,
     };
     drop(grant);
+    drop(mcp.guard);
     drop(live);
     if let Some(Ok(answer)) = &outcome
         && let Some(session) = &answer.session_id
@@ -247,6 +345,7 @@ async fn answer_batch(
         duration: started.elapsed(),
         error: None,
         started_at: now,
+        person: Some(person),
     };
     finish(shared, event, outcome, record, typing.1.as_ref()).await;
 }

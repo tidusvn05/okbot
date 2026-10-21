@@ -106,6 +106,164 @@ fn mcp_servers_load_and_their_tokens_are_secrets() {
 }
 
 #[test]
+fn roles_limits_and_mcp_rules_load() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        r#"config_version = 1
+[bot]
+name = "x"
+
+[people.lan]
+accounts = ["discord:main/1"]
+
+[roles]
+ops = ["telegram:main/7", "person:lan"]
+support = []
+
+[limits]
+turns_per_day = 50
+tokens_per_day = 2000000
+
+[[mcp]]
+name = "ops"
+url = "http://127.0.0.1:8790/mcp"
+token_env = "OPS_MCP_TOKEN"
+roles = ["ops", "admins"]
+rooms = ["gchat:corp/spaces/AAA"]
+tools = ["status", "logs_*"]
+deny_tools = ["logs_purge"]
+confirm = "destructive"
+confirm_by = "admins"
+
+[[mcp.restrict]]
+tools = ["deploy*"]
+roles = ["ops"]
+
+[[command]]
+name = "status"
+mcp = "ops"
+tool = "status"
+roles = ["support"]
+"#,
+    );
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.roles["ops"], ["telegram:main/7", "person:lan"]);
+    assert_eq!(config.roles["support"], Vec::<String>::new());
+    assert_eq!(config.limits.turns_per_day, 50);
+    assert_eq!(config.limits.tokens_per_day, 2_000_000);
+    let m = &config.mcp[0];
+    assert_eq!(m.roles, ["ops", "admins"]);
+    assert_eq!(m.rooms, ["gchat:corp/spaces/AAA"]);
+    assert_eq!(m.tools, ["status", "logs_*"]);
+    assert_eq!(m.deny_tools, ["logs_purge"]);
+    assert_eq!(m.restrict[0].tools, ["deploy*"]);
+    assert_eq!(m.confirm, Confirm::Destructive);
+    assert_eq!(m.confirm_by, ConfirmBy::Admins);
+    assert_eq!(config.commands[0].roles, ["support"]);
+
+    // Defaults: no limits, every tool, no confirmation.
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n",
+    );
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.limits, LimitsSection::default());
+    assert!(config.mcp[0].tools.is_empty() && config.mcp[0].roles.is_empty());
+    assert_eq!(config.mcp[0].confirm, Confirm::Never);
+}
+
+#[test]
+fn command_servers_load() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"gh\"\ncommand = [\"npx\", \"-y\", \"server-github\"]\nenv = [\"GITHUB_TOKEN\"]\n",
+    );
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.mcp[0].command, ["npx", "-y", "server-github"]);
+    assert!(config.secret_names().contains(&"GITHUB_TOKEN".to_string()));
+    assert!(!config.secret_names().contains(&String::new()));
+    for (text, expected) in [
+        ("command = [\"x\"]\nurl = \"http://x\"\n", "takes no url"),
+        ("command = [\"x\"]\nauth = \"signed\"\n", "takes no url"),
+        ("command = [\"\"]\n", "a program"),
+        (
+            "command = [\"x\"]\nenv = [\"gh token\"]\n",
+            "not a variable name",
+        ),
+        (
+            "url = \"http://x\"\ntoken_env = \"T\"\nenv = [\"A\"]\n",
+            "env is for command",
+        ),
+        ("", "url must start"),
+    ] {
+        write(
+            dir.path(),
+            &format!("config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"gh\"\n{text}"),
+        );
+        let error = Config::load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected:?} not in {error:?}");
+    }
+}
+
+#[test]
+fn rejects_bad_roles_and_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[roles]\nadmins = [\"discord:main/1\"]\n",
+            "built in",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[roles]\nOps = []\n",
+            "role name",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[roles]\nops = [\"1234\"]\n",
+            "[roles] ops",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[roles]\nops = [\"person:nobody\"]\n",
+            "not in [people]",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\nroles = [\"ops\"]\n",
+            "role `ops` is not in [roles]",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\nrooms = [\"general\"]\n",
+            "rooms",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\ndeny_tools = [\"drop db\"]\n",
+            "not a tool name",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[mcp.restrict]]\ntools = [\"deploy\"]\nroles = []\n",
+            "needs tools and roles",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\nconfirm = \"sometimes\"\n",
+            "confirm",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"s\"\nmcp = \"ops\"\ntool = \"t\"\nroles = [\"nope\"]\n",
+            "role `nope`",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n[[command]]\nname = \"approve\"\nmcp = \"ops\"\ntool = \"t\"\n",
+            "built-in",
+        ),
+    ];
+    for (text, expected) in cases {
+        write(dir.path(), text);
+        let error = Config::load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected:?} not in {error:?}");
+    }
+}
+
+#[test]
 fn rejects_bad_configs() {
     let dir = tempfile::tempdir().unwrap();
     let cases = [

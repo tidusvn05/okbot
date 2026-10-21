@@ -18,9 +18,10 @@ use okbot_core::Secret;
 pub use edit::ConfigEditor;
 pub use schema::{
     AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection,
-    CommandSection, Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection, McpAuth,
-    McpSection, NotifySection, PersonSection, ProviderSection, ReplyOn, RoomSection,
-    ScheduleSection, SlackSection, TelegramSection, ZaloSection,
+    CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery, GChatSection,
+    HttpSection, LimitsSection, McpAuth, McpSection, NotifySection, PersonSection, ProviderSection,
+    ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection, TelegramSection,
+    ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -31,8 +32,11 @@ pub use write::{
 pub const BUILTIN_COMMANDS: &[&str] = &[
     "help", "reset", "new", "clear", "whoami", "stop", "cancel", "remember", "forget", "memories",
     "memory", "pair", "tasks", "todo", "todos", "done", "snooze", "later", "resume", "start",
-    "pause", "note",
+    "pause", "note", "approve", "deny", "answer", "grant", "revoke", "roles",
 ];
+
+/// Roles every bot has: `[bot] admins` (and the owner of a personal bot), and everyone it answers.
+pub const BUILTIN_ROLES: &[&str] = &["admins", "everyone"];
 
 /// The file name of a bot's configuration.
 pub const CONFIG_FILE: &str = "okbot.toml";
@@ -106,6 +110,21 @@ fn is_env_name(value: &str) -> bool {
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
 }
 
+/// A tool name or a pattern with `*` (any characters).
+fn check_pattern(what: &str, pattern: &str) -> Result<(), ConfigError> {
+    let ok = !pattern.is_empty()
+        && pattern
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'*'));
+    if ok {
+        Ok(())
+    } else {
+        Err(ConfigError::Invalid(format!(
+            "{what}: `{pattern}` is not a tool name or pattern (letters, digits, `_`, `-`, `.`, `*`)"
+        )))
+    }
+}
+
 fn is_slug(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -136,6 +155,10 @@ pub struct Config {
     pub commands: Vec<CommandSection>,
     /// `[[notify]]`: named destinations other programs post messages to.
     pub notify: Vec<NotifySection>,
+    /// `[roles]`: members (accounts, or `person:<id>`) by role name.
+    pub roles: BTreeMap<String, Vec<String>>,
+    /// `[limits]`.
+    pub limits: LimitsSection,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -183,6 +206,8 @@ impl Config {
             mcp: file.mcp,
             commands: file.command,
             notify: file.notify,
+            roles: file.roles,
+            limits: file.limits,
             dotenv,
         };
         config.validate()?;
@@ -192,6 +217,7 @@ impl Config {
     fn validate(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
         self.validate_people()?;
+        self.validate_roles()?;
         self.validate_schedule()?;
         self.validate_mcp()?;
         self.validate_commands()?;
@@ -310,6 +336,43 @@ impl Config {
         Ok(())
     }
 
+    fn validate_roles(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        for (role, members) in &self.roles {
+            if !is_slug(role) {
+                return invalid(format!(
+                    "[roles] `{role}`: a role name may only contain a-z, 0-9, `-` and `_`"
+                ));
+            }
+            if BUILTIN_ROLES.contains(&role.as_str()) {
+                return invalid(format!("[roles] `{role}` is built in"));
+            }
+            for member in members {
+                if let Some(person) = member.strip_prefix("person:") {
+                    if !self.people.contains_key(person) {
+                        return invalid(format!("[roles] {role}: `{member}` is not in [people]"));
+                    }
+                } else {
+                    parse_account(member)
+                        .map_err(|e| ConfigError::Invalid(format!("[roles] {role}: {e}")))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks role names used by `[[mcp]]` or `[[command]]`.
+    fn check_roles(&self, what: &str, roles: &[String]) -> Result<(), ConfigError> {
+        for role in roles {
+            if !BUILTIN_ROLES.contains(&role.as_str()) && !self.roles.contains_key(role) {
+                return Err(ConfigError::Invalid(format!(
+                    "{what}: role `{role}` is not in [roles] (built in: admins, everyone)"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_schedule(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
         if let Some(channel) = &self.schedule.deliver_to {
@@ -343,17 +406,51 @@ impl Config {
             if !seen.insert(m.name.as_str()) {
                 return invalid(format!("[[mcp]] name `{}` is used twice", m.name));
             }
-            if !(m.url.starts_with("http://") || m.url.starts_with("https://")) {
-                return invalid(format!(
-                    "[[mcp]] `{}`: url must start with http:// or https://",
-                    m.name
-                ));
+            let what = format!("[[mcp]] `{}`", m.name);
+            if m.command.is_empty() {
+                if !(m.url.starts_with("http://") || m.url.starts_with("https://")) {
+                    return invalid(format!(
+                        "{what}: url must start with http:// or https:// (or give a command)"
+                    ));
+                }
+                if !is_env_name(&m.token_env) {
+                    return invalid(format!(
+                        "{what}: token_env must be a variable name such as OPS_MCP_TOKEN"
+                    ));
+                }
+                if !m.env.is_empty() {
+                    return invalid(format!("{what}: env is for command servers"));
+                }
+            } else {
+                if !m.url.is_empty() || !m.token_env.is_empty() || m.auth != McpAuth::Bearer {
+                    return invalid(format!(
+                        "{what}: a command server takes no url, token_env or auth"
+                    ));
+                }
+                if m.command[0].trim().is_empty() {
+                    return invalid(format!("{what}: command must start with a program"));
+                }
+                if let Some(bad) = m.env.iter().find(|v| !is_env_name(v)) {
+                    return invalid(format!("{what}: env `{bad}` is not a variable name"));
+                }
             }
-            if !is_env_name(&m.token_env) {
-                return invalid(format!(
-                    "[[mcp]] `{}`: token_env must be a variable name such as OPS_MCP_TOKEN",
-                    m.name
-                ));
+            self.check_roles(&what, &m.roles)?;
+            for room in &m.rooms {
+                parse_account(room).map_err(|_| {
+                    ConfigError::Invalid(format!(
+                        "{what} rooms: `{room}` must look like `discord:main/<room id>`"
+                    ))
+                })?;
+            }
+            for pattern in m.tools.iter().chain(&m.deny_tools) {
+                check_pattern(&what, pattern)?;
+            }
+            for r in &m.restrict {
+                if r.tools.is_empty() || r.roles.is_empty() {
+                    return invalid(format!("{what} restrict: needs tools and roles"));
+                }
+                r.tools.iter().try_for_each(|p| check_pattern(&what, p))?;
+                self.check_roles(&format!("{what} restrict"), &r.roles)?;
             }
         }
         Ok(())
@@ -397,6 +494,7 @@ impl Config {
                     ));
                 }
             }
+            self.check_roles(&format!("[[command]] `{n}`"), &c.roles)?;
             if !self.mcp.iter().any(|m| m.name == c.mcp) {
                 return invalid(format!(
                     "[[command]] `{n}`: mcp `{}` is not an [[mcp]] server",
@@ -551,8 +649,13 @@ impl Config {
         for b in self.channels.bridge.values() {
             names.extend(b.env.iter().cloned());
         }
-        names.extend(self.mcp.iter().map(|m| m.token_env.clone()));
         names.extend(self.notify.iter().map(|n| n.token_env.clone()));
+        for m in &self.mcp {
+            if !m.token_env.is_empty() {
+                names.push(m.token_env.clone());
+            }
+            names.extend(m.env.iter().cloned());
+        }
         names.sort();
         names.dedup();
         names

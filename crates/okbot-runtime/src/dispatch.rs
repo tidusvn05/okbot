@@ -7,6 +7,7 @@ use okbot_core::{CancellationToken, ConversationKey, InboundEvent, ReplyTarget};
 use tokio::sync::mpsc;
 
 use crate::command::{self, Command};
+use crate::interact::Choice;
 use crate::policy::Verdict;
 use crate::{Shared, Tracked, turn};
 
@@ -106,9 +107,29 @@ impl Dispatcher {
             turn::reply(s, &event, &s.config.replies.restricted).await;
             return;
         }
-        if Command::parse(&event.text) == Some(Command::Stop) {
-            self.stop(&event).await;
-            return;
+        match Command::parse(&event.text) {
+            Some(Command::Stop) => {
+                self.stop(&event).await;
+                return;
+            }
+            // A turn waiting for this answer holds the conversation's queue: answer at once.
+            Some(Command::Approve(code)) => {
+                return self.answer(&event, &code, Choice::Id("allow".into())).await;
+            }
+            Some(Command::Deny(code)) => {
+                return self.answer(&event, &code, Choice::Id("deny".into())).await;
+            }
+            Some(Command::Answer(rest)) => {
+                let mut words = rest.split_whitespace();
+                let code = words.next().unwrap_or_default().to_string();
+                return match words.next().and_then(|n| n.parse().ok()) {
+                    Some(n) => self.answer(&event, &code, Choice::Number(n)).await,
+                    None => {
+                        turn::reply(s, &event, "Use `/answer <code> <number>`.").await;
+                    }
+                };
+            }
+            _ => {}
         }
         self.route((event, guard));
     }
@@ -161,6 +182,10 @@ impl Dispatcher {
         };
         turn::reply(s, event, &reply).await;
         false
+    }
+
+    async fn answer(&self, event: &InboundEvent, code: &str, choice: Choice) {
+        crate::interact::answer_text(self.shared.clone(), event, code.trim(), choice).await;
     }
 
     /// `/stop` acts at once; every other command waits its turn in the conversation.

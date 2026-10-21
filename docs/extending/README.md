@@ -12,7 +12,8 @@ depend on each other; `okbot` is the only place that turns configuration into ob
 | A store | `ConversationStore` | `okbot` | `okbot_testkit::conformance::conversation_store` |
 | A chat command | `okbot-runtime/src/command.rs` | command table | — |
 | A bot tool for the agent | `okbot-knowledge/src/bot_mcp.rs` | gated by `ToolPolicy` | — |
-| Your own tools for the agent | an MCP server (streamable HTTP, bearer token) | `[[mcp]]` in `okbot.toml` | [below](#your-own-mcp-server) |
+| Your own tools for the agent | an MCP server (streamable HTTP, or a stdio program) | `[[mcp]]` in `okbot.toml` | [below](#your-own-mcp-server) |
+| Tools that act on each person's own account | a signed MCP server keeping per-person OAuth tokens | `[[mcp]] auth = "signed"` | [accounts.md](accounts.md) |
 | A chat command for one of your tools | nothing: config only | `[[command]]` in `okbot.toml` | [below](#commands-for-your-tools) |
 | A platform's command menu | `Channel::set_commands` | channel adapter | [below](#commands-for-your-tools) |
 | Notifications from your programs | nothing: config only | `[[notify]]` in `okbot.toml` | [../notify.md](../notify.md) |
@@ -34,16 +35,94 @@ The agent can call tools of MCP servers you run, next to okbot's own `kb` and `b
 name = "ops"                          # tools appear as mcp__ops__<tool>
 url = "http://127.0.0.1:8790/mcp"     # streamable HTTP
 token_env = "OPS_MCP_TOKEN"           # shared secret, from the environment or .env
-admins_only = true                    # offer it only in turns of [bot] admins (default false)
 auth = "signed"                       # bearer (default): the secret itself | signed: a run identity
 ```
 
 - Only agents that take per-run MCP servers (Claude, Codex) get it; it works with `tool_policy = "mcp-only"`, which
   is the setting to use for a bot whose job is your tools.
+- **Through a gateway** ([ADR 0011](../adr/0011-mcp-gateway-and-roles.md)). The agent talks to okbot on a random
+  loopback port with a token that ends with its turn; okbot forwards to your server with the secret (or the signed
+  run token), so the agent never holds either. Every rule below is applied there, and every call is recorded.
 - The secret is kept out of logs and out of every other run's environment.
-- Every tool of the server is allowed. Keep dangerous operations behind a prompt (below) in the server, and
-  never add a server that offers a shell or file access: the agent would get them, which okbot otherwise
-  never allows. Use `https://` for a server on another host.
+- Never add a server that offers a shell or file access: the agent would get them, which okbot otherwise never
+  allows. Use `https://` for a server on another host.
+
+### Who, where and which tools
+
+```toml
+[roles]                               # names for groups of people
+ops = ["discord:main/1234", "person:lan"]   # accounts as /whoami shows them, or [people] ids
+support = []                          # filled by temporary grants only
+
+[[mcp]]
+name = "ops"
+url = "http://127.0.0.1:8790/mcp"
+token_env = "OPS_MCP_TOKEN"
+roles = ["ops", "support"]            # who may use the server (default: everyone the bot answers)
+rooms = ["discord:main/987654"]       # where it is offered (default: everywhere)
+tools = ["status", "logs_*", "deploy*"]   # offered tools, `*` matches anything (default: all)
+deny_tools = ["logs_purge"]           # never offered; wins over `tools`
+confirm = "destructive"               # never (default) | destructive | always
+confirm_by = "requester"              # requester (default) | admins
+
+[[mcp.restrict]]                      # these tools only for these roles
+tools = ["deploy*"]
+roles = ["ops"]
+```
+
+- `admins` (the `[bot] admins`, and the owner of a personal bot) and `everyone` are built-in roles;
+  `admins_only = true` is short for `roles = ["admins"]`.
+- A tool a person may not call is left out of `tools/list`, so the agent does not see it, and a call to it is
+  refused with a tool error ("not available to this person here").
+- **Confirmation.** With `confirm = "destructive"`, a call of a tool that the server does not annotate as
+  `readOnlyHint` (or as `destructiveHint: false`) waits: the conversation shows the tool and its arguments with
+  **Allow** and **Deny**, and only the requester (or, with `confirm_by = "admins"`, an administrator in that
+  chat) can answer. Platforms with buttons (Discord, Telegram, Slack, Google Chat) show buttons; elsewhere the
+  message ends with `/approve <code>` and `/deny <code>`, which are answered at once even while the turn waits.
+  No answer before the turn's timeout is a refusal, and the agent is told not to retry. `always` asks for every
+  call. Annotations are hints from your server; the permissions are only what `okbot.toml` and grants say.
+- **Temporary roles.** `okbot role grant ops discord:main/1234 --for 2h` (or `/grant ops discord:main/1234 2h`
+  by an administrator in chat) adds a role from `[roles]` until it expires; `okbot role revoke`, `/revoke`,
+  `okbot role list` and `/roles` manage them. `admins` and `everyone` cannot be granted, and a grant lasts at
+  most 30 days.
+- **Audit.** `okbot audit [--since 24h] [--person …] [--json]` lists every tool call through the gateway and every
+  `[[command]]` run: who, where, which tool, allowed, refused or declined, and how long it took. Arguments and
+  results are not stored (they may hold secrets).
+
+### Limits per person
+
+```toml
+[limits]                              # over a rolling 24 hours; administrators are exempt
+turns_per_day = 50                    # 0 (default): no limit
+tokens_per_day = 2000000              # input + output tokens as the agent CLIs report them
+```
+
+A person over a limit gets a fixed reply and no agent turn. Linked accounts (`[people]`) share one limit.
+
+### Local servers (stdio)
+
+Many MCP servers are programs that speak over stdin and stdout. okbot runs one for each agent session,
+behind the same gateway and rules:
+
+```toml
+[[mcp]]
+name = "github"
+command = ["npx", "-y", "@modelcontextprotocol/server-github"]
+env = ["GITHUB_PERSONAL_ACCESS_TOKEN"]    # passed from the environment or .env, by name
+tools = ["search_*", "get_*", "list_*"]   # read-only tools only
+```
+
+The process gets an empty environment (only `PATH`, `HOME` set to its own empty directory under
+`state/work/mcp/`, and the variables in `env`), runs as okbot's user, and is stopped (input closed, then killed)
+when the session or the turn ends. It has no per-person identity: for that, run an HTTP server with
+`auth = "signed"`. A server that reads or writes files can still reach whatever okbot's user can, so prefer
+`tools = [...]`, and run okbot as a user of its own.
+
+### Acting on each person's own account
+
+A signed server knows who asked, so it can keep one OAuth token per person and call the service as them, never
+through a shared account and never showing a credential to the agent. See [accounts.md](accounts.md) and the
+runnable [`examples/mcp/accounts-server.mjs`](../../examples/mcp/accounts-server.mjs).
 
 ### Signed run identity (`auth = "signed"`)
 
@@ -79,7 +158,8 @@ Authorization: Bearer <the run token>
  "callback": "http://127.0.0.1:8790/answers"}
 ```
 
-→ `{"prompt": "<id>"}` (`501` on platforms without buttons). The callback must be on the server's own origin.
+→ `{"prompt": "<id>"}`. On platforms without buttons the prompt is shown as text with `/answer <id> <n>` for
+each button; a prompt with a form needs Discord (`501` elsewhere). The callback must be on the server's own origin.
 Only a token okbot issued for a turn or command, until it expires, is accepted (`401` otherwise): the server holds
 the secret, but cannot sign claims of its own to reach another conversation.
 When someone allowed presses a button (and fills in its form), okbot POSTs
@@ -91,8 +171,9 @@ When someone allowed presses a button (and fills in its form), okbot POSTs
 
 with `x-okbot-timestamp` and `x-okbot-signature: base64url(HMAC-SHA256(secret, "<timestamp>.<body>"))`. Answer
 `{"text": "Deployed ✅"}` to replace the buttons, or add `"keep_open": true` to let them try again (a wrong code).
-Values never reach the agent or the history: use forms for API keys and one-time codes. Discord supports prompts
-today; buttons, styles and limits follow Discord (5 buttons, 5 fields).
+Values never reach the agent or the history: use forms for API keys and one-time codes. Discord shows buttons and
+forms; Telegram, Slack and Google Chat show buttons; other platforms show text. Limits follow Discord (5 buttons,
+5 fields).
 
 ## Commands for your tools
 
@@ -110,13 +191,16 @@ tool = "company_logs"
 args = ["company", "service", "since?"]    # positional; `x?` optional, `x...` the rest of the line
 with = { level = "error" }                 # always passed; chat cannot change it
 admins_only = false                        # implied when the server is admins_only
+roles = ["ops"]                            # who may run it (default: whoever may call the tool)
 ```
 
 `/logs freach channel-broker 24h` calls `company_logs {"company": "freach", "service": "channel-broker",
 "since": "24h", "level": "error"}`. Any argument the tool declares, except those fixed by `with`, can be set
 as `name=value` (`/logs freach agent-sales limit=20`), values take the type the tool's input schema declares (`integer`,
 `number`, `boolean`, `array` as `a,b`), and `"…"` keeps spaces in one value. Missing or malformed arguments
-get the usage line, without calling the tool. `/help` lists the commands the person may run.
+get the usage line, without calling the tool. `/help` lists the commands the person may run. A command obeys the
+same server rules as the agent (roles, rooms, tool lists), is recorded by `okbot audit`, and is not confirmed: the
+person typed it.
 
 - **Same identity, same checks.** okbot opens an MCP session with the token an agent turn would get (signed:
   with `"command": "<name>"` in the claims), lists the tools and calls the one named. A tool the server does not

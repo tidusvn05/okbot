@@ -84,7 +84,7 @@ const MIGRATIONS: &[&str] = &[
     );
     ",
     // 4: who each run was for (`[limits]`), tool calls through the MCP gateway and temporary
-    // role grants (ADR 0010).
+    // role grants (ADR 0011).
     r"
     ALTER TABLE agent_runs ADD COLUMN person TEXT;
     CREATE INDEX agent_runs_by_person ON agent_runs(person, started_at);

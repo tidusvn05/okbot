@@ -1,5 +1,6 @@
 //! The `okbot` command line: creates, runs and manages bots.
 
+mod access;
 mod bot;
 mod channel;
 mod chat;
@@ -83,6 +84,11 @@ enum Command {
     People(people::PeopleCommand),
     /// Send a message through the running bot to a `[[notify]]` target (cron jobs, scripts).
     Send(send::SendArgs),
+    /// Roles for `[[mcp]]` rules: list them, grant one for a while, revoke a grant.
+    #[command(subcommand, alias = "roles")]
+    Role(access::RoleCommand),
+    /// Calls of `[[mcp]]` tools by agents and commands (who, what, allowed or refused).
+    Audit(access::AuditArgs),
     /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
@@ -169,6 +175,8 @@ async fn main() -> ExitCode {
         Command::Pair(args) => owner::pair(&args).await,
         Command::People(command) => people::run(command),
         Command::Send(args) => send::run(args).await,
+        Command::Role(command) => access::role(command).await,
+        Command::Audit(args) => access::audit(args).await,
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),

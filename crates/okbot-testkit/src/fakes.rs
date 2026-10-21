@@ -205,6 +205,7 @@ pub struct FakeChannel {
     typing: AtomicUsize,
     ready: tokio::sync::Notify,
     opens_direct: bool,
+    buttons: bool,
 }
 
 impl std::fmt::Debug for FakeChannel {
@@ -229,7 +230,15 @@ impl FakeChannel {
             typing: AtomicUsize::new(0),
             ready: tokio::sync::Notify::new(),
             opens_direct: false,
+            buttons: true,
         }
+    }
+
+    /// Like a platform without buttons: prompts are [`okbot_core::ChannelError::Unsupported`].
+    #[must_use]
+    pub fn without_buttons(mut self) -> Self {
+        self.buttons = false;
+        self
     }
 
     /// Lets [`Channel::open_direct`](okbot_core::Channel::open_direct) open a direct chat with
@@ -378,6 +387,9 @@ impl okbot_core::Channel for FakeChannel {
         to: &okbot_core::ReplyTarget,
         prompt: &okbot_core::Prompt,
     ) -> Result<okbot_core::SentRef, okbot_core::ChannelError> {
+        if !self.buttons {
+            return Err(okbot_core::ChannelError::Unsupported("prompt"));
+        }
         let mut prompts = self
             .prompts
             .lock()
@@ -395,6 +407,9 @@ impl okbot_core::Channel for FakeChannel {
         message: &okbot_core::RenderedMessage,
         keep_buttons: bool,
     ) -> Result<(), okbot_core::ChannelError> {
+        if !self.buttons {
+            return Err(okbot_core::ChannelError::Unsupported("prompt"));
+        }
         self.prompt_updates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

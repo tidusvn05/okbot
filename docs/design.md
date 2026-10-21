@@ -114,7 +114,8 @@ okbot/
 7.  ContextBuilder: persona + platform formatting rules + okbase catalog
     + user profile + recent history within a token budget                  [runtime, knowledge]
 8.  Issue a RunToken (user/room scope, TTL = timeout) → MCP config;
-    resolve the room's tool policy (web by default | mcp-only)                     [knowledge, runtime]
+    resolve the room's tool policy (web by default | mcp-only); grant the
+    [[mcp]] servers this person may use here through the gateway (ADR 0011)    [knowledge, runtime]
 9.  AgentBackend.run() → the agent calls kb_* / memory_* over MCP           [agent]
 10. Revoke the RunToken; record audit (provider, model, usage, duration)
 11. Renderer: Markdown → platform dialect, split under max_len
@@ -374,7 +375,8 @@ User prompt: recent history (token budget, default ~6k) plus the current message
 | Working directory | `state/work/<hash(conversation)>/`, empty; never the bundle or a repository |
 | Environment | `env_remove` platform tokens, Google credentials, `OKBOT_*`, …; the agent only sees its short-lived MCP token |
 | RunToken | 32 random bytes bound to one run, TTL = timeout, revoked when the run ends; MCP endpoints bind to `127.0.0.1` only |
-| Limits | Global process semaphore, per-run timeout, per-user rate limit, maximum input length |
+| Your MCP servers | Reached only through okbot's loopback gateway with a per-turn token; it applies `[roles]`, rooms and tool lists, asks the person before destructive calls (`confirm`), records each call (`okbot audit`) and holds the servers' credentials (ADR 0011) |
+| Limits | Global process semaphore, per-run timeout, per-user rate limit, maximum input length, daily turns and tokens per person (`[limits]`) |
 | Deployment | Container or dedicated system user; a separate home holding the CLIs' login state |
 
 Web is on by default (D4), which accepts a known risk: a fetched page can carry injected instructions,
@@ -653,7 +655,9 @@ read on demand.
 | `conversations` | key, current provider, `session_id`, last activity |
 | `messages` | conversation, author, role, text, platform message id, timestamp (for transcripts) |
 | `inbound_dedupe` | (channel, event_id) with TTL |
-| `agent_runs` | provider, model, tool policy, usage, duration, error — audit and cost |
+| `agent_runs` | provider, model, tool policy, usage, duration, error, person — audit, cost and `[limits]` |
+| `tool_calls` | `[[mcp]]` tool calls: person, conversation, server, tool, allowed / denied / declined, error, duration (never arguments) |
+| `role_grants` | temporary roles: (role, account) → expiry, granted by |
 | `users` | platform user → role (admin, blocked) |
 | `pairing_codes` | one-time owner pairing codes (personal profile) |
 | `task_fires` | (task, firing time) → sending, sent, failed, missed; attempts (§5.6) |
@@ -713,6 +717,21 @@ listen = "127.0.0.1:8787"            # webhooks + health, behind a TLS reverse p
 enabled = true
 git_commit = true
 
+[roles]                              # for [[mcp]] rules; admins and everyone are built in
+ops = ["discord:main/1234", "person:lan"]
+
+[limits]                             # per person over 24 hours; admins exempt
+turns_per_day = 50
+
+[[mcp]]                              # your tools, through the gateway (ADR 0011)
+name = "ops"
+url = "http://127.0.0.1:8790/mcp"
+token_env = "OPS_MCP_TOKEN"
+auth = "signed"
+roles = ["ops"]
+deny_tools = ["drop_*"]
+confirm = "destructive"
+
 [schedule]                           # reminders and routines (§5.6, §5.7)
 enabled = true
 deliver_to = "origin"                # origin | a channel id such as "discord:main"
@@ -735,6 +754,8 @@ okbot kb sync|lint|upgrade    # bundle operations
 okbot memory list|log|forget|edit
 okbot kb add <file|url> | kb inbox   # save documents to knowledge/inbox (§5.8)
 okbot task list|add|done|rm|pause|resume [--upcoming]   # tasks, reminders, routines (§5.6)
+okbot role list|grant|revoke  # temporary roles for [[mcp]] rules (ADR 0011)
+okbot audit [--since 24h]     # [[mcp]] tool calls: who, what, allowed or refused
 ```
 
 Agent-first like okbase and dcbot: `okbot doctor --json`, `okbot help --agent`.

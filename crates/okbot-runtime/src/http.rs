@@ -289,6 +289,7 @@ mod tests {
             issued: crate::identity::Issued::default(),
             interact_url: std::sync::OnceLock::new(),
             notified: crate::notify::Recent::default(),
+            gateway: Arc::default(),
         })
     }
 
