@@ -4,6 +4,17 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.8.0] - 2026-10-21
+
+### Features
+
+- MCP gateway with roles, rooms, tool lists, approvals, audit, limits and stdio servers (ADR 0011) (#31) (03842bf)
+- **cli:** okbot agent and okbot history for operators (#32) (8e1bfa1)
+
+### Other
+
+- reopen development as 0.8.0-dev (#30) (3ee13df)
+
 ## [0.7.0] - 2026-10-20
 
 ### Features
