@@ -37,8 +37,22 @@ pub(crate) fn emit(mut value: Value, text: &str, json: bool, r: &Redactor) {
         redact_value(&mut value, r);
         println!("{value}");
     } else {
-        print!("{}", r.redact(text));
+        print!("{}", printable(&r.redact(text)));
     }
+}
+
+/// Terminal text with control characters other than line breaks escaped: chat messages and server
+/// errors cannot move the cursor, set the window title or write the operator's clipboard.
+pub(crate) fn printable(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            if c.is_control() && c != '\n' {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn redact_error(error: &anyhow::Error, r: &Redactor) -> anyhow::Error {
@@ -53,5 +67,17 @@ pub(crate) fn redact_error(error: &anyhow::Error, r: &Redactor) -> anyhow::Error
         .into()
     } else {
         anyhow::anyhow!(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn control_characters_are_escaped() {
+        assert_eq!(
+            super::printable("ok\u{1b}]52;c;eA==\u{7}\r\nnext"),
+            "ok\\u{1b}]52;c;eA==\\u{7}\\r\nnext"
+        );
+        assert_eq!(super::printable("tiếng Việt 日本"), "tiếng Việt 日本");
     }
 }

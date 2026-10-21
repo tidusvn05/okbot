@@ -182,7 +182,11 @@ fn discovery_and_status_use_exact_paths_and_separate_login_without_model_calls()
     let out = cmd
         .args(["agent", "status", "--json"])
         .env("OKBOT_TEST_REQUIRE_HOME", "yes")
-        .env("OKBOT_TEST_AGENT_HOME", env.bot().join("agent-home"))
+        // okbot resolves the bot directory (`/var` is `/private/var` on macOS).
+        .env(
+            "OKBOT_TEST_AGENT_HOME",
+            env.bot().canonicalize().unwrap().join("agent-home"),
+        )
         .write_stdin("")
         .output()
         .unwrap();
