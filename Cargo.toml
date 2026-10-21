@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "templates/channel"]
 
 [workspace.package]
-version = "0.9.0-dev"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -36,21 +36,21 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 # Internal crates.
-okbot-core = { path = "crates/okbot-core", version = "0.9.0-dev" }
-okbot-config = { path = "crates/okbot-config", version = "0.9.0-dev" }
-okbot-render = { path = "crates/okbot-render", version = "0.9.0-dev" }
-okbot-store = { path = "crates/okbot-store", version = "0.9.0-dev" }
-okbot-agent = { path = "crates/okbot-agent", version = "0.9.0-dev" }
-okbot-knowledge = { path = "crates/okbot-knowledge", version = "0.9.0-dev" }
-okbot-runtime = { path = "crates/okbot-runtime", version = "0.9.0-dev" }
-okbot-channel-console = { path = "crates/okbot-channel-console", version = "0.9.0-dev" }
-okbot-channel-zalo = { path = "crates/okbot-channel-zalo", version = "0.9.0-dev" }
-okbot-channel-gchat = { path = "crates/okbot-channel-gchat", version = "0.9.0-dev" }
-okbot-channel-discord = { path = "crates/okbot-channel-discord", version = "0.9.0-dev" }
-okbot-channel-slack = { path = "crates/okbot-channel-slack", version = "0.9.0-dev" }
-okbot-channel-telegram = { path = "crates/okbot-channel-telegram", version = "0.9.0-dev" }
-okbot-channel-bridge = { path = "crates/okbot-channel-bridge", version = "0.9.0-dev" }
-okbot-testkit = { path = "crates/okbot-testkit", version = "0.9.0-dev" }
+okbot-core = { path = "crates/okbot-core", version = "0.9.0" }
+okbot-config = { path = "crates/okbot-config", version = "0.9.0" }
+okbot-render = { path = "crates/okbot-render", version = "0.9.0" }
+okbot-store = { path = "crates/okbot-store", version = "0.9.0" }
+okbot-agent = { path = "crates/okbot-agent", version = "0.9.0" }
+okbot-knowledge = { path = "crates/okbot-knowledge", version = "0.9.0" }
+okbot-runtime = { path = "crates/okbot-runtime", version = "0.9.0" }
+okbot-channel-console = { path = "crates/okbot-channel-console", version = "0.9.0" }
+okbot-channel-zalo = { path = "crates/okbot-channel-zalo", version = "0.9.0" }
+okbot-channel-gchat = { path = "crates/okbot-channel-gchat", version = "0.9.0" }
+okbot-channel-discord = { path = "crates/okbot-channel-discord", version = "0.9.0" }
+okbot-channel-slack = { path = "crates/okbot-channel-slack", version = "0.9.0" }
+okbot-channel-telegram = { path = "crates/okbot-channel-telegram", version = "0.9.0" }
+okbot-channel-bridge = { path = "crates/okbot-channel-bridge", version = "0.9.0" }
+okbot-testkit = { path = "crates/okbot-testkit", version = "0.9.0" }
 
 # External crates.
 # Agent CLI adapters (formerly agent-core).

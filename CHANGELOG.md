@@ -4,6 +4,16 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.9.0] - 2026-10-21
+
+### Features
+
+- **console:** simulate users, rooms and platforms; scripted agent for tests (#35) (99ef81d)
+
+### Other
+
+- reopen development as 0.9.0-dev; v0.8.0 release results (#34) (f3b051e)
+
 ## [0.8.0] - 2026-10-21
 
 ### Features
