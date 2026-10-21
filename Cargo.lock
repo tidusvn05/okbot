@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "okbot"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2392,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-agent"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "agent-call",
  "okbot-core",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-bridge"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "okbot-core",
  "okbot-testkit",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-console"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "jiff",
  "okbot-core",
@@ -2430,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-discord"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "jiff",
@@ -2447,7 +2447,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-example"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "jiff",
  "okbot-core",
@@ -2459,7 +2459,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-gchat"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-slack"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "futures",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-telegram"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "jiff",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-channel-zalo"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "futures",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-config"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "insta",
  "jiff",
@@ -2546,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-core"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "async-trait",
  "jiff",
@@ -2560,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-knowledge"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-render"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "insta",
  "okbot-core",
@@ -2594,7 +2594,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-runtime"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2621,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-store"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "jiff",
  "okbot-core",
@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "okbot-testkit"
-version = "0.8.0"
+version = "0.9.0-dev"
 dependencies = [
  "jiff",
  "okbot-core",
