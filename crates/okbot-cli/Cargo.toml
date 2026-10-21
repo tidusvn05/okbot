@@ -19,7 +19,7 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["zalo", "gchat", "discord", "slack", "telegram", "bridge"]
+default = ["zalo", "gchat", "discord", "slack", "telegram", "bridge", "line-editing"]
 ## Zalo Bot Platform channel.
 zalo = ["dep:okbot-channel-zalo"]
 ## Google Chat channel.
@@ -32,6 +32,8 @@ slack = ["dep:okbot-channel-slack"]
 telegram = ["dep:okbot-channel-telegram"]
 ## Adapters in other languages, run as child processes (`docs/bridge.md`).
 bridge = ["dep:okbot-channel-bridge"]
+## History and arrow keys in `okbot chat` (Unix).
+line-editing = ["okbot-channel-console/line-editing"]
 
 [dependencies]
 okbot-core.workspace = true

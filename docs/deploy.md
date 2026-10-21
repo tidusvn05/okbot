@@ -67,7 +67,8 @@ okbot pair me          # prints `/pair 483921`, valid 10 minutes, single use
 
 Send that line to the bot in a direct message on Zalo, Discord, … Everyone else gets "This is a
 private assistant". `okbot pair me --list` shows your accounts and `--remove <account>` unpairs one.
-`okbot chat` in the bot's directory is always you. Notes the bot saved for an account before it
+`okbot chat` in the bot's directory is always you (its `:as` users are not: see
+[platforms/console.md](platforms/console.md)). Notes the bot saved for an account before it
 was paired stay visible.
 
 **Team bots** keep one memory per account. When a team member uses several platforms, the operator

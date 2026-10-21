@@ -79,6 +79,7 @@ inquire = { version = "0.9", default-features = false, features = ["crossterm"] 
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite = { version = "0.40", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)
+rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
 rand = "0.10"

@@ -204,7 +204,7 @@ The core depends only on `Channel` and `ChannelCaps`. A new platform needs: an a
 
 | Platform | Connection | Public URL? | Notes |
 |---|---|---|---|
-| Console | stdin/stdout | No | Development, e2e tests, CI |
+| Console | stdin/stdout | No | Development, e2e tests, CI; `:as`/`:room` commands simulate users and groups, `--like <platform>` copies a platform's caps ([guide](platforms/console.md)) |
 | **Google Chat** (second) | HTTP endpoint receiving events + Chat REST API (service account, scope `chat.bot`) | **Yes** (HTTPS) | Verify Google's JWT on every request; a synchronous reply must come within 30 s, so ack with an empty response and reply asynchronously via `spaces.messages.create`; reply in the event's thread; limited text formatting (`*bold*`, `_italic_`, `` `code` ``, links `<url\|text>`); no typing indicator, so post a short "thinking…" message and update it with `spaces.messages.patch` |
 | **Zalo Bot** (first) | Long polling (`getUpdates`) or webhook | Polling: no; webhook: yes | See §3.3.2: 2000-char messages, no edit, no threads, groups in beta |
 | Discord | Gateway WebSocket (twilight) | No | `MESSAGE_CONTENT` is a privileged intent; 2000-char limit; reply in threads; typing lasts 10 s |

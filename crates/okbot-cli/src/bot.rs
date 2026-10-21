@@ -135,7 +135,7 @@ fn agent_chain_with_sessions(config: &Config, sessions: bool) -> anyhow::Result<
 }
 
 /// The runtime settings from `okbot.toml`.
-fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
+pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     let mut rc = RuntimeConfig::new(&config.bot.name, config.state_dir().join("work"));
     rc.agent_timeout = Duration::from_secs(config.agent.timeout_secs);
     rc.history_tokens = config.agent.history_tokens;

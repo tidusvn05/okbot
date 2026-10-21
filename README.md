@@ -130,6 +130,7 @@ shop/
 | Google Chat | HTTP endpoint or Pub/Sub | [docs/platforms/google-chat.md](docs/platforms/google-chat.md) |
 | Discord | gateway | [docs/platforms/discord.md](docs/platforms/discord.md) |
 | Slack | Socket Mode | [docs/platforms/slack.md](docs/platforms/slack.md) |
+| Console (`okbot chat`) | terminal, imitates the others with `--like` | [docs/platforms/console.md](docs/platforms/console.md) |
 | Anything else | bridge adapter (any language) | [docs/bridge.md](docs/bridge.md) |
 
 | Agent CLI | Web tools | Tool lock-down |

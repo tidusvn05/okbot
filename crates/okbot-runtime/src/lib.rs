@@ -155,8 +155,14 @@ impl Shared {
         if self.config.personal {
             let mut owners = self.owners().await;
             let me = (event.conversation.channel.clone(), event.author.id.clone());
-            // The console is the terminal of the machine the bot runs on: its user is the owner.
-            let local = event.conversation.channel.platform() == "console";
+            // The console is the terminal of the machine the bot runs on: its user is the owner
+            // (not the people `okbot chat` lets it pretend to be).
+            let local = event.conversation.channel.platform() == "console"
+                && self
+                    .config
+                    .console_owner
+                    .as_ref()
+                    .is_none_or(|owner| *owner == event.author.id);
             if local && !owners.contains(&me) {
                 owners.push(me.clone());
             }

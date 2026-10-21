@@ -175,6 +175,9 @@ pub struct RuntimeConfig {
     pub roles: Roles,
     /// Per-person limits (`[limits]`).
     pub limits: Limits,
+    /// The console account that is the terminal's own user, the owner of a personal bot. When
+    /// unset, every console account is.
+    pub console_owner: Option<UserId>,
 }
 
 /// A `[[notify]]` destination: the token callers present and where its messages go.
@@ -487,6 +490,7 @@ impl RuntimeConfig {
             notify: Vec::new(),
             roles: Roles::default(),
             limits: Limits::default(),
+            console_owner: None,
         }
     }
 
