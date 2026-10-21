@@ -2,6 +2,7 @@
 //!
 //! - [`CliBackend`] runs one agent CLI (Claude Code, Codex, OpenCode, Devin) per turn.
 //! - [`AgentChain`] tries backends in order, enforces the tool policy and limits concurrency.
+//! - [`ScriptedBackend`] answers from rules instead, for scripts and CI (`okbot chat --replies`).
 //! - [`detect`] finds installed CLIs and whether they are logged in, for `okbot init` and `doctor`.
 
 mod chain;
@@ -10,6 +11,7 @@ pub mod detect;
 mod env;
 mod model;
 mod prompt;
+mod scripted;
 mod slots;
 
 pub use agent_call::Provider;
@@ -18,6 +20,7 @@ pub use cli::{CliBackend, CliBackendConfig};
 pub use env::EnvScrub;
 pub use model::{model_parts, validate_model};
 pub use prompt::inline_system_prompt;
+pub use scripted::ScriptedBackend;
 pub use slots::{MachineSlots, Slot};
 
 /// Parses a provider name as used in configuration (`claude`, `codex`, `opencode`, `devin`).

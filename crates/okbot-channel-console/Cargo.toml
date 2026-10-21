@@ -14,10 +14,21 @@ categories.workspace = true
 [lints]
 workspace = true
 
+[features]
+# History and arrow keys in an interactive terminal (`ConsoleChannel::interactive`; Unix only).
+line-editing = ["dep:rustyline"]
+
 [dependencies]
 okbot-core.workspace = true
 jiff.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true }
+
+# Unix only: on Windows rustyline pulls in BSL-1.0 crates (clipboard-win), which deny.toml does
+# not allow; the console reads plain lines there.
+[target.'cfg(unix)'.dependencies]
+rustyline = { workspace = true, optional = true }
 
 [dev-dependencies]
 okbot-testkit.workspace = true
+insta.workspace = true

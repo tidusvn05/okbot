@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use okbot_core::{
     AgentProgress, CancellationToken, ChannelCaps, ConversationStore, MessageRole, Renderer,
-    ToolPolicy,
+    ToolPolicy, UserId,
 };
 use okbot_runtime::{Runtime, RuntimeConfig, RuntimeHandle};
 use okbot_testkit::{FakeAgent, FakeChannel, ManualClock, MemoryStore, PlainRenderer, inbound};
@@ -41,11 +41,20 @@ impl Harness {
         caps: ChannelCaps,
         tweak: impl FnOnce(&mut RuntimeConfig),
     ) -> Self {
+        Self::start_on("fake:test", agent, caps, tweak)
+    }
+
+    fn start_on(
+        channel: &str,
+        agent: FakeAgent,
+        caps: ChannelCaps,
+        tweak: impl FnOnce(&mut RuntimeConfig),
+    ) -> Self {
         let work = std::env::temp_dir().join("okbot-runtime-tests");
         let mut config = RuntimeConfig::new("okbot", work);
         config.typing_interval = Duration::from_millis(50);
         tweak(&mut config);
-        let channel = Arc::new(FakeChannel::new("fake:test", caps));
+        let channel = Arc::new(FakeChannel::new(channel, caps));
         let agent = Arc::new(agent.enforcing(&[ToolPolicy::Web, ToolPolicy::McpOnly]));
         let store = Arc::new(MemoryStore::new(Arc::new(ManualClock::default())));
         let renderer: Arc<dyn Renderer> = Arc::new(PlainRenderer);
@@ -419,6 +428,30 @@ async fn progress_updates_the_thinking_message() {
         "{edits:?}"
     );
     assert_eq!(edits.last().map(String::as_str), Some("Hello world"));
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn personal_bot_owner_on_the_console_is_the_terminal_user() {
+    let h = Harness::start_on(
+        "console:local",
+        FakeAgent::echo("fake"),
+        ChannelCaps::basic(),
+        |c| {
+            c.personal = true;
+            c.console_owner = Some(UserId::new("you"));
+        },
+    );
+    for user in ["you", "alice"] {
+        let mut event = inbound("console:local", user, user, "hello");
+        event.is_direct = true;
+        h.channel.inject(event).await;
+        h.settle().await;
+    }
+    // The terminal user is answered; someone `okbot chat` writes as (`:as alice`) is not.
+    assert_eq!(h.agent.calls(), 1);
+    let sent = h.channel.sent_texts();
+    assert!(sent[1].contains("private assistant"), "{sent:?}");
     h.stop().await;
 }
 

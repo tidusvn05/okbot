@@ -17,11 +17,16 @@ workspace = true
 [dependencies]
 okbot-core.workspace = true
 agent-call.workspace = true
+reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
+toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
+rustls.workspace = true
 okbot-testkit.workspace = true
 tempfile.workspace = true
