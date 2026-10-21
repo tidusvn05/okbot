@@ -60,13 +60,19 @@ token make `getUpdates` fail with `409 Conflict`.
   save documents to the knowledge base ("save this"). Files up to 20 MB, the Bot API's download limit.
   Voice messages and stickers are acknowledged as such.
 
-## 4. Reminders
+## 4. Buttons
+
+Prompts and tool approvals are inline buttons; okbot asks Telegram for `callback_query` updates next to
+messages. A press by someone the prompt is not for shows them a notice and does nothing. Forms are not
+offered on Telegram.
+
+## 5. Reminders
 
 Telegram lets a bot message a user at any time once the user has started a private chat with it
 (`/start`), so reminders and routines work as long as the owner has written to the bot directly once
 and has not blocked it.
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 | Symptom | Check |
 |---|---|

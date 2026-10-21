@@ -3,9 +3,11 @@
 //! Socket Mode needs no public URL: okbot opens a WebSocket with the app-level token
 //! (`xapp-…`), acknowledges every envelope at once (Slack's 3-second rule) and answers with the
 //! Web API using the bot token (`xoxb-…`). The app subscribes to `app_mention` and `message.im`;
-//! replies go into the message's thread.
+//! replies go into the message's thread. Prompts are Block Kit buttons; their presses arrive as
+//! `interactive` envelopes (Interactivity must be on, which Socket Mode needs no URL for).
 
 mod event;
+mod prompt;
 mod web;
 
 use std::sync::{Arc, OnceLock};
@@ -14,7 +16,7 @@ use std::time::Duration;
 use futures::{SinkExt as _, StreamExt as _};
 use okbot_core::{
     CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, InboundSink, LengthUnit,
-    MarkdownDialect, MessageId, RenderedMessage, ReplyTarget, Secret, SentRef, async_trait,
+    MarkdownDialect, MessageId, Prompt, RenderedMessage, ReplyTarget, Secret, SentRef, async_trait,
 };
 use serde_json::{Value, json};
 use tokio_websockets::{ClientBuilder, Message};
@@ -40,6 +42,12 @@ pub struct SlackChannel {
     web: SlackWeb,
     caps: ChannelCaps,
     me: OnceLock<String>,
+    /// Prompts with buttons, by prompt id.
+    prompts: std::sync::Mutex<std::collections::HashMap<String, prompt::Open>>,
+}
+
+fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl std::fmt::Debug for SlackChannel {
@@ -91,6 +99,7 @@ impl SlackChannel {
                 typing: false,
             },
             me: OnceLock::new(),
+            prompts: std::sync::Mutex::default(),
         }
     }
 
@@ -152,9 +161,73 @@ impl SlackChannel {
                         return Ok(Next::Stop);
                     }
                 }
+                Some("interactive") if !self.pressed(&envelope["payload"], sink.as_ref()).await => {
+                    return Ok(Next::Stop);
+                }
                 _ => {}
             }
         }
+    }
+
+    /// A `block_actions` payload for one of okbot's prompts: checked against the prompt's allowed
+    /// people, then handed to the runtime. Returns `false` when the runtime stopped.
+    async fn pressed(&self, payload: &Value, sink: &dyn InboundSink) -> bool {
+        if payload["type"].as_str() != Some("block_actions") {
+            return true;
+        }
+        let Some((prompt, button)) = payload["actions"][0]["action_id"]
+            .as_str()
+            .and_then(prompt::parse)
+        else {
+            return true;
+        };
+        let user = okbot_core::UserRef {
+            id: okbot_core::UserId::new(payload["user"]["id"].as_str().unwrap_or_default()),
+            display_name: payload["user"]["name"]
+                .as_str()
+                .or(payload["user"]["username"].as_str())
+                .unwrap_or_default()
+                .to_string(),
+            is_bot: false,
+        };
+        let found = lock(&self.prompts).get(prompt).map(|open| {
+            (
+                open.allowed.is_empty() || open.allowed.contains(&user.id),
+                open.target.clone(),
+                open.ts.clone(),
+            )
+        });
+        let Some((allowed, target, ts)) = found else {
+            return true;
+        };
+        if !allowed {
+            let conversation = &target.conversation;
+            if let Err(error) = self
+                .web
+                .post_ephemeral(
+                    &conversation.room,
+                    user.id.as_str(),
+                    conversation.thread.as_deref(),
+                    "⛔ This is not yours to answer.",
+                )
+                .await
+            {
+                tracing::debug!(channel = %self.id, %error, "cannot tell a presser it is not theirs");
+            }
+            return true;
+        }
+        let answer = okbot_core::PromptAnswer {
+            prompt: prompt.to_string(),
+            button: button.to_string(),
+            values: std::collections::BTreeMap::new(),
+            user,
+            conversation: target.conversation.clone(),
+            sent: SentRef {
+                target,
+                message_id: MessageId::new(ts),
+            },
+        };
+        sink.answer(answer).await.is_ok()
     }
 }
 
@@ -208,6 +281,7 @@ impl Channel for SlackChannel {
                 &to.conversation.room,
                 to.conversation.thread.as_deref(),
                 &message.text,
+                None,
             )
             .await
             .map_err(channel_error)?;
@@ -223,6 +297,71 @@ impl Channel for SlackChannel {
                 &sent.target.conversation.room,
                 sent.message_id.as_str(),
                 &message.text,
+                None,
+            )
+            .await
+            .map_err(channel_error)
+    }
+
+    async fn prompt(&self, to: &ReplyTarget, prompt: &Prompt) -> Result<SentRef, ChannelError> {
+        // Modals need a trigger id from a fresh interaction; forms are not offered here.
+        if prompt.buttons.iter().any(|b| b.form.is_some()) {
+            return Err(ChannelError::Unsupported("forms"));
+        }
+        let blocks = prompt::blocks(&prompt.text, Some(prompt));
+        let ts = self
+            .web
+            .post_message(
+                &to.conversation.room,
+                to.conversation.thread.as_deref(),
+                &prompt.text,
+                Some(&blocks),
+            )
+            .await
+            .map_err(channel_error)?;
+        lock(&self.prompts).insert(
+            prompt.id.clone(),
+            prompt::Open {
+                allowed: prompt.allowed.clone(),
+                prompt: prompt.clone(),
+                target: to.clone(),
+                ts: ts.clone(),
+            },
+        );
+        Ok(SentRef {
+            target: to.clone(),
+            message_id: MessageId::new(ts),
+        })
+    }
+
+    async fn close_prompt(
+        &self,
+        sent: &SentRef,
+        message: &RenderedMessage,
+        keep_buttons: bool,
+    ) -> Result<(), ChannelError> {
+        let kept = {
+            let mut prompts = lock(&self.prompts);
+            let id = prompts
+                .iter()
+                .find(|(_, p)| p.ts == sent.message_id.as_str())
+                .map(|(id, _)| id.clone());
+            match id {
+                Some(id) if keep_buttons => prompts.get(&id).map(|p| p.prompt.clone()),
+                Some(id) => {
+                    prompts.remove(&id);
+                    None
+                }
+                None => None,
+            }
+        };
+        let blocks = prompt::blocks(&message.text, kept.as_ref());
+        self.web
+            .update(
+                &sent.target.conversation.room,
+                sent.message_id.as_str(),
+                &message.text,
+                Some(&blocks),
             )
             .await
             .map_err(channel_error)

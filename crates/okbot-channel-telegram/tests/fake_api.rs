@@ -85,12 +85,20 @@ async fn fake_api() -> (Arc<Fake>, String) {
 }
 
 #[derive(Default)]
-struct Collect(Mutex<Vec<InboundEvent>>);
+struct Collect(
+    Mutex<Vec<InboundEvent>>,
+    Mutex<Vec<okbot_core::PromptAnswer>>,
+);
 
 #[async_trait]
 impl InboundSink for Collect {
     async fn deliver(&self, event: InboundEvent) -> Result<(), SinkClosed> {
         self.0.lock().unwrap().push(event);
+        Ok(())
+    }
+
+    async fn answer(&self, answer: okbot_core::PromptAnswer) -> Result<(), SinkClosed> {
+        self.1.lock().unwrap().push(answer);
         Ok(())
     }
 }
@@ -382,4 +390,100 @@ async fn a_users_direct_chat_is_their_id() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn prompts_use_inline_buttons() {
+    let (fake, base) = fake_api().await;
+    let channel = Arc::new(TelegramChannel::new(config(
+        &base,
+        Delivery::Polling {
+            timeout: Duration::from_secs(1),
+        },
+    )));
+    let sink = Arc::new(Collect::default());
+    let stop = CancellationToken::new();
+    let run = tokio::spawn({
+        let (channel, sink, stop) = (channel.clone(), sink.clone(), stop.clone());
+        async move { channel.run(sink, stop).await }
+    });
+    wait_for(|| !calls(&fake, "getUpdates").is_empty()).await;
+    assert_eq!(
+        calls(&fake, "getUpdates")[0]["allowed_updates"],
+        json!(["message", "callback_query"])
+    );
+
+    let to = ReplyTarget {
+        conversation: okbot_core::ConversationKey::room("telegram:shop".parse().unwrap(), "7"),
+        in_reply_to: None,
+    };
+    let button = |id: &str, form: Option<okbot_core::Form>| okbot_core::PromptButton {
+        id: id.into(),
+        label: id.to_uppercase(),
+        style: okbot_core::ButtonStyle::Primary,
+        form,
+    };
+    let mut prompt = okbot_core::Prompt {
+        id: "abc123".into(),
+        text: "Deploy?".into(),
+        buttons: vec![button("allow", None), button("deny", None)],
+        allowed: vec![okbot_core::UserId::new("7")],
+    };
+    let sent = channel.prompt(&to, &prompt).await.unwrap();
+    let send = calls(&fake, "sendMessage")[0].clone();
+    assert_eq!(
+        send["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+        "okp:abc123:allow"
+    );
+
+    // Someone else's press is refused with a notice; the requester's reaches the runtime.
+    let press = |id: i64, user: i64, data: &str| {
+        json!({"update_id": id, "callback_query": {
+            "id": format!("q{id}"),
+            "from": {"id": user, "is_bot": false, "first_name": "U"},
+            "message": {"message_id": 77, "date": 1, "chat": {"id": 7, "type": "private"}},
+            "data": data,
+        }})
+    };
+    fake.updates.lock().unwrap().extend([
+        press(10, 8, "okp:abc123:allow"),
+        press(11, 7, "okp:zzz:allow"),
+        press(12, 7, "okp:abc123:deny"),
+    ]);
+    wait_for(|| calls(&fake, "answerCallbackQuery").len() == 3).await;
+    let notices: Vec<Value> = calls(&fake, "answerCallbackQuery")
+        .iter()
+        .map(|c| c["text"].clone())
+        .collect();
+    assert!(notices[0].as_str().unwrap().contains("not yours"));
+    assert!(notices[1].as_str().unwrap().contains("expired"));
+    assert_eq!(notices[2], Value::Null);
+    let answers = sink.1.lock().unwrap().clone();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(answers[0].prompt, "abc123");
+    assert_eq!(answers[0].button, "deny");
+    assert_eq!(answers[0].user.id.as_str(), "7");
+    assert_eq!(answers[0].conversation, to.conversation);
+
+    // Closing replaces the text; buttons go unless kept.
+    let text = RenderedMessage {
+        text: "Deploy? ⏳".into(),
+    };
+    channel.close_prompt(&sent, &text, true).await.unwrap();
+    channel.close_prompt(&sent, &text, false).await.unwrap();
+    let edits = calls(&fake, "editMessageText");
+    assert_eq!(edits[0]["reply_markup"], send["reply_markup"]);
+    assert_eq!(edits[1]["reply_markup"], json!({"inline_keyboard": []}));
+
+    // Forms cannot be shown on Telegram.
+    prompt.buttons[0].form = Some(okbot_core::Form {
+        title: "Code".into(),
+        fields: vec![],
+    });
+    assert!(matches!(
+        channel.prompt(&to, &prompt).await,
+        Err(ChannelError::Unsupported(_))
+    ));
+    stop.cancel();
+    run.await.unwrap().unwrap();
 }

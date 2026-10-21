@@ -15,14 +15,15 @@
 
 pub mod api;
 mod event;
+mod prompt;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use okbot_core::{
     Attachment, CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, ConversationKey,
-    InboundSink, LengthUnit, MarkdownDialect, MessageId, RenderedMessage, ReplyTarget, Secret,
-    SentRef, UserId, WebhookHandler, WebhookRequest, WebhookResponse, async_trait,
+    InboundSink, LengthUnit, MarkdownDialect, MessageId, Prompt, RenderedMessage, ReplyTarget,
+    Secret, SentRef, UserId, WebhookHandler, WebhookRequest, WebhookResponse, async_trait,
 };
 
 pub use api::{API_BASE, TelegramApi, TelegramError};
@@ -89,6 +90,12 @@ struct Shared {
     api: TelegramApi,
     me: OnceLock<Bot>,
     sink: OnceLock<Arc<dyn InboundSink>>,
+    /// Prompts with buttons, by prompt id.
+    prompts: std::sync::Mutex<std::collections::HashMap<String, prompt::Open>>,
+}
+
+fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Shared {
@@ -105,6 +112,9 @@ impl Shared {
             tracing::warn!(channel = %self.id, "update before the channel started; dropped");
             return true;
         };
+        if let Some(query) = &update.callback_query {
+            return self.pressed(query, sink.as_ref()).await;
+        }
         let Some((mut event, files)) =
             event::to_inbound(&self.id, &update, me, jiff::Timestamp::now())
         else {
@@ -117,6 +127,62 @@ impl Shared {
             }
         }
         sink.deliver(event).await.is_ok()
+    }
+
+    /// A button press: checked against the prompt's allowed people, then handed to the runtime.
+    async fn pressed(&self, query: &event::CallbackQuery, sink: &dyn InboundSink) -> bool {
+        let user = query.user();
+        let found = query
+            .data
+            .as_deref()
+            .and_then(prompt::parse)
+            .and_then(|(id, button)| {
+                let prompts = lock(&self.prompts);
+                let open = prompts.get(id)?;
+                let same_message = query
+                    .message
+                    .as_ref()
+                    .is_none_or(|m| m.message_id == open.message_id);
+                same_message.then(|| {
+                    (
+                        id.to_string(),
+                        button.to_string(),
+                        open.allowed.is_empty() || open.allowed.contains(&user.id),
+                        open.target.clone(),
+                        open.message_id,
+                    )
+                })
+            });
+        let Some((prompt, button, allowed, target, message_id)) = found else {
+            // An old or foreign button: stop its spinner.
+            let _ = self
+                .api
+                .answer_callback(&query.id, Some("⌛ This has expired."))
+                .await;
+            return true;
+        };
+        if !allowed {
+            let _ = self
+                .api
+                .answer_callback(&query.id, Some("⛔ This is not yours to answer."))
+                .await;
+            return true;
+        }
+        if let Err(error) = self.api.answer_callback(&query.id, None).await {
+            tracing::debug!(channel = %self.id, %error, "answerCallbackQuery failed");
+        }
+        let answer = okbot_core::PromptAnswer {
+            prompt,
+            button,
+            values: std::collections::BTreeMap::new(),
+            user,
+            conversation: target.conversation.clone(),
+            sent: SentRef {
+                target,
+                message_id: MessageId::new(message_id.to_string()),
+            },
+        };
+        sink.answer(answer).await.is_ok()
     }
 
     /// Turns a file id into an attachment with a download URL; `None` when Telegram refuses.
@@ -209,6 +275,7 @@ impl TelegramChannel {
                 id: config.id,
                 me: OnceLock::new(),
                 sink: OnceLock::new(),
+                prompts: std::sync::Mutex::default(),
             }),
             caps: ChannelCaps {
                 max_message_len: 4096,
@@ -284,7 +351,12 @@ impl TelegramChannel {
         }
     }
 
-    async fn send_text(&self, to: &ReplyTarget, text: &str) -> Result<i64, TelegramError> {
+    async fn send_text(
+        &self,
+        to: &ReplyTarget,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> Result<i64, TelegramError> {
         let conversation = &to.conversation;
         let destination = api::Destination {
             chat_id: &conversation.room,
@@ -296,15 +368,36 @@ impl TelegramChannel {
                 .filter(|_| conversation.room.starts_with('-'))
                 .map(MessageId::as_str),
         };
-        match self.shared.api.send_message(destination, text, true).await {
+        let api = &self.shared.api;
+        match api.send_message(destination, text, true, markup).await {
             Err(error) if error.is_parse_error() => {
                 tracing::warn!(channel = %self.shared.id, %error, "HTML rejected; sending plain text");
-                self.shared
-                    .api
-                    .send_message(destination, &html_to_plain(text), false)
+                api.send_message(destination, &html_to_plain(text), false, markup)
                     .await
             }
             other => other,
+        }
+    }
+
+    async fn edit_text(
+        &self,
+        sent: &SentRef,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> Result<(), ChannelError> {
+        let api = &self.shared.api;
+        let chat = &sent.target.conversation.room;
+        let id = sent.message_id.as_str();
+        let result = match api.edit_message(chat, id, text, true, markup).await {
+            Err(error) if error.is_parse_error() => {
+                api.edit_message(chat, id, &html_to_plain(text), false, markup)
+                    .await
+            }
+            other => other,
+        };
+        match result {
+            Err(error) if error.is_not_modified() => Ok(()),
+            other => other.map_err(channel_error),
         }
     }
 }
@@ -405,7 +498,7 @@ impl Channel for TelegramChannel {
         message: &RenderedMessage,
     ) -> Result<SentRef, ChannelError> {
         let id = self
-            .send_text(to, &message.text)
+            .send_text(to, &message.text, None)
             .await
             .map_err(channel_error)?;
         Ok(SentRef {
@@ -426,20 +519,58 @@ impl Channel for TelegramChannel {
     }
 
     async fn edit(&self, sent: &SentRef, message: &RenderedMessage) -> Result<(), ChannelError> {
-        let api = &self.shared.api;
-        let chat = &sent.target.conversation.room;
-        let id = sent.message_id.as_str();
-        let result = match api.edit_message(chat, id, &message.text, true).await {
-            Err(error) if error.is_parse_error() => {
-                api.edit_message(chat, id, &html_to_plain(&message.text), false)
-                    .await
-            }
-            other => other,
-        };
-        match result {
-            Err(error) if error.is_not_modified() => Ok(()),
-            other => other.map_err(channel_error),
+        self.edit_text(sent, &message.text, None).await
+    }
+
+    async fn prompt(&self, to: &ReplyTarget, prompt: &Prompt) -> Result<SentRef, ChannelError> {
+        // Telegram has no forms: the runtime refuses such prompts or shows them otherwise.
+        if prompt.buttons.iter().any(|b| b.form.is_some()) {
+            return Err(ChannelError::Unsupported("forms"));
         }
+        let markup = prompt::markup(prompt);
+        let id = self
+            .send_text(to, &prompt.text, Some(&markup))
+            .await
+            .map_err(channel_error)?;
+        lock(&self.shared.prompts).insert(
+            prompt.id.clone(),
+            prompt::Open {
+                allowed: prompt.allowed.clone(),
+                markup,
+                target: to.clone(),
+                message_id: id,
+            },
+        );
+        Ok(SentRef {
+            target: to.clone(),
+            message_id: MessageId::new(id.to_string()),
+        })
+    }
+
+    async fn close_prompt(
+        &self,
+        sent: &SentRef,
+        message: &RenderedMessage,
+        keep_buttons: bool,
+    ) -> Result<(), ChannelError> {
+        let markup = {
+            let mut prompts = lock(&self.shared.prompts);
+            let id = prompts
+                .iter()
+                .find(|(_, p)| p.message_id.to_string() == sent.message_id.as_str())
+                .map(|(id, _)| id.clone());
+            match id {
+                Some(id) if keep_buttons => prompts.get(&id).map(|p| p.markup.clone()),
+                Some(id) => {
+                    prompts.remove(&id);
+                    None
+                }
+                None => None,
+            }
+        };
+        let none = prompt::no_buttons();
+        self.edit_text(sent, &message.text, Some(markup.as_ref().unwrap_or(&none)))
+            .await
     }
 
     async fn typing(&self, to: &ReplyTarget) -> Result<(), ChannelError> {

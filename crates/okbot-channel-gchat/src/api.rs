@@ -81,14 +81,19 @@ pub struct ChatApi {
 }
 
 impl ChatApi {
-    /// Posts `text` in `space`, in `thread` when given. Returns the message name.
+    /// Posts `text` (and `cards`, a `cardsV2` list, when given) in `space`, in `thread` when
+    /// given. Returns the message name.
     pub async fn create_message(
         &self,
         space: &str,
         thread: Option<&str>,
         text: &str,
+        cards: Option<&Value>,
     ) -> Result<String, ApiError> {
         let mut body = json!({ "text": text });
+        if let Some(cards) = cards {
+            body["cardsV2"] = cards.clone();
+        }
         let mut url = format!("{}/v1/{space}/messages", self.base);
         if let Some(thread) = thread {
             body["thread"] = json!({ "name": thread });
@@ -98,15 +103,25 @@ impl ChatApi {
         Ok(message["name"].as_str().unwrap_or_default().to_string())
     }
 
-    /// Replaces the text of the app's message `name`.
-    pub async fn update_message(&self, name: &str, text: &str) -> Result<(), ApiError> {
-        let url = format!("{}/v1/{name}?updateMask=text", self.base);
+    /// Replaces the text of the app's message `name`, and its cards when `cards` is given (an
+    /// empty list removes them).
+    pub async fn update_message(
+        &self,
+        name: &str,
+        text: &str,
+        cards: Option<&Value>,
+    ) -> Result<(), ApiError> {
+        let (mask, body) = match cards {
+            Some(cards) => ("text,cardsV2", json!({ "text": text, "cardsV2": cards })),
+            None => ("text", json!({ "text": text })),
+        };
+        let url = format!("{}/v1/{name}?updateMask={mask}", self.base);
         call(
             &self.http,
             &self.tokens,
             reqwest::Method::PATCH,
             &url,
-            &json!({ "text": text }),
+            &body,
         )
         .await
         .map(drop)

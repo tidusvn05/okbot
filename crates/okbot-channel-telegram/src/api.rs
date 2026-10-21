@@ -210,7 +210,7 @@ impl TelegramApi {
         let body = json!({
             "offset": offset,
             "timeout": timeout.as_secs(),
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "callback_query"],
         });
         self.call("getUpdates", &body, timeout + Duration::from_secs(10))
             .await
@@ -245,18 +245,24 @@ impl TelegramApi {
 
     /// `setWebhook` for message updates, authenticated by `secret`.
     pub(crate) async fn set_webhook(&self, url: &str, secret: &str) -> Result<(), TelegramError> {
-        let body = json!({ "url": url, "secret_token": secret, "allowed_updates": ["message"] });
+        let body = json!({
+            "url": url,
+            "secret_token": secret,
+            "allowed_updates": ["message", "callback_query"],
+        });
         self.call::<Value>("setWebhook", &body, Self::SHORT)
             .await
             .map(drop)
     }
 
-    /// `sendMessage`; `html` selects `parse_mode = "HTML"`. Returns the message id.
+    /// `sendMessage`; `html` selects `parse_mode = "HTML"`, `markup` adds buttons. Returns the
+    /// message id.
     pub(crate) async fn send_message(
         &self,
         to: Destination<'_>,
         text: &str,
         html: bool,
+        markup: Option<&Value>,
     ) -> Result<i64, TelegramError> {
         let mut body = json!({
             "chat_id": chat_id(to.chat_id),
@@ -273,17 +279,22 @@ impl TelegramApi {
             body["reply_parameters"] =
                 json!({ "message_id": id, "allow_sending_without_reply": true });
         }
+        if let Some(markup) = markup {
+            body["reply_markup"] = markup.clone();
+        }
         let sent: Sent = self.call("sendMessage", &body, Self::SHORT).await?;
         Ok(sent.message_id)
     }
 
-    /// `editMessageText`.
+    /// `editMessageText`; `markup` replaces the buttons (an empty keyboard removes them, `None`
+    /// leaves the message without buttons as Telegram does on any text edit).
     pub(crate) async fn edit_message(
         &self,
         chat: &str,
         message_id: &str,
         text: &str,
         html: bool,
+        markup: Option<&Value>,
     ) -> Result<(), TelegramError> {
         let id = message_id.parse::<i64>().map_err(|_| TelegramError::Api {
             code: 400,
@@ -299,7 +310,26 @@ impl TelegramApi {
         if html {
             body["parse_mode"] = json!("HTML");
         }
+        if let Some(markup) = markup {
+            body["reply_markup"] = markup.clone();
+        }
         self.call::<Value>("editMessageText", &body, Self::SHORT)
+            .await
+            .map(drop)
+    }
+
+    /// `answerCallbackQuery`: stops the button's spinner; `text` shows as a notice to the presser.
+    pub(crate) async fn answer_callback(
+        &self,
+        id: &str,
+        text: Option<&str>,
+    ) -> Result<(), TelegramError> {
+        let mut body = json!({ "callback_query_id": id });
+        if let Some(text) = text {
+            body["text"] = json!(text);
+            body["show_alert"] = json!(true);
+        }
+        self.call::<Value>("answerCallbackQuery", &body, Self::SHORT)
             .await
             .map(drop)
     }
