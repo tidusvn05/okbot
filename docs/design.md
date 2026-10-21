@@ -752,6 +752,8 @@ okbot run                     # run the bot in this directory in the foreground
 okbot chat                    # console channel: try the bot in the terminal
 okbot kb sync|lint|upgrade    # bundle operations
 okbot memory list|log|forget|edit
+okbot agent detect|status|use|set|chain|test   # manage CLIs, models, effort and fallback order
+okbot history list|show|search|runs          # read retained conversation and agent-turn audit
 okbot kb add <file|url> | kb inbox   # save documents to knowledge/inbox (§5.8)
 okbot task list|add|done|rm|pause|resume [--upcoming]   # tasks, reminders, routines (§5.6)
 okbot role list|grant|revoke  # temporary roles for [[mcp]] rules (ADR 0011)
@@ -759,6 +761,13 @@ okbot audit [--since 24h]     # [[mcp]] tool calls: who, what, allowed or refuse
 ```
 
 Agent-first like okbase and dcbot: `okbot doctor --json`, `okbot help --agent`.
+
+Agent configuration edits and retained history are documented in
+[agents and history](agents-and-history.md). Edits preserve provider overrides outside the active
+chain, support a validated `--print` preview and apply on restart (`--restart` is explicit).
+Model and effort keep the existing `model@effort` representation. History is an operator-only
+read-only SQLite reader: it does not create/migrate databases or change active conversation
+context. Its queries include retained pre-reset messages and the existing per-turn agent audit.
 
 ### 6.3.1 Agent CLI detection (`okbot init` / `okbot onboard`)
 

@@ -63,8 +63,9 @@ clap.workspace = true
 tokio = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 assert_cmd.workspace = true
 okbot-testkit.workspace = true
-tempfile.workspace = true

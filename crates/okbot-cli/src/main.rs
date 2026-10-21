@@ -1,15 +1,18 @@
 //! The `okbot` command line: creates, runs and manages bots.
 
 mod access;
+mod agent;
 mod bot;
 mod channel;
 mod chat;
 mod doctor;
 mod exit;
+mod history;
 mod init;
 mod kb;
 mod logging;
 mod memory;
+mod operator;
 mod owner;
 mod people;
 mod registry;
@@ -33,6 +36,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Detect, configure and test the agent CLIs behind a bot.
+    #[command(subcommand)]
+    Agent(agent::AgentCommand),
+    /// Read retained conversations and agent-run audit records.
+    #[command(subcommand)]
+    History(history::HistoryCommand),
     /// Create a bot in a new directory and run the setup wizard.
     New {
         /// Bot name (also the registry name).
@@ -151,6 +160,8 @@ async fn main() -> ExitCode {
         Command::New { args, .. } | Command::Init(args) => args.json,
         Command::Doctor(args) => args.json,
         Command::Send(args) => args.json,
+        Command::Agent(command) => command.json(),
+        Command::History(command) => command.json(),
         _ => false,
     };
     let result = match cli.command {
@@ -167,6 +178,8 @@ async fn main() -> ExitCode {
         Command::Chat(args) => chat::run(args).await,
         Command::List => list(),
         Command::Doctor(args) => doctor::run(args).await,
+        Command::Agent(command) => agent::run(command).await,
+        Command::History(command) => history::run(command).await,
         Command::Kb(command) => kb::run(command).await,
         Command::Memory(command) => memory::run(command).await,
         Command::Task(command) => task::run(command).await,

@@ -63,13 +63,7 @@ async fn check_agents(config: &Config, r: &mut Report) {
         let configured = config.agent.providers.get(name).and_then(|p| p.cli.clone());
         let found = match &configured {
             Some(path) => {
-                let dirs = okbot_agent::detect::SearchPaths {
-                    dirs: path
-                        .parent()
-                        .map(|p| vec![p.to_path_buf()])
-                        .unwrap_or_default(),
-                };
-                okbot_agent::detect::detect_one_with_env(provider, &dirs, &env).await
+                okbot_agent::detect::detect_path(provider, &config.path(path), &env).await
             }
             None => okbot_agent::detect::detect_one_with_env(provider, &paths, &env).await,
         };

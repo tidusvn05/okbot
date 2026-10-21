@@ -1,0 +1,23 @@
+---
+source: crates/okbot-cli/tests/agent_history.rs
+expression: report
+---
+{
+  "ok": true,
+  "bot": "shop",
+  "agents": [
+    {
+      "provider": "claude",
+      "position": 0,
+      "status": "ready",
+      "path": "<CLI>",
+      "version": "1.0.0",
+      "login": "logged_in",
+      "model": "sonnet",
+      "effort": "high",
+      "model_spec": "sonnet@high",
+      "enforces_tools": true,
+      "error": null
+    }
+  ]
+}

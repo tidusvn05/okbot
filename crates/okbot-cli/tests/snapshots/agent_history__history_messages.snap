@@ -1,0 +1,47 @@
+---
+source: crates/okbot-cli/tests/agent_history.rs
+expression: show
+---
+{
+  "ok": true,
+  "bot": "shop",
+  "kind": "messages",
+  "items": [
+    {
+      "id": 1,
+      "conversation_id": 1,
+      "conversation": {
+        "channel": "discord:main",
+        "space": null,
+        "room": "room|1",
+        "thread": null
+      },
+      "role": "user",
+      "author_id": "u1",
+      "author_name": "Ana",
+      "text": "HỢP ĐỒNG 日本語",
+      "message_id": null,
+      "at": "2026-01-01T00:00:00Z",
+      "before_reset": true
+    },
+    {
+      "id": 2,
+      "conversation_id": 1,
+      "conversation": {
+        "channel": "discord:main",
+        "space": null,
+        "room": "room|1",
+        "thread": null
+      },
+      "role": "bot",
+      "author_id": null,
+      "author_name": "okbot",
+      "text": "new context",
+      "message_id": null,
+      "at": "2026-01-01T00:00:00Z",
+      "before_reset": false
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}

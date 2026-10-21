@@ -85,6 +85,30 @@ okbot start shop        # run as a service; `okbot logs shop -f` to follow
 ```
 
 Each release also ships a container image, `ghcr.io/tidusvn05/okbot` (see [docs/deploy.md](docs/deploy.md)).
+
+## Manage agents and review history
+
+Inside a bot's directory (or add `--bot NAME_OR_PATH`):
+
+```sh
+okbot agent detect                      # installed CLIs, versions and login; no model calls
+okbot agent status                      # this bot's chain, model, effort and readiness
+okbot agent use codex                   # make Codex primary; keep the other agents as fallbacks
+okbot agent set --model MODEL_ID --effort high
+okbot agent chain codex,claude          # replace the fallback order; keep provider settings
+okbot restart                          # apply the saved configuration
+
+okbot history list                      # conversation ids and recent activity
+okbot history show 1                    # retained messages, including before /reset
+okbot history search "invoice"          # literal Unicode-lowercase substring search
+okbot history runs --errors --json      # failed/cancelled agent-turn audit records
+```
+
+Agent edits support `--print` for a validated preview and `--restart` to restart after saving.
+`okbot agent test` intentionally makes one small model call and consumes quota; detection and status
+do not. History reads the existing database without creating or migrating it. Records remain subject
+to the bot's retention setting (90 days by default).
+See [agents and history](docs/agents-and-history.md) for clearing overrides, filters and JSON output.
 Coding agents can run `okbot help-agent` for the non-interactive setup contract.
 
 A bot directory looks like this:
