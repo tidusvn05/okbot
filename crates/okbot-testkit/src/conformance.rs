@@ -12,8 +12,8 @@
 use std::time::Duration;
 
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, MessageRole, RunId,
-    ToolPolicy, UserId,
+    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, MessageRole, RoleGrant,
+    RunId, TokenUsage, ToolCallRecord, ToolDecision, ToolPolicy, Usage, UserId,
 };
 
 use crate::{ManualClock, bot_message, conversation, user_message};
@@ -28,6 +28,8 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     dedupe(store, clock).await;
     pairing(store, clock).await;
     fires_and_direct_chats(store, clock).await;
+    usage_and_tool_calls(store, clock).await;
+    role_grants(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -100,6 +102,7 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
             duration: Duration::from_millis(1500),
             error: None,
             started_at: clock.now(),
+            person: None,
         })
         .await
         .expect("record_run");
@@ -124,6 +127,164 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
         .map(|m| m.text)
         .collect();
     assert_eq!(left, ["new"]);
+}
+
+/// Usage per person over a period, and the tool call audit.
+async fn usage_and_tool_calls(store: &dyn ConversationStore, clock: &ManualClock) {
+    let a = conversation("zalo:shop", "usage");
+    let run = |id: &str, person: Option<&str>, tokens: u64| AgentRunRecord {
+        run_id: RunId::new(id),
+        conversation: a.clone(),
+        backend: "fake".into(),
+        model: None,
+        tools: ToolPolicy::Web,
+        usage: Some(TokenUsage {
+            input: tokens,
+            output: 1,
+            ..TokenUsage::default()
+        }),
+        duration: Duration::from_millis(10),
+        error: None,
+        started_at: clock.now(),
+        person: person.map(str::to_string),
+    };
+    let since = clock.now();
+    store
+        .record_run(run("u-0", Some("person:lan"), 99))
+        .await
+        .expect("record_run");
+    clock.advance(Duration::from_secs(10));
+    let later = clock.now();
+    store
+        .record_run(run("u-1", Some("person:lan"), 9))
+        .await
+        .expect("record_run");
+    store
+        .record_run(run("u-2", Some("zalo:shop/other"), 5))
+        .await
+        .expect("record_run");
+    store
+        .record_run(run("u-3", None, 5))
+        .await
+        .expect("record_run");
+    assert_eq!(
+        store.usage_since("person:lan", since).await.expect("usage"),
+        Usage {
+            turns: 2,
+            tokens: 110
+        }
+    );
+    assert_eq!(
+        store.usage_since("person:lan", later).await.expect("usage"),
+        Usage {
+            turns: 1,
+            tokens: 10
+        }
+    );
+    assert_eq!(
+        store.usage_since("nobody", since).await.expect("usage"),
+        Usage::default()
+    );
+
+    let call = |tool: &str, decision| ToolCallRecord {
+        run_id: Some(RunId::new("u-1")),
+        command: None,
+        person: "person:lan".into(),
+        conversation: a.clone(),
+        server: "ops".into(),
+        tool: tool.into(),
+        decision,
+        error: None,
+        duration: Duration::from_millis(7),
+        at: clock.now(),
+    };
+    store
+        .record_tool_call(call("status", ToolDecision::Allowed))
+        .await
+        .expect("record_tool_call");
+    clock.advance(Duration::from_secs(1));
+    let mut denied = call("deploy", ToolDecision::Denied);
+    denied.run_id = None;
+    denied.command = Some("deploy".into());
+    denied.error = Some("not allowed".into());
+    store
+        .record_tool_call(denied.clone())
+        .await
+        .expect("record_tool_call");
+    let calls = store.tool_calls(since, 10).await.expect("tool_calls");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0], denied, "newest first, read back as written");
+    assert_eq!(calls[1].tool, "status");
+    assert_eq!(
+        store.tool_calls(since, 1).await.expect("tool_calls").len(),
+        1
+    );
+    assert_eq!(
+        store
+            .tool_calls(clock.now() + jiff::SignedDuration::from_secs(1), 10)
+            .await
+            .expect("tool_calls"),
+        []
+    );
+}
+
+/// Temporary roles: listed until they expire, replaced by a new grant, revocable.
+async fn role_grants(store: &dyn ConversationStore, clock: &ManualClock) {
+    let grant = |role: &str, account: &str, secs: i64| RoleGrant {
+        role: role.into(),
+        account: account.into(),
+        granted_by: "operator".into(),
+        granted_at: clock.now(),
+        expires_at: clock.now() + jiff::SignedDuration::from_secs(secs),
+    };
+    store
+        .grant_role(grant("ops", "zalo:shop/u1", 60))
+        .await
+        .expect("grant");
+    store
+        .grant_role(grant("ops", "zalo:shop/u2", 600))
+        .await
+        .expect("grant");
+    store
+        .grant_role(grant("ops", "zalo:shop/u1", 120))
+        .await
+        .expect("grant again");
+    let now = clock.now();
+    let grants = store.role_grants(now).await.expect("grants");
+    assert_eq!(grants.len(), 2, "one grant per role and account");
+    assert_eq!(grants[0].account, "zalo:shop/u1");
+    assert_eq!(
+        grants[0].expires_at,
+        now + jiff::SignedDuration::from_secs(120)
+    );
+    assert!(
+        store
+            .revoke_role("ops", "zalo:shop/u2")
+            .await
+            .expect("revoke")
+    );
+    assert!(
+        !store
+            .revoke_role("ops", "zalo:shop/u2")
+            .await
+            .expect("revoke")
+    );
+    clock.advance(Duration::from_secs(121));
+    assert!(
+        store
+            .role_grants(clock.now())
+            .await
+            .expect("grants")
+            .is_empty(),
+        "expired grants are gone"
+    );
+    assert!(
+        !store
+            .revoke_role("ops", "zalo:shop/u1")
+            .await
+            .expect("revoke"),
+        "an expired grant is not revoked"
+    );
 }
 
 /// Dedupe: first sighting is new, repeats are not, expiry makes it new again; per channel.

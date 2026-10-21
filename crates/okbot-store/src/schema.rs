@@ -83,6 +83,34 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (channel, user_id)
     );
     ",
+    // 4: who each run was for (`[limits]`), tool calls through the MCP gateway and temporary
+    // role grants (ADR 0010).
+    r"
+    ALTER TABLE agent_runs ADD COLUMN person TEXT;
+    CREATE INDEX agent_runs_by_person ON agent_runs(person, started_at);
+    CREATE TABLE tool_calls (
+        id           INTEGER PRIMARY KEY,
+        run_id       TEXT,
+        command      TEXT,
+        person       TEXT NOT NULL,
+        conversation TEXT NOT NULL,
+        server       TEXT NOT NULL,
+        tool         TEXT NOT NULL,
+        decision     TEXT NOT NULL,
+        error        TEXT,
+        duration_ms  INTEGER NOT NULL,
+        at           INTEGER NOT NULL
+    );
+    CREATE INDEX tool_calls_by_time ON tool_calls(at);
+    CREATE TABLE role_grants (
+        role       TEXT NOT NULL,
+        account    TEXT NOT NULL,
+        granted_by TEXT NOT NULL,
+        granted_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (role, account)
+    );
+    ",
 ];
 
 /// The schema version this build writes.

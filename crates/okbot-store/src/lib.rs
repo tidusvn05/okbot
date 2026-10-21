@@ -13,7 +13,8 @@ use std::time::Duration;
 use jiff::Timestamp;
 use okbot_core::{
     AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, Fire, FireState,
-    MessageRole, NewMessage, StoreError, StoredMessage, SystemClock, UserId, async_trait,
+    MessageRole, NewMessage, RoleGrant, StoreError, StoredMessage, SystemClock, ToolCallRecord,
+    ToolDecision, Usage, UserId, async_trait,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -374,8 +375,8 @@ impl ConversationStore for SqliteStore {
             conn.execute(
                 "INSERT OR REPLACE INTO agent_runs (run_id, conversation, backend, model, tools,
                     input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens,
-                    duration_ms, error, started_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    duration_ms, error, started_at, person)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     run.run_id.as_str(),
                     run.conversation.to_string(),
@@ -390,6 +391,7 @@ impl ConversationStore for SqliteStore {
                     duration_ms(run.duration),
                     run.error,
                     millis(run.started_at),
+                    run.person,
                 ],
             )?;
             Ok(())
@@ -514,6 +516,156 @@ impl ConversationStore for SqliteStore {
         Ok(key.and_then(|k| serde_json::from_str(&k).ok()))
     }
 
+    async fn usage_since(&self, person: &str, since: Timestamp) -> Result<Usage, StoreError> {
+        let person = person.to_string();
+        self.with(move |conn, _| {
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0)
+                 FROM agent_runs WHERE person = ?1 AND started_at >= ?2",
+                params![person, millis(since)],
+                |row| {
+                    let turns: i64 = row.get(0)?;
+                    let tokens: i64 = row.get(1)?;
+                    Ok(Usage {
+                        turns: u64::try_from(turns).unwrap_or(0),
+                        tokens: u64::try_from(tokens).unwrap_or(0),
+                    })
+                },
+            )
+        })
+        .await
+    }
+
+    async fn record_tool_call(&self, call: ToolCallRecord) -> Result<(), StoreError> {
+        let conversation = serde_json::to_string(&call.conversation)
+            .map_err(|e| StoreError::Backend(Box::new(e)))?;
+        self.with(move |conn, _| {
+            conn.execute(
+                "INSERT INTO tool_calls (run_id, command, person, conversation, server, tool,
+                    decision, error, duration_ms, at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    call.run_id.as_ref().map(okbot_core::RunId::as_str),
+                    call.command,
+                    call.person,
+                    conversation,
+                    call.server,
+                    call.tool,
+                    call.decision.as_str(),
+                    call.error,
+                    duration_ms(call.duration),
+                    millis(call.at),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn tool_calls(
+        &self,
+        since: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<ToolCallRecord>, StoreError> {
+        let rows = self
+            .with(move |conn, _| {
+                let mut stmt = conn.prepare(
+                    "SELECT run_id, command, person, conversation, server, tool, decision, error,
+                        duration_ms, at
+                     FROM tool_calls WHERE at >= ?1 ORDER BY at DESC, id DESC LIMIT ?2",
+                )?;
+                let rows = stmt.query_map(
+                    params![millis(since), i64::try_from(limit).unwrap_or(i64::MAX)],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                            row.get::<_, Option<String>>(7)?,
+                            row.get::<_, i64>(8)?,
+                            row.get::<_, i64>(9)?,
+                        ))
+                    },
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?;
+        // Rows were written from valid values; an unreadable one is skipped.
+        Ok(rows
+            .into_iter()
+            .filter_map(
+                |(run, command, person, conversation, server, tool, decision, error, ms, at)| {
+                    Some(ToolCallRecord {
+                        run_id: run.map(okbot_core::RunId::new),
+                        command,
+                        person,
+                        conversation: serde_json::from_str(&conversation).ok()?,
+                        server,
+                        tool,
+                        decision: ToolDecision::parse(&decision)?,
+                        error,
+                        duration: Duration::from_millis(u64::try_from(ms).unwrap_or(0)),
+                        at: from_millis(at),
+                    })
+                },
+            )
+            .collect())
+    }
+
+    async fn grant_role(&self, grant: RoleGrant) -> Result<(), StoreError> {
+        self.with(move |conn, _| {
+            conn.execute(
+                "INSERT OR REPLACE INTO role_grants (role, account, granted_by, granted_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    grant.role,
+                    grant.account,
+                    grant.granted_by,
+                    millis(grant.granted_at),
+                    millis(grant.expires_at),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn revoke_role(&self, role: &str, account: &str) -> Result<bool, StoreError> {
+        let (role, account) = (role.to_string(), account.to_string());
+        self.with(move |conn, now| {
+            let removed = conn.execute(
+                "DELETE FROM role_grants WHERE role = ?1 AND account = ?2 AND expires_at > ?3",
+                params![role, account, millis(now)],
+            )?;
+            Ok(removed > 0)
+        })
+        .await
+    }
+
+    async fn role_grants(&self, now: Timestamp) -> Result<Vec<RoleGrant>, StoreError> {
+        self.with(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT role, account, granted_by, granted_at, expires_at FROM role_grants
+                 WHERE expires_at > ?1 ORDER BY role, account",
+            )?;
+            let rows = stmt.query_map(params![millis(now)], |row| {
+                Ok(RoleGrant {
+                    role: row.get(0)?,
+                    account: row.get(1)?,
+                    granted_by: row.get(2)?,
+                    granted_at: from_millis(row.get(3)?),
+                    expires_at: from_millis(row.get(4)?),
+                })
+            })?;
+            rows.collect()
+        })
+        .await
+    }
+
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError> {
         self.with(move |conn, now| {
             let tx = conn.transaction()?;
@@ -521,6 +673,11 @@ impl ConversationStore for SqliteStore {
             let mut removed = 0;
             removed += tx.execute("DELETE FROM messages WHERE at < ?1", params![cutoff])?;
             removed += tx.execute("DELETE FROM agent_runs WHERE started_at < ?1", params![cutoff])?;
+            removed += tx.execute("DELETE FROM tool_calls WHERE at < ?1", params![cutoff])?;
+            removed += tx.execute(
+                "DELETE FROM role_grants WHERE expires_at <= ?1",
+                params![millis(now)],
+            )?;
             removed += tx.execute(
                 "DELETE FROM inbound_dedupe WHERE expires_at <= ?1",
                 params![millis(now)],
