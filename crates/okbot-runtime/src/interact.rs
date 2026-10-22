@@ -356,6 +356,19 @@ struct CallbackReply {
     text: String,
     #[serde(default)]
     keep_open: bool,
+    /// The next step of the same prompt (a form's values became a plan to confirm): shown as a new
+    /// message with the same id and the same people allowed to answer, the old one closed with `text`.
+    #[serde(default)]
+    next: Option<NextStep>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NextStep {
+    text: String,
+    buttons: Vec<PromptButton>,
+    #[serde(default)]
+    expires_in: Option<u64>,
 }
 
 /// POSTs the answer to the server's callback, signed; its reply, or a retry note on failure.
@@ -403,6 +416,7 @@ async fn post_callback(
             CallbackReply {
                 text: "⚠️ The service did not answer; try again.".into(),
                 keep_open: true,
+                next: None,
             }
         }
     }
@@ -416,7 +430,7 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
         Expired(Pending),
         NotYours(SentRef),
         Confirm(Pending),
-        Go(String, String, String, SentRef, bool),
+        Go(String, String, String, SentRef, bool, Vec<UserId>),
     }
     let next = {
         let mut prompts = shared.prompts.lock();
@@ -440,6 +454,7 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
                         p.markdown.clone(),
                         p.sent.clone(),
                         p.text,
+                        p.allowed.clone(),
                     );
                     p.busy = true;
                     go
@@ -447,7 +462,7 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
             },
         }
     };
-    let (mcp, callback, markdown, sent, text) = match next {
+    let (mcp, callback, markdown, sent, text, allowed) = match next {
         Next::Skip => return,
         Next::NotYours(sent) => {
             // Only reached for text answers: buttons are checked by the platform adapter.
@@ -461,7 +476,9 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
             return;
         }
         Next::Confirm(p) => return release(&shared, p, &answer).await,
-        Next::Go(mcp, callback, markdown, sent, text) => (mcp, callback, markdown, sent, text),
+        Next::Go(mcp, callback, markdown, sent, text, allowed) => {
+            (mcp, callback, markdown, sent, text, allowed)
+        }
     };
     let Some(server) = shared.config.mcp.iter().find(|m| m.server.name == mcp) else {
         return;
@@ -489,6 +506,10 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     } else {
         reply.text
     };
+    if let Some(step) = reply.next {
+        update(&shared, &sent, text, &markdown, &outcome, false).await;
+        return go_on(&shared, &answer.prompt, step, &sent.target, allowed).await;
+    }
     update(&shared, &sent, text, &markdown, &outcome, reply.keep_open).await;
     let mut prompts = shared.prompts.lock();
     if reply.keep_open {
@@ -498,6 +519,73 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     } else {
         prompts.remove(&answer.prompt);
     }
+}
+
+/// Goes on with prompt `id` as `step`, or closes it and says why it cannot.
+async fn go_on(
+    shared: &Shared,
+    id: &str,
+    step: NextStep,
+    target: &ReplyTarget,
+    allowed: Vec<UserId>,
+) {
+    if let Err(e) = show_next(shared, id, step, target, allowed).await {
+        tracing::warn!(prompt = %id, error = %e, "cannot show the next step");
+        shared.prompts.lock().remove(id);
+        crate::turn::send_to(shared, target, &format!("⚠️ {e}"))
+            .await
+            .ok();
+    }
+}
+
+/// Shows `step` as prompt `id` again, in a new message: its `Pending` keeps where answers go.
+async fn show_next(
+    shared: &Shared,
+    id: &str,
+    step: NextStep,
+    target: &ReplyTarget,
+    allowed: Vec<UserId>,
+) -> Result<(), String> {
+    let channel = shared
+        .channels
+        .get(&target.conversation.channel)
+        .ok_or("the conversation's channel is not running")?;
+    let rendered = shared.renderer.render(&step.text, channel.caps());
+    let [message] = rendered.as_slice() else {
+        return Err("the next step is too long for one message".into());
+    };
+    let prompt = Prompt {
+        id: id.to_string(),
+        text: message.text.clone(),
+        buttons: step.buttons,
+        allowed,
+    };
+    prompt.validate()?;
+    let (sent, text) = match show(shared, target, &prompt, &step.text).await {
+        Ok(shown) => shown,
+        Err(Shown::NoForms) => return Err("this platform has no forms".into()),
+        Err(Shown::Failed(e)) => return Err(e),
+    };
+    let ttl = step
+        .expires_in
+        .map_or(DEFAULT_TTL, Duration::from_secs)
+        .min(MAX_TTL);
+    let mut prompts = shared.prompts.lock();
+    let p = prompts.get_mut(id).ok_or("the prompt is gone")?;
+    p.markdown = step.text;
+    p.sent = sent;
+    p.text = text;
+    p.expires = Instant::now() + ttl;
+    p.busy = false;
+    p.buttons = prompt.buttons.iter().map(|b| b.id.clone()).collect();
+    p.forms = prompt
+        .buttons
+        .iter()
+        .filter(|b| b.form.is_some())
+        .map(|b| b.id.clone())
+        .collect();
+    tracing::info!(prompt = %id, "next step shown");
+    Ok(())
 }
 
 /// The same chat: channel and room (adapters may fill the thread of an answer differently).

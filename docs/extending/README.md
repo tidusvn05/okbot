@@ -175,6 +175,9 @@ When someone allowed presses a button (and fills in its form), okbot POSTs
 
 with `x-okbot-timestamp` and `x-okbot-signature: base64url(HMAC-SHA256(secret, "<timestamp>.<body>"))`. Answer
 `{"text": "Deployed ✅"}` to replace the buttons, or add `"keep_open": true` to let them try again (a wrong code).
+A form can lead to a second step: answer `{"text": "📝 noted", "next": {"text": "Plan: …", "buttons": [...]}}` and
+okbot closes the message with `text` and shows `next` as a new message under the same prompt id, for the same people
+(`expires_in` optional). Use it when what the person typed decides the plan they then confirm.
 Values never reach the agent or the history: use forms for API keys and one-time codes. Discord shows buttons and
 forms; Telegram, Slack and Google Chat show buttons; other platforms show text. Limits follow Discord (5 buttons,
 5 fields).

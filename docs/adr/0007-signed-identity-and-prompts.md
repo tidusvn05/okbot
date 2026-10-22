@@ -24,7 +24,9 @@ the agent's arguments: the model could press "yes" itself, and secrets ended up 
 - **Answers bypass the agent.** A press (and form) arrives through `InboundSink::answer`, never as an
   `InboundEvent`. okbot POSTs it to the callback with `x-okbot-timestamp` and
   `x-okbot-signature = base64url(HMAC-SHA256(secret, "<timestamp>.<body>"))`, and replaces the
-  prompt's buttons with the callback's `text` (or keeps them with `keep_open`). Values are not logged,
+  prompt's buttons with the callback's `text` (or keeps them with `keep_open`). A reply may carry
+  `next` (`text`, `buttons`, `expires_in`): the same prompt goes on as a new message, for the same
+  people, so a form's values can become a plan to confirm without a run token (2026-10-23). Values are not logged,
   stored, added to the history or shown to the agent.
 - Core gains `Prompt` types and two `Channel` methods with `Unsupported` defaults; Discord implements
   them (buttons, modals, `INTERACTION_CREATE`). Other platforms answer `501` until they do.

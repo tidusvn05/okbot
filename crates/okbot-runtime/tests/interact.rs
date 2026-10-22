@@ -259,3 +259,114 @@ async fn signed_token_prompt_and_signed_callback() {
     stop.cancel();
     task.await.unwrap();
 }
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one story, told in order
+async fn a_callback_reply_can_show_the_next_step() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    // A form's values come back as a plan to confirm, under the same prompt id.
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let state = seen.clone();
+    let callbacks = axum::Router::new().route(
+        "/answers",
+        axum::routing::post(move |headers: HeaderMap, body: String| {
+            let state = state.clone();
+            async move {
+                let button = serde_json::from_str::<Value>(&body).unwrap()["button"].clone();
+                state.lock().unwrap().push((headers, body));
+                axum::Json(if button == "fill" {
+                    json!({"text": "📝 filled", "next": {"text": "Plan: **v2**", "buttons": [
+                        {"id": "go", "label": "Confirm", "style": "danger"}]}})
+                } else {
+                    json!({"text": "done"})
+                })
+            }
+        }),
+    );
+    let tools = json!([{"name": "deploy", "inputSchema": {"type": "object"}}]);
+    let (server, calls) = support::mcp_server_with(tools, callbacks).await;
+    let (channel, _agent, handle, stop, task) = start(server);
+    channel
+        .inject(inbound("fake:test", "room", "ana", "deploy"))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    let token = calls.lock().unwrap()[0]
+        .bearer
+        .strip_prefix("Bearer ")
+        .unwrap()
+        .to_string();
+    let claims =
+        identity::verify(KEY.as_bytes(), &token, jiff::Timestamp::now().as_second()).unwrap();
+    let prompt = json!({
+        "text": "Deploy what?",
+        "buttons": [{"id": "fill", "label": "Enter",
+                     "form": {"title": "Deploy", "fields": [{"id": "f1", "label": "Version"}]}}],
+        "callback": format!("http://{server}/answers"),
+        "answer_by": "admins"
+    });
+    let shown: Value = reqwest::Client::new()
+        .post(claims.interact.clone().unwrap())
+        .bearer_auth(&token)
+        .json(&prompt)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = shown["prompt"].as_str().unwrap().to_string();
+    let press = |button: &str, values: BTreeMap<String, Secret<String>>| PromptAnswer {
+        prompt: id.clone(),
+        button: button.into(),
+        values,
+        user: UserRef {
+            id: okbot_core::UserId::new("ana"),
+            display_name: "Ana".into(),
+            is_bot: false,
+        },
+        conversation: claims.conversation.clone(),
+        sent: SentRef {
+            target: okbot_core::ReplyTarget {
+                conversation: claims.conversation.clone(),
+                in_reply_to: None,
+            },
+            message_id: okbot_core::MessageId::new("prompt-1"),
+        },
+    };
+
+    channel
+        .answer(press(
+            "fill",
+            BTreeMap::from([("f1".to_string(), Secret::new("v2".to_string()))]),
+        ))
+        .await;
+    eventually(|| channel.prompts().len() == 2).await;
+    let next = &channel.prompts()[1];
+    assert_eq!(next.id, id, "the same prompt goes on");
+    assert!(next.text.contains("Plan"), "{next:?}");
+    assert_eq!(next.allowed, [okbot_core::UserId::new("ana")]);
+    let updates = channel.prompt_updates();
+    assert!(
+        updates.iter().any(|u| u.1.contains("filled") && !u.2),
+        "the form's message is closed: {updates:?}"
+    );
+
+    // The new button answers; the old one no longer does.
+    channel.answer(press("fill", BTreeMap::new())).await;
+    channel.answer(press("go", BTreeMap::new())).await;
+    eventually(|| seen.lock().unwrap().len() == 2).await;
+    let body: Value = serde_json::from_str(&seen.lock().unwrap()[1].1).unwrap();
+    assert_eq!(body["button"], "go");
+    eventually(|| {
+        channel
+            .prompt_updates()
+            .last()
+            .is_some_and(|u| u.1.contains("done"))
+    })
+    .await;
+
+    stop.cancel();
+    task.await.unwrap();
+}
