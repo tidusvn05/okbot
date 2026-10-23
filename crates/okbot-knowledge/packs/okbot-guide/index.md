@@ -20,7 +20,8 @@ your own notes elsewhere.
 * [Personal assistant features](personal-assistant.md) - Memory, reminders, routines, notes and saved documents.
 * [Connecting services through MCP](services-mcp.md) - Kinds of MCP server, OAuth with /connect, presets and limits.
 * [Google Workspace](google-workspace.md) - Gmail, Drive, Sheets and Calendar through google-mcp-rs or workspace-mcp.
-* [Popular services](popular-services.md) - Recommended MCP servers for common services, Rust first.
+* [Popular services](popular-services.md) - Reviewed MCP servers for common services and the settings that keep them safe.
+* [Servers and infrastructure](servers.md) - SSH to several hosts with ssh-mcp, Kubernetes, Grafana and Ansible.
 * [Your own tools and commands](own-tools.md) - Your own MCP server, signed identity, prompts and chat commands.
 * [Automations](automations.md) - Acting without being asked: mail reports, briefings, webhooks.
 * [Notifications from your programs](notifications.md) - Messages from scripts, monitors and CI.

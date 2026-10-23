@@ -5,7 +5,7 @@ description: How okbot connects Gmail, Drive, Notion, GitHub and other services 
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-24
 aliases: [mcp, kết nối dịch vụ, tích hợp, integration, connect, /connect, oauth, okbot mcp add, kết nối notion, kết nối gmail]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -105,4 +105,6 @@ those servers, list only the tools you need in `tools = [...]`.
 Next: [Google Workspace](google-workspace.md), [Popular services](popular-services.md),
 [Your own tools and commands](own-tools.md).
 
-Never add a server that offers a shell or file access: the agent would get them.
+Never add a server that offers a shell or file access on the bot's machine: the agent would get
+them. Commands on other servers go through ssh-mcp, which checks each one
+([Servers and infrastructure](servers.md)).

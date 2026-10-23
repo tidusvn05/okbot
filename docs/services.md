@@ -104,10 +104,12 @@ through it like any MCP client, and every person connects their own Google accou
 
    ```sh
    GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… MCP_ENABLE_OAUTH21=true \
+   WORKSPACE_MCP_DISABLE_LOCAL_FILES=true \
    WORKSPACE_MCP_PORT=8000 uvx workspace-mcp --transport streamable-http --tool-tier core
    ```
 
-   `--read-only` limits it to reading. `--tools gmail drive sheets` picks services. Keep it on
+   `WORKSPACE_MCP_DISABLE_LOCAL_FILES=true` stops its Drive and Gmail tools from reading files on
+   the machine it runs on (they are allowed by default). `--read-only` limits it to reading. `--tools gmail drive sheets` picks services. Keep it on
    loopback, or behind HTTPS if it runs elsewhere. Its README has the details of each setting.
 3. `okbot mcp add google-workspace` (its name in okbot is `google`), then `okbot restart`, then
    `/connect google`.
