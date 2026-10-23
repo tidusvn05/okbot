@@ -5,7 +5,7 @@ description: What okbot protects by design (no shell, scoped memory, sealed toke
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-24
 aliases: [bảo mật, an toàn, security, prompt injection, rò rỉ dữ liệu, secret, token, quyền riêng tư, privacy]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -43,7 +43,7 @@ can try to steer it. Limit what a steered agent could do:
 | `[agent] allow_unrestricted_agents` | `false` (never `true` for a bot others use) |
 | tokens in `okbot.toml` | none: only `*_env` names |
 | `[http] listen` | `127.0.0.1:…` behind a reverse proxy |
-| MCP servers | none that offer a shell or file access; `https://` for other hosts |
+| MCP servers | only reviewed ones ([Popular services](popular-services.md)); none that offer a shell or file access on the bot's machine; `https://` for other hosts |
 | `[bot] retention_days` | as short as you need (default 90) |
 
 ## Privacy for chat users

@@ -5,7 +5,7 @@ description: Connecting Gmail, Drive, Docs, Sheets and Calendar through a self-h
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-24
 aliases: [google, gmail, google drive, google sheets, google calendar, google docs, kết nối google, kết nối gmail, google-mcp-rs, workspace-mcp, oauth google, google cloud]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -56,12 +56,15 @@ Verification by Google is only needed for public apps beyond 100 users.
 
 ```sh
 GOOGLE_OAUTH_CLIENT_ID=… GOOGLE_OAUTH_CLIENT_SECRET=… MCP_ENABLE_OAUTH21=true \
+WORKSPACE_MCP_DISABLE_LOCAL_FILES=true \
 WORKSPACE_MCP_PORT=8000 uvx workspace-mcp --transport streamable-http --tool-tier core
 okbot mcp add google-workspace     # its name in okbot is `google`
 okbot restart
 ```
 
-`--read-only` limits it to reading; `--tools gmail drive sheets` picks services.
+Keep `WORKSPACE_MCP_DISABLE_LOCAL_FILES=true`: without it, its Drive and Gmail tools can read
+files on the machine it runs on. `--read-only` limits it to reading; `--tools gmail drive sheets`
+picks services.
 
 ## 2b. google-mcp-rs
 

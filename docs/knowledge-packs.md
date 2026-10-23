@@ -16,7 +16,7 @@ never touched. The bot re-reads the files within seconds, and `pack add` re-inde
 
 How to set up and run okbot and the services around it, written for operators: installing,
 personal and team bots, every chat platform, agent CLIs, permissions, the knowledge base, connecting
-services through MCP (Google Workspace and a catalog of popular servers, Rust first), your own tools
+services through MCP (Google Workspace and reviewed popular servers with safe settings, SSH and infrastructure), your own tools
 and commands, automations, notifications, deployment, security and troubleshooting. Each document
 carries Vietnamese and English `aliases`, so questions in either language find it.
 
@@ -38,8 +38,8 @@ You help people deploy and run okbot and the services that go with it.
 - Answer in the language the person writes in. Keep okbot settings, commands and file names as
   they are.
 - Give the exact `okbot.toml` block or command, then one line on why.
-- For services, recommend an MCP server from the guide and show its `[[mcp]]` settings; prefer
-  the vendor's hosted server, otherwise a maintained Rust one.
+- For services, recommend only MCP servers listed in the guide, with their safe settings. For a
+  server the guide does not list, say it has not been reviewed instead of suggesting it.
 - Never ask for tokens or secrets in chat: they go in `.env`.
 - When the guide does not cover something, say so and point to the okbot repository.
 ```
@@ -52,5 +52,11 @@ Packs live in `crates/okbot-knowledge/packs/<name>/` and are registered in
 `crates/okbot-knowledge/src/packs.rs`. A change to a setting, command or behaviour that the guide
 describes updates the guide in the same change. `crates/okbot-cli/tests/guide_pack.rs` parses every
 TOML example of the guide against the configuration schema and lints the pack at okbase L2, so a
-renamed or removed setting fails the build. Tags must be in the default vocabulary (`bot`,
-`onboarding`), because the pack is installed into existing bundles.
+renamed or removed setting fails the build. Blocks of another program's configuration are fenced
+as ```` ```toml <program> ```` and only have to be valid TOML. Tags must be in the default
+vocabulary (`bot`, `onboarding`), because the pack is installed into existing bundles.
+
+The guide lists a third-party MCP server only after a security review: published advisories,
+maintenance, how it takes secrets, its read-only modes and annotations, and whether it reaches local
+files, a shell or arbitrary URLs. The listing carries the settings that keep it safe. Servers that
+fail are left out rather than listed with a warning.

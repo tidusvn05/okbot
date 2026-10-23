@@ -1,5 +1,6 @@
 //! The `okbot-guide` knowledge pack must describe the configuration this version accepts: every
-//! TOML example in it is parsed against the real schema.
+//! TOML example in it is parsed against the real schema. Blocks fenced as ```` ```toml <program> ````
+//! are another program's configuration and only have to be valid TOML.
 #![allow(clippy::unwrap_used)] // test code: a panic is the failure report
 
 use std::path::{Path, PathBuf};
@@ -8,8 +9,8 @@ fn pack_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../okbot-knowledge/packs/okbot-guide")
 }
 
-/// `(file, first line, block)` for every ```toml block of the pack.
-fn toml_blocks() -> Vec<(String, usize, String)> {
+/// `(file, first line, block)` for every block of the pack whose fence line is `fence`.
+fn toml_blocks(fence: fn(&str) -> bool) -> Vec<(String, usize, String)> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(pack_dir()).unwrap() {
         let path = entry.unwrap().path();
@@ -21,7 +22,7 @@ fn toml_blocks() -> Vec<(String, usize, String)> {
         let mut block: Option<(usize, String)> = None;
         for (n, line) in text.lines().enumerate() {
             match (&mut block, line.trim()) {
-                (None, "```toml") => block = Some((n + 2, String::new())),
+                (None, line) if fence(line) => block = Some((n + 2, String::new())),
                 (Some(_), "```") => {
                     let (start, body) = block.take().unwrap();
                     out.push((name.clone(), start, body));
@@ -51,7 +52,7 @@ fn merge(into: &mut toml::Table, from: toml::Table) {
 
 #[test]
 fn every_toml_example_uses_known_settings() {
-    let blocks = toml_blocks();
+    let blocks = toml_blocks(|line| line == "```toml");
     assert!(blocks.len() > 20, "found only {} examples", blocks.len());
     let dir = tempfile::tempdir().unwrap();
     for (file, line, block) in blocks {
@@ -69,6 +70,17 @@ fn every_toml_example_uses_known_settings() {
                 !message.contains("unknown field") && !message.contains("unknown variant"),
                 "{at}: {message}"
             );
+        }
+    }
+}
+
+#[test]
+fn other_programs_toml_examples_parse() {
+    let blocks = toml_blocks(|line| line.starts_with("```toml "));
+    assert!(blocks.len() > 1, "found only {} examples", blocks.len());
+    for (file, line, block) in blocks {
+        if let Err(e) = toml::from_str::<toml::Table>(&block) {
+            panic!("{file}:{line} is not valid TOML: {e}");
         }
     }
 }

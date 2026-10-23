@@ -5,7 +5,7 @@ description: The parts of an okbot bot (chat platforms, agent CLI, knowledge bas
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-24
 aliases: [okbot là gì, giới thiệu okbot, okbot overview, bắt đầu với okbot]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -26,8 +26,8 @@ chat platforms ─ okbot runtime (access rules, history, queue) ─ agent CLI
 
 - **No API key.** okbot runs the agent CLI that is already logged in on the machine and uses its
   subscription or quota.
-- **The agent never gets a shell or your files.** It can search the web and use the MCP tools you
-  configure, nothing else.
+- **The agent never gets a shell or the files of the bot's machine.** It can search the web and
+  use the MCP tools you configure, nothing else.
 - **One bot = one directory**: `okbot.toml` (settings, no secrets), `.env` (tokens), `kb/`
   (knowledge and memory) and `state/` (database). Many bots can run on one machine.
 
