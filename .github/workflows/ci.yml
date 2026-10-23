@@ -81,7 +81,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets --all-features
+      # `+1.89`: rust-toolchain.toml pins `stable`, which wins over the default the action sets.
+      - run: cargo +1.89 check --workspace --all-targets --all-features
 
   deny:
     runs-on: ubuntu-latest
