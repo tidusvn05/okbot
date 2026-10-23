@@ -9,6 +9,9 @@ updates:
       # Must match the version okbase links (libsqlite3-sys can be linked only once).
       - dependency-name: rusqlite
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # 19 uses `cfg_select!`, which needs a newer Rust than the MSRV (1.89).
+      - dependency-name: rustyline
+        update-types: ["version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
