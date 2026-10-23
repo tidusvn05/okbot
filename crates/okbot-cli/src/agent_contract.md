@@ -145,3 +145,5 @@ To let the user's programs post to chats (alerts, CI, deploys), add a `[[notify]
 - Do not set `allow_unrestricted_agents = true` unless the user explicitly asks: it lets agents
   use a shell.
 - Knowledge lives in `kb/` as okbase (OKF) markdown; `okbot kb lint` checks it.
+- `okbot kb pack add okbot-guide` installs a guide to okbot itself (platforms, permissions, MCP
+  services, automations) into `kb/knowledge/okbot-guide/`; re-run it after upgrading okbot.

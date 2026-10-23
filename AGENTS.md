@@ -34,6 +34,8 @@ Chat, Discord, Slack, console) in front of a message pipeline that runs agent CL
 - `tracing` for logs; spans per inbound event and per agent run.
 - Object-safe async traits that third parties implement use `#[async_trait]` (ADR 0002).
 - Conventional commits; snapshot tests (`insta`) for prompts, rendered messages and JSON contracts.
+- A change to a setting, command or behaviour updates the `okbot-guide` knowledge pack
+  (`crates/okbot-knowledge/packs/okbot-guide/`) too; `tests/guide_pack.rs` checks its TOML examples.
 
 ## Verify before finishing a change
 

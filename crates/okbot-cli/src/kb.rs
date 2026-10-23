@@ -40,6 +40,24 @@ pub(crate) enum KbCommand {
         /// Bot name; default: the bot in the current directory.
         name: Option<String>,
     },
+    /// Knowledge packs shipped with okbot (`okbot-guide`: how to set up okbot and its services).
+    #[command(subcommand)]
+    Pack(PackCommand),
+}
+
+/// `okbot kb pack` subcommands.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum PackCommand {
+    /// List the packs this version ships.
+    List,
+    /// Copy a pack into `kb/knowledge/<pack>/`, replacing the pack's files from an older version.
+    Add {
+        /// Pack name (`okbot kb pack list`).
+        pack: String,
+        /// Bot name; default: the bot in the current directory.
+        #[arg(long)]
+        bot: Option<String>,
+    },
 }
 
 /// Reads a local file or downloads a URL: `(bytes, file name, media type)`.
@@ -170,6 +188,30 @@ fn inbox(name: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn add_pack(name: &str, bot: Option<&str>) -> anyhow::Result<()> {
+    let pack = okbot_knowledge::pack(name).with_context(|| {
+        let names: Vec<_> = okbot_knowledge::PACKS.iter().map(|p| p.name).collect();
+        format!("no pack named `{name}`; available: {}", names.join(", "))
+    })?;
+    let (config, bundle) = open(bot)?;
+    let installed = okbot_knowledge::install_pack(pack, &config.kb_dir())
+        .with_context(|| format!("cannot write the pack into {}", config.kb_dir().display()))?;
+    bundle.sync()?;
+    for file in &installed.written {
+        println!("wrote {}", file.display());
+    }
+    if installed.indexed {
+        println!("linked it from knowledge/index.md");
+    }
+    println!(
+        "{}: {} written, {} unchanged",
+        pack.name,
+        installed.written.len(),
+        installed.unchanged.len()
+    );
+    Ok(())
+}
+
 fn open(name: Option<&str>) -> anyhow::Result<(Config, okbase::Bundle)> {
     let dir = crate::registry::resolve(name)?;
     let config = Config::load(&dir)?;
@@ -188,6 +230,12 @@ pub(crate) async fn run(command: KbCommand) -> anyhow::Result<()> {
     match command {
         KbCommand::Add { source, title, bot } => add(&source, title, bot.as_deref()).await?,
         KbCommand::Inbox { name } => inbox(name.as_deref())?,
+        KbCommand::Pack(PackCommand::List) => {
+            for pack in okbot_knowledge::PACKS {
+                println!("{:<14} {}", pack.name, pack.description);
+            }
+        }
+        KbCommand::Pack(PackCommand::Add { pack, bot }) => add_pack(&pack, bot.as_deref())?,
         KbCommand::Sync { name } => {
             let (_, bundle) = open(name.as_deref())?;
             let stats = bundle.sync()?;
