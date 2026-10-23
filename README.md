@@ -55,6 +55,9 @@ touch your files.
   `okbot pair`, with one shared memory; a `team` bot keeps one memory per person.
 - **Many bots per machine.** A bot is a directory; `okbot` creates, checks, runs and supervises them
   (systemd), with a machine-wide concurrency limit.
+- **A guide in the bot.** `okbot kb pack add okbot-guide` gives any bot a knowledge pack on setting
+  up okbot, its platforms, permissions and popular MCP services, so it can answer "how do I connect
+  Gmail?" itself. See [docs/knowledge-packs.md](docs/knowledge-packs.md).
 - **Operable.** `okbot doctor`, `/healthz`, Prometheus `/metrics`, structured logs with secrets redacted.
 
 ## How it works
@@ -152,6 +155,9 @@ shop/
 - [Design](docs/design.md) and [architecture decisions](docs/adr/)
 - [Running on a VPS](docs/deploy.md): many bots per machine, services, reverse proxy
 - [A personal assistant](docs/assistant.md): memory, reminders, routines, notes and saved documents
+- [Connecting services](docs/services.md), [automations](docs/automations.md) and
+  [notifications](docs/notify.md)
+- [Knowledge packs](docs/knowledge-packs.md): the `okbot-guide` pack and a helper bot for okbot
 - [Extending okbot](docs/extending/README.md): new platforms in [Rust](docs/extending/channel.md) or
   [any language](docs/bridge.md), agent backends, stores
 - [Implementation plan](docs/implementation-plan.md): phases, releases, engineering standards

@@ -17,6 +17,7 @@ mod inbox;
 mod journal;
 mod mcp;
 mod memory;
+mod packs;
 mod paths;
 mod scope;
 mod task_tools;
@@ -37,6 +38,7 @@ use okbot_core::{
 };
 
 pub use inbox::{NewDocument, readable_extension};
+pub use packs::{PACKS, Pack, PackInstall, install_pack, pack};
 pub use template::{default_bundle_files, write_default_bundle};
 
 /// Name of the environment variable that carries the run token to the agent.

@@ -21,7 +21,9 @@ enum LinkStyle {
 #[derive(Debug, Clone, Copy)]
 enum CodeBlockStyle {
     Fenced,
-    Indented,
+    /// Every line indented by two of the given space, which also replaces the line's own leading
+    /// spaces.
+    Indented(char),
     /// `<pre><code>` with the code escaped.
     Html,
 }
@@ -80,7 +82,8 @@ impl Style {
                 code: Some(same("`")),
                 link: LinkStyle::Plain,
                 heading_hashes: false,
-                code_block: CodeBlockStyle::Indented,
+                // Zalo drops leading spaces; no-break spaces stay and copy as spaces.
+                code_block: CodeBlockStyle::Indented('\u{a0}'),
                 table: TableStyle::List,
                 bullet: "- ",
                 quote: "> ",
@@ -150,7 +153,7 @@ impl Style {
                 code: None,
                 link: LinkStyle::Plain,
                 heading_hashes: false,
-                code_block: CodeBlockStyle::Indented,
+                code_block: CodeBlockStyle::Indented(' '),
                 table: TableStyle::List,
                 bullet: "- ",
                 quote: "> ",
@@ -210,7 +213,7 @@ pub(crate) fn emit(blocks: &[Block], dialect: MarkdownDialect) -> Vec<Chunk> {
                             close: "</code></pre>".into(),
                         });
                     }
-                    CodeBlockStyle::Indented => {}
+                    CodeBlockStyle::Indented(_) => {}
                 }
             }
             let text = block_text(block, &style, "");
@@ -286,9 +289,17 @@ fn block_text(block: &Block, style: &Style, indent: &str) -> String {
                 html_pre(lang.as_deref()),
                 escape(text, Escape::Entities)
             ),
-            CodeBlockStyle::Indented => text
+            CodeBlockStyle::Indented(space) => text
                 .lines()
-                .map(|line| format!("  {}", escape(line, style.escape)))
+                .map(|line| {
+                    let code = line.trim_start_matches(' ');
+                    let depth = 2 + line.len() - code.len();
+                    format!(
+                        "{}{}",
+                        String::from(space).repeat(depth),
+                        escape(code, style.escape)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n"),
         },

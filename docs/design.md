@@ -286,7 +286,8 @@ The `getUpdates` documentation shows no offset/acknowledgement parameter, so ded
 - `sendMessage`: text 1–2000 characters; `parse_mode = "markdown"` supports bold, italic,
   strikethrough, inline code, headings (rendered bold), lists, quotes, indentation, and Zalo-only
   colour/size tags. **No links, no fenced code blocks, no tables**. The `ZaloMd` renderer turns code
-  blocks into indented plain text, tables into lists, and links into `text (url)`, escapes literal `*`
+  blocks into plain text indented with no-break spaces (Zalo drops leading spaces; copied text
+  comes out with ordinary spaces), tables into lists, and links into `text (url)`, escapes literal `*`
   and `_`, and splits at 2000 characters on paragraph boundaries.
 - `sendChatAction {action: "typing"}` while the agent runs (repeated).
 - No edit, delete or quote-reply API: no "thinking…" message, no streaming edits (§4.3 streaming is

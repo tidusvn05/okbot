@@ -22,9 +22,9 @@ trang chính sách (https://shop.example.com/doi-tra) hoặc https://shop.exampl
 - Gói: Cơ bản; Giá: 100k; Ghi chú: _phổ biến_
 - Gói: Nâng cao; Giá: 250k; Ghi chú: `PRO`
 ===== part 6 =====
-  fn main() {
-      println!("x \* y\_z");
-  }
+  fn main() {
+      println!("x \* y\_z");
+  }
 
 Ký tự đặc biệt: a\*b\_c\~d `inline * code` <tag> & more.
 
