@@ -104,6 +104,25 @@ config; restart the bot afterwards. Details: `docs/extending/README.md`. Only ad
 runs or trusts, and never one that offers a shell or file access; prefer `tools = [...]` with
 the tools the bot needs.
 
+For the user's everyday services (Gmail, Drive, Sheets, Calendar, Notion, Linear), do not write
+integration code: run `okbot mcp add notion` (or `google-workspace`, `linear`), which writes an
+`[[mcp]]` server with `auth = "oauth"` and `confirm = "destructive"`. Each person connects their own
+account with `/connect <name>` in a direct chat, then `/connect <code>` with the code the page
+shows (it needs `[http] listen`, and `public_url` for browsers on other machines), or the operator
+runs `okbot mcp login <name> --as person:<id>`;
+`credentials = "shared"` makes one account an administrator connects. Personal accounts are used
+only in that person's direct chats and `personal` rooms. `okbot mcp list` shows who is connected.
+Google needs the `workspace-mcp` server running next to the bot: `docs/services.md`.
+
+To act without being asked, add an `[[automation]]`: `name`, one trigger (`every = "5m"` polls and
+acts on new items, `schedule = "weekdays 08:00"`, or `webhook = true` with `token_env`), an optional
+`[automation.source]` (`mcp`, `tool`, `with`, and `items`/`id` JSON pointers for JSON results), and
+one action: `text = "…{{item.field}}…"` with `to = [...]` (no agent) or `prompt = "…"` (an agent
+turn as `run_as`, without web tools, asking before any change). `run_as` is `person:<id>` or an
+account; personal bots use the owner. A source that reads `run_as`'s own account may only send to
+them or a `personal` room. `okbot automation list` shows the latest runs.
+Details: `docs/automations.md`.
+
 To let the user's programs post to chats (alerts, CI, deploys), add a `[[notify]]` target: `name`,
 `token_env` (a new variable in `.env`, never a bearer `[[mcp]]` token) and `to` (`room:<key>` from
 `/whoami` as an admin, `user:<platform>:<instance>/<id>`, `person:<id>`, `admins`). It needs

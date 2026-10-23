@@ -171,6 +171,8 @@ pub struct RuntimeConfig {
     pub commands: Vec<McpCommand>,
     /// Named destinations other programs post to (`[[notify]]`, `POST /notify/<name>`).
     pub notify: Vec<NotifyRoute>,
+    /// Triggers, sources and actions (`[[automation]]`, ADR 0013).
+    pub automations: Vec<Automation>,
     /// Roles from `[roles]`.
     pub roles: Roles,
     /// Per-person limits (`[limits]`).
@@ -189,6 +191,81 @@ pub struct NotifyRoute {
     pub token: Secret<String>,
     /// The targets, in order.
     pub to: Vec<okbot_core::NotifyTo>,
+}
+
+/// An `[[automation]]` (ADR 0013).
+#[derive(Debug, Clone)]
+pub struct Automation {
+    /// Its name (`/automation/<name>`, logs, records).
+    pub name: String,
+    /// Whose credentials, roles and direct chat it uses.
+    pub run_as: Option<RunAs>,
+    /// When it runs.
+    pub trigger: Trigger,
+    /// The tool whose result is the input.
+    pub source: Option<Source>,
+    /// What it does with new items.
+    pub action: AutomationAction,
+    /// Runs that act, per local day.
+    pub max_runs_per_day: u32,
+    /// Items acted on per run.
+    pub max_items: usize,
+    /// Not running.
+    pub paused: bool,
+}
+
+/// Whom an automation runs as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunAs {
+    /// A linked person (`[people]`, or [`OWNER`] on a personal bot).
+    Person(String),
+    /// One account.
+    Account(ChannelId, UserId),
+}
+
+/// When an automation runs.
+#[derive(Debug, Clone)]
+pub enum Trigger {
+    /// Poll the source this often; act on new items.
+    Every(Duration),
+    /// At these times; act every time.
+    Schedule(okbot_core::Repeat),
+    /// When a program posts to `/automation/<name>` with this bearer token.
+    Webhook(Secret<String>),
+}
+
+/// One `[[mcp]]` tool called without the agent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Source {
+    /// The server.
+    pub mcp: String,
+    /// The tool.
+    pub tool: String,
+    /// Its arguments.
+    pub with: serde_json::Map<String, serde_json::Value>,
+    /// JSON pointer to the items array; `None`: the whole text is one item.
+    pub items: Option<String>,
+    /// JSON pointer to an item's id; `None`: its content.
+    pub id: Option<String>,
+}
+
+/// What an automation does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AutomationAction {
+    /// Send a template to these targets, without an agent.
+    Text {
+        /// Markdown with `{{item}}`, `{{item.field}}`, `{{count}}`, `{{name}}`.
+        template: String,
+        /// Where.
+        to: Vec<okbot_core::NotifyTo>,
+    },
+    /// Start an agent turn as `run_as`.
+    Prompt {
+        /// What to ask.
+        prompt: String,
+        /// The chat (default: `run_as`'s direct chat).
+        to: Option<okbot_core::NotifyTo>,
+    },
 }
 
 /// Members of the roles in `[roles]` (ADR 0011). `admins` and `everyone` are built in and never
@@ -304,6 +381,40 @@ pub struct ExtraMcp {
     pub rules: McpRules,
     /// A local server started per agent session instead of `server.url`.
     pub stdio: Option<StdioServer>,
+    /// Log in with OAuth instead of `token` (ADR 0012).
+    pub oauth: Option<OAuthSettings>,
+}
+
+impl ExtraMcp {
+    /// The server uses each person's own account (OAuth with person credentials).
+    pub fn personal_credentials(&self) -> bool {
+        self.oauth
+            .as_ref()
+            .is_some_and(|o| o.credentials == Credentials::Person)
+    }
+}
+
+/// How an [`ExtraMcp`] server logs in with OAuth (ADR 0012).
+#[derive(Debug, Clone, Default)]
+pub struct OAuthSettings {
+    /// Whose account it reads.
+    pub credentials: Credentials,
+    /// A client registered by hand; `None`: okbot registers itself.
+    pub client_id: Option<String>,
+    /// That client's secret.
+    pub client_secret: Option<Secret<String>>,
+    /// Scopes to ask for; empty: the server's.
+    pub scopes: Vec<String>,
+}
+
+/// Whose credentials an OAuth server uses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Credentials {
+    /// Each person's own, only in their direct chats and `personal` rooms.
+    #[default]
+    Person,
+    /// One account an administrator connected, for everyone the rules allow.
+    Shared,
 }
 
 /// A local MCP server speaking stdio (ADR 0011).
@@ -488,6 +599,7 @@ impl RuntimeConfig {
             mcp: Vec::new(),
             commands: Vec::new(),
             notify: Vec::new(),
+            automations: Vec::new(),
             roles: Roles::default(),
             limits: Limits::default(),
             console_owner: None,

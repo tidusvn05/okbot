@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, Fire, FireState,
-    NewMessage, PAIRING_MAX_FAILURES, RoleGrant, StoreError, StoredMessage, ToolCallRecord, Usage,
-    UserId, async_trait,
+    AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore, Fire,
+    FireState, NewMessage, PAIRING_MAX_FAILURES, RoleGrant, SealedEntry, StoreError, StoredMessage,
+    ToolCallRecord, Usage, UserId, async_trait,
 };
 
 #[derive(Default)]
@@ -26,6 +26,11 @@ struct State {
     direct: HashMap<(ChannelId, UserId), ConversationKey>,
     tool_calls: Vec<ToolCallRecord>,
     grants: HashMap<(String, String), RoleGrant>,
+    /// (kind, server, subject) → (sealed, updated)
+    sealed: HashMap<(String, String, String), (Vec<u8>, Timestamp)>,
+    /// (automation, item) → seen
+    items: HashMap<(String, String), Timestamp>,
+    automation_runs: Vec<AutomationRun>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -339,18 +344,122 @@ impl ConversationStore for MemoryStore {
                 + s.fires.len()
                 + s.tool_calls.len()
                 + s.grants.len()
+                + s.items.len()
+                + s.automation_runs.len()
         };
         let start = count(&state);
         state.messages.retain(|(_, m)| m.at >= before);
         state.runs.retain(|r| r.started_at >= before);
         state.tool_calls.retain(|c| c.at >= before);
         state.grants.retain(|_, g| g.expires_at > now);
+        state.items.retain(|_, seen| *seen >= before);
+        state.automation_runs.retain(|r| r.at >= before);
         state.seen.retain(|_, expires| *expires > now);
         state
             .fires
             .retain(|_, f| f.updated_at >= before || f.state == FireState::Sending);
         let end = count(&state);
         Ok((start - end) as u64)
+    }
+
+    async fn sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = (kind.to_string(), server.to_string(), subject.to_string());
+        Ok(self.lock().sealed.get(&key).map(|(v, _)| v.clone()))
+    }
+
+    async fn set_sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+        sealed: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let key = (kind.to_string(), server.to_string(), subject.to_string());
+        let now = self.clock.now();
+        self.lock().sealed.insert(key, (sealed, now));
+        Ok(())
+    }
+
+    async fn delete_sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+    ) -> Result<bool, StoreError> {
+        let key = (kind.to_string(), server.to_string(), subject.to_string());
+        Ok(self.lock().sealed.remove(&key).is_some())
+    }
+
+    async fn sealed_entries(&self, kind: &str) -> Result<Vec<SealedEntry>, StoreError> {
+        let mut out: Vec<SealedEntry> = self
+            .lock()
+            .sealed
+            .iter()
+            .filter(|((k, _, _), _)| k == kind)
+            .map(|((k, server, subject), (_, at))| SealedEntry {
+                kind: k.clone(),
+                server: server.clone(),
+                subject: subject.clone(),
+                updated_at: *at,
+            })
+            .collect();
+        out.sort_by(|a, b| (&a.server, &a.subject).cmp(&(&b.server, &b.subject)));
+        Ok(out)
+    }
+
+    async fn claim_items(
+        &self,
+        automation: &str,
+        items: Vec<String>,
+    ) -> Result<Vec<String>, StoreError> {
+        let now = self.clock.now();
+        let mut state = self.lock();
+        let mut new = Vec::new();
+        for item in items {
+            let fresh = state
+                .items
+                .insert((automation.to_string(), item.clone()), now)
+                .is_none();
+            if fresh {
+                new.push(item);
+            }
+        }
+        Ok(new)
+    }
+
+    async fn release_items(&self, automation: &str, items: Vec<String>) -> Result<(), StoreError> {
+        let mut state = self.lock();
+        for item in items {
+            state.items.remove(&(automation.to_string(), item));
+        }
+        Ok(())
+    }
+
+    async fn record_automation_run(&self, run: AutomationRun) -> Result<(), StoreError> {
+        self.lock().automation_runs.push(run);
+        Ok(())
+    }
+
+    async fn automation_runs(
+        &self,
+        automation: Option<&str>,
+        since: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<AutomationRun>, StoreError> {
+        Ok(self
+            .lock()
+            .automation_runs
+            .iter()
+            .rev()
+            .filter(|r| r.at >= since && automation.is_none_or(|a| r.automation == a))
+            .take(limit)
+            .cloned()
+            .collect())
     }
 }
 

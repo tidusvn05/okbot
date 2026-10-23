@@ -2,6 +2,7 @@
 
 mod access;
 mod agent;
+mod automation;
 mod bot;
 mod channel;
 mod chat;
@@ -11,6 +12,7 @@ mod history;
 mod init;
 mod kb;
 mod logging;
+mod mcp;
 mod memory;
 mod operator;
 mod owner;
@@ -98,6 +100,13 @@ enum Command {
     Role(access::RoleCommand),
     /// Calls of `[[mcp]]` tools by agents and commands (who, what, allowed or refused).
     Audit(access::AuditArgs),
+    /// MCP servers: list them, add a preset (notion, google-workspace, linear), connect OAuth
+    /// accounts from the terminal.
+    #[command(subcommand)]
+    Mcp(mcp::McpCommand),
+    /// Automations: their triggers, actions and latest runs.
+    #[command(subcommand, alias = "automations")]
+    Automation(automation::AutomationCommand),
     /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
@@ -190,6 +199,8 @@ async fn main() -> ExitCode {
         Command::Send(args) => send::run(args).await,
         Command::Role(command) => access::role(command).await,
         Command::Audit(args) => access::audit(args).await,
+        Command::Mcp(command) => mcp::run(command).await,
+        Command::Automation(command) => automation::run(command).await,
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),

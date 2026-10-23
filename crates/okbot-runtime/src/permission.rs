@@ -66,9 +66,13 @@ fn any_matches(patterns: &[String], name: &str) -> bool {
 /// The server may be used by `who` here.
 pub(crate) fn may_use(server: &ExtraMcp, who: &Who) -> bool {
     let rules = &server.rules;
-    (!server.admins_only || who.admin())
-        && (rules.roles.is_empty() || who.any_of(&rules.roles))
-        && (rules.rooms.is_empty() || rules.rooms.contains(&who.room))
+    may_use_somewhere(server, who) && (rules.rooms.is_empty() || rules.rooms.contains(&who.room))
+}
+
+/// The server may be used by `who` in some room (its `rooms` are not checked).
+pub(crate) fn may_use_somewhere(server: &ExtraMcp, who: &Who) -> bool {
+    let rules = &server.rules;
+    (!server.admins_only || who.admin()) && (rules.roles.is_empty() || who.any_of(&rules.roles))
 }
 
 /// The tool is offered by the server's lists, whoever asks.
@@ -94,6 +98,14 @@ pub(crate) fn may_run(command: &McpCommand, server: &ExtraMcp, who: &Who) -> boo
     (!command.admins_only || who.admin())
         && (command.roles.is_empty() || who.any_of(&command.roles))
         && may_call(server, who, &command.tool)
+}
+
+/// The annotations do not say the tool only reads.
+pub(crate) fn not_read_only(annotations: Option<&Value>) -> bool {
+    annotations
+        .and_then(|a| a.get("readOnlyHint"))
+        .and_then(Value::as_bool)
+        != Some(true)
 }
 
 /// A call of a tool with these annotations (`tools/list`, MCP 2025-06-18) needs approval. Unknown
@@ -139,6 +151,7 @@ mod tests {
             signed: false,
             rules,
             stdio: None,
+            oauth: None,
         }
     }
 

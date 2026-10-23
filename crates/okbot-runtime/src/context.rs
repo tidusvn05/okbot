@@ -40,6 +40,8 @@ pub(crate) struct PromptInput<'a> {
     /// The answer may use the asker's personal profile and data: a one-to-one chat, or a group
     /// the operator marked `personal`.
     pub(crate) personal: bool,
+    /// `[[mcp]]` servers the asker could use here after connecting an account (ADR 0012).
+    pub(crate) not_connected: &'a [String],
 }
 
 /// The system prompt and the conversation prompt.
@@ -173,6 +175,22 @@ pub(crate) fn build(input: &PromptInput<'_>) -> Prompt {
             local_time(input.now, input.timezone)
         ),
     );
+    if !input.not_connected.is_empty() {
+        let names: Vec<String> = input
+            .not_connected
+            .iter()
+            .map(|n| format!("`{n}`"))
+            .collect();
+        section(
+            &mut system,
+            "accounts",
+            &format!(
+                "Not connected yet, so their tools are missing: {}. When the user asks for one of \
+                 them, tell them to send `/connect <name>` in a direct chat with you.",
+                names.join(", ")
+            ),
+        );
+    }
 
     // History: keep the new messages, then as many older ones as fit the budget.
     let split = input.history.len().saturating_sub(input.new_count);
@@ -245,6 +263,7 @@ mod tests {
             timezone: Some("Asia/Ho_Chi_Minh"),
             history_tokens: 6000,
             personal: event.is_direct,
+            not_connected: &[],
         }
     }
 

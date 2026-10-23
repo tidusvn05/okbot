@@ -278,9 +278,13 @@ async fn worker(
         while let Ok(more) = rx.try_recv() {
             // A turn runs with one person's identity, scope and rights, so it only batches that
             // person's messages: another author's text must never run as this one.
+            // An automation's turn is restricted and isolated: it never batches with a person's
+            // messages.
             if Command::parse(&more.0.text).is_some()
                 || crate::mcp_command::find(&shared, &more.0.text).is_some()
                 || more.0.author.id != batch[0].0.author.id
+                || crate::automation::is_automation(&more.0)
+                || crate::automation::is_automation(&batch[0].0)
             {
                 pending = Some(more);
                 break;

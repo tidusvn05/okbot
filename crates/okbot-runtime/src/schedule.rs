@@ -458,6 +458,7 @@ mod tests {
             interact_url: std::sync::OnceLock::new(),
             notified: crate::notify::Recent::default(),
             gateway: Arc::default(),
+            oauth: None,
         };
         Setup {
             shared,

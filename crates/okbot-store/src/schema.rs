@@ -111,6 +111,34 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (role, account)
     );
     ",
+    // 5: OAuth credentials sealed by the runtime (ADR 0012), and automation state (ADR 0013).
+    r"
+    CREATE TABLE sealed_secrets (
+        kind       TEXT NOT NULL,
+        server     TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        sealed     BLOB NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (kind, server, subject)
+    );
+    CREATE TABLE automation_items (
+        automation TEXT NOT NULL,
+        item       TEXT NOT NULL,
+        seen_at    INTEGER NOT NULL,
+        PRIMARY KEY (automation, item)
+    );
+    CREATE INDEX automation_items_by_time ON automation_items(seen_at);
+    CREATE TABLE automation_runs (
+        id         INTEGER PRIMARY KEY,
+        automation TEXT NOT NULL,
+        at         INTEGER NOT NULL,
+        items      INTEGER NOT NULL,
+        action     TEXT NOT NULL,
+        error      TEXT
+    );
+    CREATE INDEX automation_runs_by_name ON automation_runs(automation, at);
+    CREATE INDEX automation_runs_by_time ON automation_runs(at);
+    ",
 ];
 
 /// The schema version this build writes.

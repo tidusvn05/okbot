@@ -577,3 +577,223 @@ fn rejects_bad_notify_targets() {
         assert!(error.contains(expected), "{expected:?} not in {error:?}");
     }
 }
+
+const OAUTH_BASE: &str = r#"config_version = 1
+[bot]
+name = "x"
+profile = "personal"
+
+[http]
+listen = "127.0.0.1:8787"
+public_url = "https://bot.example.com"
+
+[channels.discord.main]
+token_env = "DISCORD_TOKEN"
+
+[[mcp]]
+name = "google"
+url = "http://127.0.0.1:8000/mcp"
+auth = "oauth"
+confirm = "destructive"
+
+[[mcp]]
+name = "notion"
+url = "https://mcp.notion.com/mcp"
+auth = "oauth"
+credentials = "shared"
+
+[mcp.oauth]
+client_id = "abc"
+client_secret_env = "NOTION_CLIENT_SECRET"
+scopes = ["read"]
+"#;
+
+#[test]
+fn oauth_servers_load() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), OAUTH_BASE);
+    let config = Config::load(dir.path()).unwrap();
+    assert_eq!(config.mcp[0].auth, McpAuth::Oauth);
+    assert_eq!(config.mcp[0].credentials, McpCredentials::Person);
+    assert_eq!(config.mcp[1].credentials, McpCredentials::Shared);
+    let oauth = config.mcp[1].oauth.as_ref().unwrap();
+    assert_eq!(oauth.client_id.as_deref(), Some("abc"));
+    assert!(
+        config
+            .secret_names()
+            .contains(&"NOTION_CLIENT_SECRET".to_string())
+    );
+    assert_eq!(
+        config.http.public_url.as_deref(),
+        Some("https://bot.example.com")
+    );
+}
+
+#[test]
+fn oauth_mistakes_are_explained() {
+    let dir = tempfile::tempdir().unwrap();
+    for (from, to, expected) in [
+        (
+            "auth = \"oauth\"\nconfirm",
+            "auth = \"oauth\"\ntoken_env = \"T\"\nconfirm",
+            "takes no token_env",
+        ),
+        (
+            "credentials = \"shared\"",
+            "credentials = \"shared\"\nauth = \"signed\"\ntoken_env = \"T\"",
+            "duplicate key",
+        ),
+        ("client_id = \"abc\"\n", "", "needs client_id"),
+        (
+            "scopes = [\"read\"]",
+            "scopes = [\"a b\"]",
+            "is not a scope",
+        ),
+        (
+            "public_url = \"https://bot.example.com\"",
+            "public_url = \"http://bot.example.com\"",
+            "must start with https://",
+        ),
+    ] {
+        write(dir.path(), &OAUTH_BASE.replacen(from, to, 1));
+        let error = Config::load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+    let bearer_with_oauth = "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\n\
+        url = \"http://x\"\ntoken_env = \"T\"\ncredentials = \"shared\"\n";
+    write(dir.path(), bearer_with_oauth);
+    let error = Config::load(dir.path()).unwrap_err().to_string();
+    assert!(error.contains("are for auth = \"oauth\""), "{error}");
+}
+
+#[test]
+fn automations_load_with_their_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = format!(
+        r#"{OAUTH_BASE}
+[[automation]]
+name = "boss-mail"
+every = "5m"
+prompt = "Summarise the new mail."
+
+[automation.source]
+mcp = "google"
+tool = "search_gmail_messages"
+with = {{ query = "is:unread from:boss@example.com" }}
+items = "/messages"
+id = "/id"
+
+[[automation]]
+name = "form"
+webhook = true
+token_env = "FORM_HOOK_TOKEN"
+text = "New answer: {{{{item}}}}"
+to = ["person:owner"]
+
+[[automation]]
+name = "morning"
+schedule = "weekdays 08:00"
+text = "Good morning"
+to = ["admins"]
+"#
+    );
+    write(dir.path(), &text);
+    let config = Config::load(dir.path()).unwrap();
+    let mail = &config.automations[0];
+    assert_eq!(mail.every.as_deref(), Some("5m"));
+    assert_eq!(mail.max_items, 20);
+    assert_eq!(
+        config.automation_run_as(mail).as_deref(),
+        Some("person:owner"),
+        "a personal bot runs automations as its owner"
+    );
+    assert_eq!(
+        mail.source.as_ref().unwrap().with["query"],
+        toml::Value::String("is:unread from:boss@example.com".into())
+    );
+    assert!(config.automations[1].webhook);
+    assert!(
+        config
+            .secret_names()
+            .contains(&"FORM_HOOK_TOKEN".to_string())
+    );
+    assert_eq!(parse_every("90").unwrap().as_secs(), 90 * 60);
+    assert_eq!(parse_every("2h").unwrap().as_secs(), 7200);
+    assert!(parse_every("0m").is_err() && parse_every("8d").is_err() && parse_every("x").is_err());
+}
+
+#[test]
+fn automation_mistakes_are_explained() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n\
+        [people.lan]\naccounts = [\"discord:main/1\"]\n\
+        [channels.discord.main]\ntoken_env = \"D\"\n\
+        [[mcp]]\nname = \"google\"\nurl = \"http://x\"\nauth = \"oauth\"\n\
+        [[mcp]]\nname = \"local\"\ncommand = [\"x\"]\n";
+    for (automation, expected) in [
+        (
+            "name = \"a\"\ntext = \"t\"\nto = [\"admins\"]\n",
+            "exactly one trigger",
+        ),
+        (
+            "name = \"a\"\nevery = \"5m\"\nschedule = \"daily 08:00\"\ntext = \"t\"\nto = [\"admins\"]\n",
+            "exactly one trigger",
+        ),
+        (
+            "name = \"a\"\nevery = \"5m\"\ntext = \"t\"\nto = [\"admins\"]\n",
+            "add [automation.source]",
+        ),
+        (
+            "name = \"a\"\nschedule = \"hourly\"\ntext = \"t\"\nto = [\"admins\"]\n",
+            "not a repeat rule",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\ntext = \"t\"\n",
+            "text needs `to`",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\ntext = \"t\"\nprompt = \"p\"\nto = [\"admins\"]\n",
+            "either text or prompt",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\nprompt = \"p\"\n",
+            "needs run_as",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\nprompt = \"p\"\nrun_as = \"person:bob\"\n",
+            "not in [people]",
+        ),
+        (
+            "name = \"a\"\nwebhook = true\ntext = \"t\"\nto = [\"admins\"]\n",
+            "a webhook needs token_env",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\ntext = \"t\"\nto = [\"admins\"]\n[automation.source]\nmcp = \"google\"\ntool = \"x\"\n",
+            "acts for a person; set run_as",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\ntext = \"t\"\nto = [\"admins\"]\n[automation.source]\nmcp = \"local\"\ntool = \"x\"\n",
+            "is a command server",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\nrun_as = \"person:lan\"\ntext = \"t\"\nto = [\"person:lan\"]\n[automation.source]\nmcp = \"google\"\ntool = \"x\"\nitems = \"messages\"\n",
+            "must be a JSON pointer",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\nprompt = \"p\"\nrun_as = \"person:lan\"\nto = [\"room:discord:main|-|1|-\", \"admins\"]\n",
+            "names more",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\ntext = \"t\"\nto = [\"room:slack:x|-|1|-\"]\n",
+            "not in [channels]",
+        ),
+        (
+            "name = \"a\"\nschedule = \"daily 08:00\"\nrun_as = \"person:lan\"\ntext = \"t\"\nto = [\"room:discord:main|-|team|-\"]\n[automation.source]\nmcp = \"google\"\ntool = \"x\"\n",
+            "may only go to them",
+        ),
+    ] {
+        write(dir.path(), &format!("{base}[[automation]]\n{automation}"));
+        let error = Config::load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}

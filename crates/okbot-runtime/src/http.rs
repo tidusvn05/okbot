@@ -9,7 +9,7 @@ use axum::extract::Request;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
-use okbot_core::{CancellationToken, WebhookHandler, WebhookRequest};
+use okbot_core::{CancellationToken, InboundSink, WebhookHandler, WebhookRequest};
 
 use crate::Shared;
 
@@ -77,8 +77,28 @@ async fn webhook(
         .into_response()
 }
 
-/// The router: `GET /healthz` and one route per channel webhook.
-pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
+/// The decoded `key=value` pairs of a query string.
+fn query_pairs(query: &str) -> Vec<(String, String)> {
+    reqwest::Url::parse(&format!("http://local/?{query}"))
+        .map(|url| url.query_pairs().into_owned().collect())
+        .unwrap_or_default()
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+}
+
+/// The router: `GET /healthz` and one route per channel webhook. `sink` takes automation
+/// prompts (`POST /automation/<name>`).
+pub(crate) fn router(
+    shared: &Arc<Shared>,
+    max_body: usize,
+    sink: Option<Arc<dyn InboundSink>>,
+) -> Router {
     let health_state = shared.clone();
     let metrics_state = shared.clone();
     let mut router = Router::new()
@@ -149,6 +169,7 @@ pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
             ),
         );
     }
+    router = oauth_and_automation_routes(router, shared, sink);
     for channel in shared.channels.values() {
         if let Some(handler) = channel.webhook() {
             let path = format!("/{}", handler.path().trim_start_matches('/'));
@@ -171,10 +192,72 @@ pub(crate) fn router(shared: &Arc<Shared>, max_body: usize) -> Router {
     router
 }
 
+/// `GET /oauth/callback` (ADR 0012) and `POST /automation/<name>` (ADR 0013), when used.
+fn oauth_and_automation_routes(
+    mut router: Router,
+    shared: &Arc<Shared>,
+    sink: Option<Arc<dyn InboundSink>>,
+) -> Router {
+    if shared.oauth.is_some() && shared.config.mcp.iter().any(|m| m.oauth.is_some()) {
+        let state = shared.clone();
+        router = router.route(
+            "/oauth/callback",
+            get(move |uri: axum::http::Uri| {
+                let state = state.clone();
+                async move {
+                    let query = query_pairs(uri.query().unwrap_or_default());
+                    let (status, html) = crate::connect::callback(&state, &query).await;
+                    (
+                        StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+                        [
+                            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                            // The page may show who connected; keep it out of caches.
+                            (header::CACHE_CONTROL, "no-store"),
+                        ],
+                        html,
+                    )
+                }
+            }),
+        );
+    }
+    let webhooks = shared
+        .config
+        .automations
+        .iter()
+        .any(|a| matches!(a.trigger, crate::config::Trigger::Webhook(_)));
+    if let (true, Some(sink)) = (webhooks, sink) {
+        let state = shared.clone();
+        router = router.route(
+            "/automation/{name}",
+            axum::routing::post(
+                move |axum::extract::Path(name): axum::extract::Path<String>,
+                      headers: HeaderMap,
+                      body: Bytes| {
+                    let state = state.clone();
+                    let sink = sink.clone();
+                    async move {
+                        let (status, body) = crate::automation::post(
+                            &state,
+                            sink.as_ref(),
+                            &name,
+                            bearer(&headers),
+                            &body,
+                        )
+                        .await;
+                        (status, axum::Json(body)).into_response()
+                    }
+                },
+            ),
+        );
+    }
+    router
+}
+
 /// Binds and returns the server future, which ends when `stop` is cancelled.
 pub(crate) async fn serve(
     options: HttpOptions,
     shared: Arc<Shared>,
+    sink: Arc<dyn InboundSink>,
     stop: CancellationToken,
 ) -> Result<impl std::future::Future<Output = ()> + Send + 'static, (SocketAddr, std::io::Error)> {
     let listener = tokio::net::TcpListener::bind(options.listen)
@@ -188,7 +271,7 @@ pub(crate) async fn serve(
         addr
     };
     let _ = shared.interact_url.set(format!("http://{local}/interact"));
-    let app = router(&shared, options.max_body);
+    let app = router(&shared, options.max_body, Some(sink));
     Ok(async move {
         if let Err(error) = axum::serve(listener, app)
             .with_graceful_shutdown(async move { stop.cancelled().await })
@@ -290,6 +373,7 @@ mod tests {
             interact_url: std::sync::OnceLock::new(),
             notified: crate::notify::Recent::default(),
             gateway: Arc::default(),
+            oauth: None,
         })
     }
 
@@ -302,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_and_webhooks() {
-        let app = router(&shared(), 16);
+        let app = router(&shared(), 16, None);
         let health = app
             .clone()
             .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
@@ -350,7 +434,7 @@ mod tests {
 
     #[tokio::test]
     async fn notify_route_needs_the_targets_token() {
-        let app = router(&shared(), 1024);
+        let app = router(&shared(), 1024, None);
         let absent = app
             .oneshot(
                 Request::post("/notify/alerts")
@@ -367,7 +451,7 @@ mod tests {
             token: okbot_core::Secret::new("t0k".into()),
             to: vec!["room:hook:test|-|r1|-".parse().unwrap()],
         }];
-        let app = router(&shared_with(config), 1024);
+        let app = router(&shared_with(config), 1024, None);
         let call = |token: &'static str| {
             Request::post("/notify/alerts")
                 .header("Authorization", format!("Bearer {token}"))

@@ -721,6 +721,7 @@ async fn configured_mcp_servers_reach_the_agent() {
         signed: false,
         rules: okbot_runtime::McpRules::default(),
         stdio: None,
+        oauth: None,
     };
     let caps = okbot_core::AgentCaps {
         mcp: true,

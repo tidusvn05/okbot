@@ -61,6 +61,9 @@ pub struct RunInfo<'a> {
     /// The requester administers the bot (the owner of a personal bot, or `[bot] admins`): only
     /// they may create routines and save documents to the shared knowledge.
     pub admin: bool,
+    /// The run reads untrusted data (an automation, ADR 0013): the bot's own tools only read
+    /// (no memory, task, note or knowledge writes).
+    pub read_only: bool,
 }
 
 /// Knowledge placed in the system prompt.

@@ -103,6 +103,25 @@ async fn agents(args: &ChatArgs) -> anyhow::Result<Vec<Arc<dyn AgentBackend>>> {
     Ok(backends)
 }
 
+/// Accounts connected for the bot (`/connect`, `okbot mcp login`), used in the console too.
+async fn connector(
+    bot: Option<&okbot_config::Config>,
+) -> anyhow::Result<Option<Arc<okbot_runtime::oauth::Connector>>> {
+    match bot {
+        Some(bot)
+            if bot
+                .mcp
+                .iter()
+                .any(|m| m.auth == okbot_config::McpAuth::Oauth) =>
+        {
+            let store: Arc<dyn okbot_core::ConversationStore> =
+                Arc::new(crate::owner::store(bot).await?);
+            crate::mcp::connector(bot, store)
+        }
+        _ => Ok(None),
+    }
+}
+
 /// The runtime configuration for `okbot chat`, from the bot directory `bot` when there is one.
 fn runtime_config(
     args: &ChatArgs,
@@ -264,6 +283,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let console = Arc::new(console(options, &state_dir)?);
     let closed = console.closed();
     let http = http_addr(&args, bot.as_ref());
+    let connector = connector(bot.as_ref()).await?;
     let config = runtime_config(&args, &name, &state_dir, bot, timezone)?;
     let mut builder = Runtime::builder(config)
         .store(Arc::new(store))
@@ -278,6 +298,9 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     }
     if let Some(addr) = http {
         builder = builder.http(HttpOptions::new(addr));
+    }
+    if let Some(connector) = connector {
+        builder = builder.oauth(connector);
     }
     let runtime = builder.build()?;
     let handle = runtime.handle();

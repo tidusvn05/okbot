@@ -247,6 +247,38 @@ pub struct Fire {
     pub updated_at: Timestamp,
 }
 
+/// A sealed secret's identity, without the secret (for listings).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedEntry {
+    /// What it is (`oauth-token`, `oauth-client`).
+    pub kind: String,
+    /// The `[[mcp]]` server.
+    pub server: String,
+    /// Whose it is: a [`person_key`], `shared`, or the issuer of a client registration.
+    pub subject: String,
+    /// Last change.
+    pub updated_at: Timestamp,
+}
+
+/// One run of an automation (ADR 0013).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutomationRun {
+    /// The `[[automation]]` name.
+    pub automation: String,
+    /// When it ran.
+    pub at: Timestamp,
+    /// New items acted on (0 when nothing was new).
+    pub items: u32,
+    /// What it did: `text`, `prompt`, `none` (nothing new) or `primed` (first poll).
+    pub action: String,
+    /// Why it failed, when it did.
+    pub error: Option<String>,
+}
+
+fn unsupported() -> StoreError {
+    StoreError::Backend("not supported by this store".into())
+}
+
 /// Stores conversations, deduplication marks and the audit trail (design §6.1).
 #[async_trait]
 pub trait ConversationStore: Send + Sync {
@@ -364,7 +396,81 @@ pub trait ConversationStore: Send + Sync {
     /// Grants that have not expired at `now`.
     async fn role_grants(&self, now: Timestamp) -> Result<Vec<RoleGrant>, StoreError>;
 
-    /// Deletes messages, runs, tool calls, expired grants, dedupe marks and finished firings older
-    /// than `before`. Returns rows removed.
+    /// Deletes messages, runs, tool calls, expired grants, dedupe marks, finished firings and
+    /// automation records older than `before`. Returns rows removed.
     async fn purge_before(&self, before: Timestamp) -> Result<u64, StoreError>;
+
+    /// A sealed secret (ADR 0012): the runtime seals and opens it; the store only keeps bytes.
+    async fn sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let _ = (kind, server, subject);
+        Err(unsupported())
+    }
+
+    /// Stores or replaces a sealed secret.
+    async fn set_sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+        sealed: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let _ = (kind, server, subject, sealed);
+        Err(unsupported())
+    }
+
+    /// Deletes a sealed secret. Returns whether there was one.
+    async fn delete_sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+    ) -> Result<bool, StoreError> {
+        let _ = (kind, server, subject);
+        Err(unsupported())
+    }
+
+    /// The sealed secrets of `kind`, without their values, by server and subject.
+    async fn sealed_entries(&self, kind: &str) -> Result<Vec<SealedEntry>, StoreError> {
+        let _ = kind;
+        Err(unsupported())
+    }
+
+    /// Records `items` as seen by `automation` and returns those that were not seen before, in
+    /// their order.
+    async fn claim_items(
+        &self,
+        automation: &str,
+        items: Vec<String>,
+    ) -> Result<Vec<String>, StoreError> {
+        let _ = (automation, items);
+        Err(unsupported())
+    }
+
+    /// Forgets that `automation` saw `items`, so they count as new again (items not acted on).
+    async fn release_items(&self, automation: &str, items: Vec<String>) -> Result<(), StoreError> {
+        let _ = (automation, items);
+        Err(unsupported())
+    }
+
+    /// Records a run of an automation.
+    async fn record_automation_run(&self, run: AutomationRun) -> Result<(), StoreError> {
+        let _ = run;
+        Err(unsupported())
+    }
+
+    /// Runs at or after `since`, of one automation or of all, newest first, at most `limit`.
+    async fn automation_runs(
+        &self,
+        automation: Option<&str>,
+        since: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<AutomationRun>, StoreError> {
+        let _ = (automation, since, limit);
+        Err(unsupported())
+    }
 }

@@ -184,6 +184,60 @@ impl Mcp {
 }
 
 #[tokio::test]
+async fn read_only_runs_cannot_change_memory_or_tasks() {
+    let (_dir, k) = bundle();
+    let stop = CancellationToken::new();
+    k.start_mcp(stop.clone()).await.unwrap();
+    let grant = k
+        .grant(
+            &who("u1", "r1"),
+            &okbot_core::RunInfo {
+                tools: okbot_core::ToolPolicy::McpOnly,
+                ttl: Duration::from_secs(60),
+                attachments: &[],
+                admin: true,
+                read_only: true,
+            },
+        )
+        .await
+        .unwrap();
+    let mut bot = Mcp::new(&grant);
+    bot.url.clone_from(&grant.mcp[1].url);
+    assert_eq!(bot.initialize().await, 200);
+    let (_, listed) = bot
+        .post(json!({"jsonrpc":"2.0","id":3,"method":"tools/list"}))
+        .await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert_eq!(names, ["memory_list", "attachment_view", "task_list"]);
+    for (tool, args) in [
+        ("memory_save", json!({"text": "evil", "scope": "global"})),
+        ("task_delete", json!({"id": "t-1"})),
+        ("knowledge_add", json!({"title": "x", "text": "y"})),
+    ] {
+        let (_, reply) = bot
+            .post(json!({"jsonrpc":"2.0","id":4,"method":"tools/call",
+                "params":{"name": tool, "arguments": args}}))
+            .await;
+        assert_eq!(reply["result"]["isError"], true, "{tool}: {reply}");
+        assert!(
+            reply.to_string().contains("untrusted data"),
+            "{tool}: {reply}"
+        );
+    }
+    let (_, reply) = bot
+        .post(json!({"jsonrpc":"2.0","id":5,"method":"tools/call",
+            "params":{"name": "memory_list", "arguments": {}}}))
+        .await;
+    assert_ne!(reply["result"]["isError"], true, "{reply}");
+    stop.cancel();
+}
+
+#[tokio::test]
 async fn mcp_tools_respect_the_requester_scope() {
     let (_dir, k) = bundle();
     let stop = CancellationToken::new();
@@ -197,6 +251,7 @@ async fn mcp_tools_respect_the_requester_scope() {
                 ttl: Duration::from_secs(60),
                 attachments: &[],
                 admin: false,
+                read_only: false,
             },
         )
         .await

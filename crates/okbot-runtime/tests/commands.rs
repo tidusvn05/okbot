@@ -98,6 +98,7 @@ fn start(
         signed: true,
         rules: okbot_runtime::McpRules::default(),
         stdio: None,
+        oauth: None,
     }];
     let command = |name: &str, args: &[&str], admins_only| McpCommand {
         name: name.into(),
