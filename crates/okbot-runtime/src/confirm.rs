@@ -95,12 +95,18 @@ async fn ask_shown(
     tool: &str,
     shown: &str,
 ) -> Option<bool> {
-    let allowed = approvers(shared, grant, server.rules.confirm_by);
+    // In an automation's turn the person it runs as decides (ADR 0013).
+    let by = if grant.restricted {
+        ConfirmBy::Requester
+    } else {
+        server.rules.confirm_by
+    };
+    let allowed = approvers(shared, grant, by);
     if allowed.is_empty() {
         tracing::warn!(mcp = %server.server.name, %tool, "no one on this channel can approve the call");
         return Some(false);
     }
-    let who = match server.rules.confirm_by {
+    let who = match by {
         ConfirmBy::Requester => grant.event.author.display_name.clone(),
         ConfirmBy::Admins => "an administrator".to_string(),
     };

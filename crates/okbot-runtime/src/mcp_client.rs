@@ -38,6 +38,8 @@ pub(crate) struct ToolOutput {
     pub(crate) text: String,
     /// The tool reported a failure.
     pub(crate) is_error: bool,
+    /// The tool's `structuredContent`, when it sent one.
+    pub(crate) structured: Option<Value>,
 }
 
 /// One session with an MCP server.
@@ -135,6 +137,7 @@ impl Session {
         Ok(ToolOutput {
             text,
             is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
+            structured: result.get("structuredContent").cloned(),
         })
     }
 

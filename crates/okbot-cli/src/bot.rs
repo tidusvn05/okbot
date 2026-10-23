@@ -208,6 +208,7 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             to,
         });
     }
+    rc.automations = automations(config)?;
     rc.roles = roles(config)?;
     rc.limits = okbot_runtime::Limits {
         turns_per_day: config.limits.turns_per_day,
@@ -221,7 +222,14 @@ pub(crate) fn extra_mcp(
     config: &Config,
     m: &okbot_config::McpSection,
 ) -> anyhow::Result<okbot_runtime::ExtraMcp> {
-    let (token, token_env, stdio) = if m.command.is_empty() {
+    // The agent's variable for its gateway token, for servers whose token it never sees.
+    let gateway_env = format!(
+        "OKBOT_MCP_{}_TOKEN",
+        m.name.to_ascii_uppercase().replace('-', "_")
+    );
+    let (token, token_env, stdio) = if m.auth == okbot_config::McpAuth::Oauth {
+        (okbot_core::Secret::new(String::new()), gateway_env, None)
+    } else if m.command.is_empty() {
         let token = config.secret(&m.token_env)?;
         (token, m.token_env.clone(), None)
     } else {
@@ -234,16 +242,37 @@ pub(crate) fn extra_mcp(
                 Ok((name.clone(), value))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        // The agent's variable for its gateway token; the local server needs no token.
-        let name = format!(
-            "OKBOT_MCP_{}_TOKEN",
-            m.name.to_ascii_uppercase().replace('-', "_")
-        );
         let stdio = okbot_runtime::StdioServer {
             command: m.command.clone(),
             env,
         };
-        (okbot_core::Secret::new(String::new()), name, Some(stdio))
+        (
+            okbot_core::Secret::new(String::new()),
+            gateway_env,
+            Some(stdio),
+        )
+    };
+    let oauth = if m.auth == okbot_config::McpAuth::Oauth {
+        let settings = m.oauth.clone().unwrap_or_default();
+        let client_secret = settings
+            .client_secret_env
+            .as_deref()
+            .map(|name| config.secret(name))
+            .transpose()?;
+        if let Some(secret) = &client_secret {
+            crate::logging::redact(secret);
+        }
+        Some(okbot_runtime::OAuthSettings {
+            credentials: match m.credentials {
+                okbot_config::McpCredentials::Person => okbot_runtime::Credentials::Person,
+                okbot_config::McpCredentials::Shared => okbot_runtime::Credentials::Shared,
+            },
+            client_id: settings.client_id,
+            client_secret,
+            scopes: settings.scopes,
+        })
+    } else {
+        None
     };
     if !token.expose().is_empty() {
         crate::logging::redact(&token);
@@ -259,7 +288,85 @@ pub(crate) fn extra_mcp(
         signed: m.auth == okbot_config::McpAuth::Signed,
         rules: mcp_rules(m)?,
         stdio,
+        oauth,
     })
+}
+
+/// `[[automation]]` for the runtime (ADR 0013).
+pub(crate) fn automations(config: &Config) -> anyhow::Result<Vec<okbot_runtime::Automation>> {
+    use okbot_runtime::{AutomationAction, RunAs, Trigger};
+    config
+        .automations
+        .iter()
+        .map(|a| {
+            let what = || format!("[[automation]] `{}`", a.name);
+            let run_as = config
+                .automation_run_as(a)
+                .map(|value| match value.strip_prefix("person:") {
+                    Some(id) => Ok(RunAs::Person(id.to_string())),
+                    None => okbot_config::parse_account(&value)
+                        .map(|(channel, user)| RunAs::Account(channel, user))
+                        .map_err(anyhow::Error::msg),
+                })
+                .transpose()
+                .with_context(what)?;
+            let trigger = if let Some(every) = &a.every {
+                Trigger::Every(okbot_config::parse_every(every).map_err(anyhow::Error::msg)?)
+            } else if let Some(rule) = &a.schedule {
+                Trigger::Schedule(rule.parse().map_err(anyhow::Error::msg)?)
+            } else {
+                let token = config.secret(&a.token_env)?;
+                crate::logging::redact(&token);
+                Trigger::Webhook(token)
+            };
+            let source = a
+                .source
+                .as_ref()
+                .map(|s| -> anyhow::Result<okbot_runtime::Source> {
+                    let with = serde_json::to_value(&s.with).with_context(what)?;
+                    Ok(okbot_runtime::Source {
+                        mcp: s.mcp.clone(),
+                        tool: s.tool.clone(),
+                        with: with.as_object().cloned().unwrap_or_default(),
+                        items: s.items.clone(),
+                        id: s.id.clone(),
+                    })
+                })
+                .transpose()?;
+            let to =
+                a.to.iter()
+                    .map(|t| t.parse())
+                    .collect::<Result<Vec<okbot_core::NotifyTo>, _>>()
+                    .with_context(what)?;
+            let (action, default_runs) = match (&a.text, &a.prompt) {
+                (Some(template), _) => (
+                    AutomationAction::Text {
+                        template: template.clone(),
+                        to,
+                    },
+                    200,
+                ),
+                (None, Some(prompt)) => (
+                    AutomationAction::Prompt {
+                        prompt: prompt.clone(),
+                        to: to.into_iter().next(),
+                    },
+                    24,
+                ),
+                (None, None) => bail!("{}: no action", what()),
+            };
+            Ok(okbot_runtime::Automation {
+                name: a.name.clone(),
+                run_as,
+                trigger,
+                source,
+                action,
+                max_runs_per_day: a.max_runs_per_day.unwrap_or(default_runs),
+                max_items: usize::try_from(a.max_items).unwrap_or(20),
+                paused: a.paused,
+            })
+        })
+        .collect()
 }
 
 /// `[roles]` for the runtime.
@@ -644,6 +751,7 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     );
     let chain = agent_chain(config)?;
     let knowledge = knowledge(config, stop).await?;
+    let connector = crate::mcp::connector(config, store.clone())?;
     let mut builder = Runtime::builder(runtime_config(config)?)
         .store(store.clone())
         .agent(Arc::new(chain))
@@ -684,6 +792,9 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
             builder = builder.http(HttpOptions::new(SocketAddr::from(([127, 0, 0, 1], 0))));
         }
         (None, false) => {}
+    }
+    if let Some(connector) = connector {
+        builder = builder.oauth(connector);
     }
     for channel in channels {
         builder = builder.channel(channel);

@@ -287,6 +287,7 @@ async fn grants_include_the_memory_server() {
                 ttl: Duration::from_secs(60),
                 attachments: &[],
                 admin: false,
+                read_only: false,
             },
         )
         .await

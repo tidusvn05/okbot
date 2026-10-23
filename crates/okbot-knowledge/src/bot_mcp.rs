@@ -225,6 +225,9 @@ async fn fetch_image(
     ))
 }
 
+/// The tools a read-only run may call.
+const READ_TOOLS: &[&str] = &["memory_list", "task_list", "attachment_view"];
+
 impl BotServer {
     async fn call(
         &self,
@@ -235,6 +238,13 @@ impl BotServer {
         let context = token
             .and_then(|t| self.tokens.context(t))
             .ok_or_else(|| "this run has no access to memory".to_string())?;
+        if context.read_only && !READ_TOOLS.contains(&name) {
+            return Err(
+                "This run reads untrusted data, so it cannot change memory, tasks, notes or \
+                 knowledge. Tell the user what you would change instead."
+                    .into(),
+            );
+        }
         let who = &context.who;
         let k = &self.knowledge;
         match name {
@@ -328,9 +338,21 @@ impl ServerHandler for BotServer {
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(tools())))
+        let read_only = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|p| p.headers.get(axum::http::header::AUTHORIZATION))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .and_then(|t| self.tokens.context(t.trim()))
+            .is_some_and(|c| c.read_only);
+        let mut tools = tools();
+        if read_only {
+            tools.retain(|t| READ_TOOLS.contains(&t.name.as_ref()));
+        }
+        std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
 
     fn call_tool(

@@ -8,9 +8,11 @@
 //!
 //! The runtime depends only on ports from `okbot-core`; `okbot` provides the adapters.
 
+mod automation;
 mod command;
 pub mod config;
 mod confirm;
+mod connect;
 mod context;
 mod dispatch;
 mod gateway;
@@ -22,6 +24,7 @@ mod mcp_client;
 mod mcp_command;
 mod metrics;
 mod notify;
+pub mod oauth;
 mod permission;
 mod policy;
 mod roles;
@@ -44,9 +47,10 @@ use okbot_core::{
 use tokio::sync::{Notify, mpsc};
 
 pub use config::{
-    ArgKind, CommandArg, Confirm, ConfirmBy, ExtraMcp, Limits, McpCommand, McpRules, Member,
-    NotifyRoute, OWNER, ROLE_ADMINS, ROLE_EVERYONE, Restrict, Roles, RuntimeConfig, ScheduleConfig,
-    StdioServer,
+    ArgKind, Automation, AutomationAction, CommandArg, Confirm, ConfirmBy, Credentials, ExtraMcp,
+    Limits, McpCommand, McpRules, Member, NotifyRoute, OAuthSettings, OWNER, ROLE_ADMINS,
+    ROLE_EVERYONE, Restrict, Roles, RunAs, RuntimeConfig, ScheduleConfig, Source, StdioServer,
+    Trigger,
 };
 pub use http::HttpOptions;
 pub use roles::{MAX_GRANT, parse_duration};
@@ -135,6 +139,8 @@ pub(crate) struct Shared {
     pub(crate) notified: notify::Recent,
     /// The loopback gateway to `[[mcp]]` servers.
     pub(crate) gateway: Arc<gateway::Gateway>,
+    /// OAuth credentials of `[[mcp]] auth = "oauth"` servers.
+    pub(crate) oauth: Option<Arc<oauth::Connector>>,
 }
 
 impl Shared {
@@ -244,9 +250,16 @@ pub struct RuntimeBuilder {
     clock: Arc<dyn Clock>,
     channels: Vec<Arc<dyn Channel>>,
     http: Option<HttpOptions>,
+    oauth: Option<Arc<oauth::Connector>>,
 }
 
 impl RuntimeBuilder {
+    /// Sets the OAuth connector (needed by `[[mcp]] auth = "oauth"` servers).
+    pub fn oauth(mut self, connector: Arc<oauth::Connector>) -> Self {
+        self.oauth = Some(connector);
+        self
+    }
+
     /// Sets the conversation store (required).
     pub fn store(mut self, store: Arc<dyn ConversationStore>) -> Self {
         self.store = Some(store);
@@ -332,6 +345,7 @@ impl RuntimeBuilder {
             interact_url: std::sync::OnceLock::new(),
             notified: crate::notify::Recent::default(),
             gateway: Arc::default(),
+            oauth: self.oauth,
         });
         Ok(Runtime {
             shared: shared.clone(),
@@ -415,6 +429,7 @@ impl Runtime {
             clock: Arc::new(SystemClock),
             channels: Vec::new(),
             http: None,
+            oauth: None,
         }
     }
 
@@ -467,13 +482,17 @@ impl Runtime {
         }
         let sweep = http.is_some() || !shared.config.mcp.is_empty();
         if let Some(options) = http {
-            let server = http::serve(options, shared.clone(), channel_stop.clone())
+            let server = http::serve(options, shared.clone(), sink.clone(), channel_stop.clone())
                 .await
                 .map_err(|(addr, source)| RunError::Http { addr, source })?;
             tasks.spawn(server);
         }
         if sweep {
             tasks.spawn(interact::sweep(shared.clone(), channel_stop.clone()));
+        }
+        if !shared.config.automations.is_empty() {
+            let sink: Arc<dyn InboundSink> = sink.clone();
+            tasks.spawn(automation::run(shared.clone(), sink, channel_stop.clone()));
         }
         if shared.tasks.is_some() && shared.config.schedule.enabled {
             let sink: Arc<dyn InboundSink> = sink.clone();

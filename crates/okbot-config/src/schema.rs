@@ -31,6 +31,8 @@ pub(crate) struct File {
     pub(crate) roles: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub(crate) limits: LimitsSection,
+    #[serde(default)]
+    pub(crate) automation: Vec<AutomationSection>,
 }
 
 /// `[limits]`: what one person may use over a rolling 24 hours (ADR 0011). Administrators are
@@ -57,7 +59,8 @@ pub struct McpSection {
     /// Endpoint, `http://` or `https://` (or `command` for a local server).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
-    /// Variable (environment or `.env`) holding the bearer token the server expects (with `url`).
+    /// Variable (environment or `.env`) holding the bearer token the server expects (with `url`;
+    /// not with `auth = "oauth"`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub token_env: String,
     /// A local server speaking MCP over stdio, started for each agent session:
@@ -95,6 +98,115 @@ pub struct McpSection {
     /// Who approves them.
     #[serde(default)]
     pub confirm_by: ConfirmBy,
+    /// With `auth = "oauth"`: whose account the server reads (ADR 0012).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub credentials: McpCredentials,
+    /// With `auth = "oauth"`: a client registered by hand, for servers without dynamic client
+    /// registration, and the scopes to ask for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthSection>,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+/// Whose credentials an `auth = "oauth"` server uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpCredentials {
+    /// Each person connects their own account (`/connect`); used only in their direct chats and
+    /// `personal` rooms.
+    #[default]
+    Person,
+    /// An administrator connects one account for everyone the server's rules allow.
+    Shared,
+}
+
+/// `[mcp.oauth]`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OAuthSection {
+    /// A client id registered with the provider (otherwise okbot registers itself).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// Variable holding that client's secret, for confidential clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret_env: Option<String>,
+    /// Scopes to ask for; empty: what the server's metadata lists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+}
+
+/// `[[automation]]`: when something happens, read a source and act (ADR 0013).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationSection {
+    /// The name in logs, `okbot automation` and `/automation/<name>`: a-z, 0-9, `-` and `_`.
+    pub name: String,
+    /// Whose credentials, roles and direct chat it uses: `person:<id>` or an account
+    /// `platform:instance/user-id`. Defaults to the owner on a personal bot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_as: Option<String>,
+    /// Poll the source this often (`5m`, `1h`, `1d`) and act on new items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub every: Option<String>,
+    /// Act at these times (`weekdays 08:00`, `daily 18:30`, `every 3h`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
+    /// Act when a program posts to `/automation/<name>` with `token_env`'s bearer token.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub webhook: bool,
+    /// Variable holding the webhook's bearer token.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_env: String,
+    /// The tool whose result is the input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceSection>,
+    /// Send this text (Markdown; `{{item}}`, `{{item.field}}`, `{{count}}`, `{{name}}`) to `to`,
+    /// without an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Ask the agent this, as `run_as`, with the items appended as data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Where it goes, as `[[notify]] to` targets (a prompt: at most one; default `run_as`'s
+    /// direct chat).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<String>,
+    /// Runs that act, per day (default 24 with a prompt, 200 with a text).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_runs_per_day: Option<u32>,
+    /// New items acted on per run (1 to 100); more wait for the next run.
+    #[serde(default = "default_max_items")]
+    pub max_items: u32,
+    /// Off until set to false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paused: bool,
+}
+
+fn default_max_items() -> u32 {
+    20
+}
+
+/// `[automation.source]`: one `[[mcp]]` tool, called without the agent.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceSection {
+    /// The `[[mcp]]` server (an HTTP one).
+    pub mcp: String,
+    /// The tool.
+    pub tool: String,
+    /// Its arguments.
+    #[serde(default)]
+    pub with: BTreeMap<String, toml::Value>,
+    /// JSON pointer to the array of items in the result (`/messages`); unset: the whole text is
+    /// one item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items: Option<String>,
+    /// JSON pointer to an item's id (`/id`); unset: the item's content identifies it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 /// `[[mcp.restrict]]`: tools matching `tools` may only be called by `roles`.
@@ -140,6 +252,8 @@ pub enum McpAuth {
     Bearer,
     /// `Authorization: Bearer okbot1.<claims>.<signature>`: who asked, where, until when.
     Signed,
+    /// OAuth 2.1 as the MCP specification describes it: people connect with `/connect`.
+    Oauth,
 }
 
 /// `[[command]]`: a chat command that calls one tool of an `[[mcp]]` server directly, without the
@@ -373,6 +487,10 @@ pub struct HttpSection {
     /// Listen address (`127.0.0.1:8787`). Needed for webhook channels.
     #[serde(default)]
     pub listen: Option<String>,
+    /// The public HTTPS address of `listen` behind a reverse proxy (`https://bot.example.com`),
+    /// for OAuth callbacks (`/oauth/callback`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 /// `[channels.<platform>.<instance>]`.

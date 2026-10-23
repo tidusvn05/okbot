@@ -281,6 +281,7 @@ mod tests {
             policy: "web",
             attachments: Vec::new(),
             admin: false,
+            read_only: false,
         };
         let args = json!({"title": "Wifi", "text": "The guest wifi password is on the fridge."});
         let Value::Object(args) = args else {

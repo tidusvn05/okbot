@@ -662,6 +662,9 @@ read on demand.
 | `pairing_codes` | one-time owner pairing codes (personal profile) |
 | `task_fires` | (task, firing time) → sending, sent, failed, missed; attempts (§5.6) |
 | `direct_chats` | (channel, user) → their latest direct conversation, where reminders go (§5.6) |
+| `sealed_secrets` | OAuth tokens and client registrations of `[[mcp]]` servers, sealed with `state/secrets.key` (ADR 0012) |
+| `automation_items` | (automation, item id) → last seen: what a polled source already reported (ADR 0013) |
+| `automation_runs` | automation, time, items, action, error (ADR 0013) |
 
 A retention policy (`retention_days`) applies because this is users' chat data.
 
@@ -732,6 +735,23 @@ roles = ["ops"]
 deny_tools = ["drop_*"]
 confirm = "destructive"
 
+[[mcp]]                              # a service with OAuth: each person runs /connect (ADR 0012)
+name = "notion"
+url = "https://mcp.notion.com/mcp"
+auth = "oauth"                       # credentials = "person" (default) | "shared"
+confirm = "destructive"
+
+[[automation]]                       # act on what is new (ADR 0013)
+name = "boss-mail"
+every = "5m"                         # or schedule = "weekdays 08:00", or webhook = true
+run_as = "person:lan"
+prompt = "Summarise each new mail in two lines."
+
+[automation.source]
+mcp = "google"
+tool = "search_gmail_messages"
+with = { query = "is:unread from:boss@example.com newer_than:1d" }
+
 [schedule]                           # reminders and routines (§5.6, §5.7)
 enabled = true
 deliver_to = "origin"                # origin | a channel id such as "discord:main"
@@ -758,6 +778,8 @@ okbot kb add <file|url> | kb inbox   # save documents to knowledge/inbox (§5.8)
 okbot task list|add|done|rm|pause|resume [--upcoming]   # tasks, reminders, routines (§5.6)
 okbot role list|grant|revoke  # temporary roles for [[mcp]] rules (ADR 0011)
 okbot audit [--since 24h]     # [[mcp]] tool calls: who, what, allowed or refused
+okbot mcp list|add|login|logout   # servers, presets (notion, google-workspace, linear), OAuth accounts (ADR 0012)
+okbot automation list         # [[automation]] triggers, actions and latest runs (ADR 0013)
 ```
 
 Agent-first like okbase and dcbot: `okbot doctor --json`, `okbot help --agent`.

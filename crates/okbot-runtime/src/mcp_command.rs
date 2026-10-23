@@ -71,7 +71,11 @@ async fn execute(
     if matches!(rest, "help" | "?" | "-h" | "--help") {
         return describe(command, event.locale.as_deref());
     }
-    let token = crate::identity::token_for(shared, extra, event, admin, Some(&command.name));
+    let person = shared.person_key(event).await;
+    let token = match token(shared, command, extra, event, &person, admin).await {
+        Ok(token) => token,
+        Err(refusal) => return refusal,
+    };
     let http = reqwest::Client::new();
     let started = std::time::Instant::now();
     let result = mcp_client::with_session(
@@ -113,7 +117,7 @@ async fn execute(
             okbot_core::ToolCallRecord {
                 run_id: None,
                 command: Some(command.name.clone()),
-                person: shared.person_key(event).await,
+                person,
                 conversation: event.conversation.clone(),
                 server: extra.server.name.clone(),
                 tool: command.tool.clone(),
@@ -136,6 +140,39 @@ async fn execute(
             tracing::warn!(command = %command.name, %error, "command failed");
             format!("⚠️ `/{}` failed: {error}", command.name)
         }
+    }
+}
+
+/// The credential `extra` gets for `command`, or why there is none.
+async fn token(
+    shared: &Shared,
+    command: &McpCommand,
+    extra: &crate::ExtraMcp,
+    event: &InboundEvent,
+    person: &str,
+    admin: bool,
+) -> Result<okbot_core::Secret<String>, String> {
+    use crate::connect::Upstream;
+    let room = shared
+        .config
+        .room(&event.conversation.channel, &event.conversation.room);
+    let personal = event.is_direct || room.personal;
+    let (name, server) = (&command.name, &extra.server.name);
+    match crate::connect::upstream(shared, extra, event, person, personal, admin, Some(name)).await
+    {
+        Upstream::Token(token) => Ok(token),
+        Upstream::NotConnected if extra.personal_credentials() => Err(format!(
+            "`/{name}` uses your `{server}` account: send `/connect {server}` in a direct chat \
+             with me first."
+        )),
+        Upstream::NotConnected => Err(format!(
+            "`/{name}` needs the bot's `{server}` account, which an administrator has not \
+             connected yet."
+        )),
+        Upstream::NotHere => Err(format!(
+            "`/{name}` uses your own `{server}` account, so it works only in a direct chat with me."
+        )),
+        Upstream::Unavailable => Err(format!("⚠️ `/{name}` cannot reach `{server}` now.")),
     }
 }
 

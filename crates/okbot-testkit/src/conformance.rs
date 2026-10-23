@@ -12,8 +12,9 @@
 use std::time::Duration;
 
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, MessageRole, RoleGrant,
-    RunId, TokenUsage, ToolCallRecord, ToolDecision, ToolPolicy, Usage, UserId,
+    AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore,
+    MessageRole, RoleGrant, RunId, TokenUsage, ToolCallRecord, ToolDecision, ToolPolicy, Usage,
+    UserId,
 };
 
 use crate::{ManualClock, bot_message, conversation, user_message};
@@ -30,6 +31,8 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     fires_and_direct_chats(store, clock).await;
     usage_and_tool_calls(store, clock).await;
     role_grants(store, clock).await;
+    sealed_secrets(store).await;
+    automations(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -229,6 +232,115 @@ async fn usage_and_tool_calls(store: &dyn ConversationStore, clock: &ManualClock
 }
 
 /// Temporary roles: listed until they expire, replaced by a new grant, revocable.
+async fn sealed_secrets(store: &dyn ConversationStore) {
+    let get = |subject: &'static str| store.sealed("oauth-token", "notion", subject);
+    assert_eq!(get("person:lan").await.expect("sealed"), None);
+    store
+        .set_sealed("oauth-token", "notion", "person:lan", vec![1, 2])
+        .await
+        .expect("set");
+    store
+        .set_sealed("oauth-token", "notion", "person:lan", vec![3])
+        .await
+        .expect("replace");
+    store
+        .set_sealed("oauth-client", "notion", "https://as", vec![9])
+        .await
+        .expect("set");
+    assert_eq!(get("person:lan").await.expect("sealed"), Some(vec![3]));
+    let entries = store.sealed_entries("oauth-token").await.expect("entries");
+    assert_eq!(entries.len(), 1, "one entry per kind, server and subject");
+    assert_eq!(
+        (entries[0].server.as_str(), entries[0].subject.as_str()),
+        ("notion", "person:lan")
+    );
+    assert!(
+        store
+            .delete_sealed("oauth-token", "notion", "person:lan")
+            .await
+            .expect("delete")
+    );
+    assert!(
+        !store
+            .delete_sealed("oauth-token", "notion", "person:lan")
+            .await
+            .expect("delete")
+    );
+    assert_eq!(
+        store
+            .sealed("oauth-client", "notion", "https://as")
+            .await
+            .expect("sealed"),
+        Some(vec![9]),
+        "other kinds stay"
+    );
+}
+
+async fn automations(store: &dyn ConversationStore, clock: &ManualClock) {
+    let items = |ids: &[&str]| ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let new = store
+        .claim_items("mail", items(&["a", "b"]))
+        .await
+        .expect("claim");
+    assert_eq!(new, ["a", "b"]);
+    let new = store
+        .claim_items("mail", items(&["b", "c", "a"]))
+        .await
+        .expect("claim");
+    assert_eq!(new, ["c"], "only unseen items, in order");
+    let other = store
+        .claim_items("other", items(&["a"]))
+        .await
+        .expect("claim");
+    assert_eq!(other, ["a"], "each automation has its own items");
+    store
+        .release_items("mail", items(&["c", "zz"]))
+        .await
+        .expect("release");
+    let again = store
+        .claim_items("mail", items(&["a", "c"]))
+        .await
+        .expect("claim");
+    assert_eq!(again, ["c"], "released items are new again");
+    let run = |name: &str, items: u32| AutomationRun {
+        automation: name.into(),
+        at: clock.now(),
+        items,
+        action: "text".into(),
+        error: None,
+    };
+    store
+        .record_automation_run(run("mail", 2))
+        .await
+        .expect("record");
+    clock.advance(Duration::from_secs(60));
+    store
+        .record_automation_run(AutomationRun {
+            error: Some("boom".into()),
+            ..run("mail", 0)
+        })
+        .await
+        .expect("record");
+    store
+        .record_automation_run(run("other", 1))
+        .await
+        .expect("record");
+    let since = clock.now() - jiff::SignedDuration::from_secs(120);
+    let mail = store
+        .automation_runs(Some("mail"), since, 10)
+        .await
+        .expect("runs");
+    assert_eq!(mail.len(), 2);
+    assert_eq!(mail[0].error.as_deref(), Some("boom"), "newest first");
+    let all = store.automation_runs(None, since, 2).await.expect("runs");
+    assert_eq!(all.len(), 2, "limited");
+    let recent = store
+        .automation_runs(None, clock.now(), 10)
+        .await
+        .expect("runs");
+    assert_eq!(recent.len(), 2, "only runs since the given time");
+}
+
 async fn role_grants(store: &dyn ConversationStore, clock: &ManualClock) {
     let grant = |role: &str, account: &str, secs: i64| RoleGrant {
         role: role.into(),

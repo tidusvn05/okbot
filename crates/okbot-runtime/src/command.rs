@@ -48,6 +48,12 @@ pub(crate) enum Command {
     Grant(String),
     /// `/revoke <role> <account>`: end a grant (admins).
     Revoke(String),
+    /// `/connect [server]`: connect an account of an OAuth `[[mcp]]` server (ADR 0012).
+    Connect(String),
+    /// `/disconnect <server>`: forget it.
+    Disconnect(String),
+    /// `/connections`: which accounts are connected.
+    Connections,
 }
 
 impl Command {
@@ -80,6 +86,9 @@ impl Command {
             "roles" => Some(Self::Roles),
             "grant" => Some(Self::Grant(rest)),
             "revoke" => Some(Self::Revoke(rest)),
+            "connect" => Some(Self::Connect(rest)),
+            "disconnect" => Some(Self::Disconnect(rest)),
+            "connections" => Some(Self::Connections),
             _ => None,
         }
     }
@@ -90,7 +99,14 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
     match command {
         Command::Help => {
             let who = crate::permission::Who::new(s.roles_of(event).await, event);
+            let accounts = if s.config.mcp.iter().any(|m| m.oauth.is_some()) {
+                "\n\nAccounts: `/connections` lists them, `/connect <name>` connects yours (in a \
+                 direct chat), `/disconnect <name>` forgets it."
+            } else {
+                ""
+            };
             help_text(&s.config.bot_name)
+                + accounts
                 + &crate::mcp_command::help(s, &who, event.locale.as_deref())
         }
         Command::WhoAmI => whoami(s, event).await,
@@ -125,6 +141,9 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
         Command::Roles | Command::Grant(_) | Command::Revoke(_) => {
             crate::roles::execute(s, command, event).await
         }
+        Command::Connect(name) => crate::connect::connect(s, &name, event).await,
+        Command::Disconnect(name) => crate::connect::disconnect(s, &name, event).await,
+        Command::Connections => crate::connect::connections(s, event).await,
     }
 }
 

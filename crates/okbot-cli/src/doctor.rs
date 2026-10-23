@@ -152,7 +152,7 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
     };
     let result = async {
         let grant = knowledge
-            .grant(&who, &okbot_core::RunInfo { tools: okbot_core::ToolPolicy::Web, ttl: Duration::from_secs(30), attachments: &[], admin: false })
+            .grant(&who, &okbot_core::RunInfo { tools: okbot_core::ToolPolicy::Web, ttl: Duration::from_secs(30), attachments: &[], admin: false, read_only: false })
             .await?;
         let server = grant.mcp.first().ok_or_else(|| anyhow::anyhow!("no MCP endpoint"))?;
         let status = reqwest::Client::new()
@@ -515,10 +515,107 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
             }
             check_reminders(&config, &store, &mut r).await;
             check_notify(&config, &store, &mut r).await;
+            check_oauth(&config, &store, &mut r).await;
+            check_automations(&config, &store, &mut r).await;
         }
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// `auth = "oauth"` servers (ADR 0012): where people connect, and whose accounts are connected.
+async fn check_oauth(config: &Config, store: &okbot_store::SqliteStore, r: &mut Report) {
+    use okbot_core::ConversationStore as _;
+    let servers: Vec<&okbot_config::McpSection> = config
+        .mcp
+        .iter()
+        .filter(|m| m.auth == okbot_config::McpAuth::Oauth)
+        .collect();
+    if servers.is_empty() {
+        return;
+    }
+    match crate::mcp::link_redirect(config) {
+        Some(url) if url.starts_with("https://") => r.add("oauth callback", Status::Ok, url),
+        Some(url) => r.add(
+            "oauth callback",
+            Status::Warn,
+            format!(
+                "{url}: only a browser on this machine reaches it; set [http] public_url for \
+                 people elsewhere, or use `okbot mcp login`"
+            ),
+        ),
+        None => r.add(
+            "oauth callback",
+            Status::Warn,
+            "no [http] listen: `/connect` cannot work; use `okbot mcp login <server>`",
+        ),
+    }
+    if let Err(error) = crate::mcp::secret_key(config) {
+        r.add("oauth key", Status::Fail, error.to_string());
+    }
+    let connected = store
+        .sealed_entries("oauth-token")
+        .await
+        .unwrap_or_default();
+    for m in servers {
+        let who: Vec<&str> = connected
+            .iter()
+            .filter(|e| e.server == m.name)
+            .map(|e| e.subject.as_str())
+            .collect();
+        let label = format!("mcp {}", m.name);
+        if who.is_empty() {
+            r.add(
+                &label,
+                Status::Warn,
+                format!("no account connected yet (`/connect {}`)", m.name),
+            );
+        } else {
+            r.add(&label, Status::Ok, format!("connected: {}", who.join(", ")));
+        }
+    }
+}
+
+/// `[[automation]]` (ADR 0013): webhook tokens, and the last run of each.
+async fn check_automations(config: &Config, store: &okbot_store::SqliteStore, r: &mut Report) {
+    use okbot_core::ConversationStore as _;
+    for a in &config.automations {
+        let label = format!("automation {}", a.name);
+        if a.webhook && config.secret(&a.token_env).is_err() {
+            r.add(
+                &label,
+                Status::Fail,
+                format!(
+                    "{} is not set (callers send it as a bearer token)",
+                    a.token_env
+                ),
+            );
+            continue;
+        }
+        if a.paused {
+            r.add(&label, Status::Ok, "paused");
+            continue;
+        }
+        let last = store
+            .automation_runs(Some(&a.name), jiff::Timestamp::UNIX_EPOCH, 1)
+            .await
+            .ok()
+            .and_then(|runs| runs.into_iter().next());
+        match last {
+            None => r.add(&label, Status::Ok, "no runs yet"),
+            Some(run) => match run.error {
+                Some(error) => r.add(&label, Status::Warn, format!("last run failed: {error}")),
+                None => r.add(
+                    &label,
+                    Status::Ok,
+                    format!(
+                        "last run {}: {} ({} item(s))",
+                        run.at, run.action, run.items
+                    ),
+                ),
+            },
+        }
+    }
 }
 
 /// Platforms whose bots open a direct chat themselves (the others need a first message).

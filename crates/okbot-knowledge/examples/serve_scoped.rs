@@ -39,6 +39,7 @@ async fn main() {
                 ttl: Duration::from_secs(3600),
                 attachments: &[],
                 admin: false,
+                read_only: false,
             },
         )
         .await

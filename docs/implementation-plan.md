@@ -208,6 +208,7 @@ runtime.run(shutdown_token).await
 | **v0.3.0** | P11 | **Discord** and **Slack** |
 | **v0.4.0** | P12–P13 | Session resume, progressive replies, fallback metrics, attachments |
 | **v0.5.0** | P15–P20 | Personal assistant: tasks, reminders, snooze, routines, notes, saving documents; **Telegram** |
+| **v0.10.0** | P21–P22 | **Services** over OAuth MCP (Gmail, Drive, Sheets, Notion, Linear) with per-person accounts; **automations** (poll, schedule, webhook → text or restricted agent turn) |
 | **v1.0.0** | P14 | Stable `okbot-core` SDK and bridge protocol (crates are on crates.io from v0.5.0) |
 
 ---
@@ -554,6 +555,48 @@ runs on Discord. `okbot memory edit` opens the file in `$EDITOR`. User guide: `d
 
 Status (2026-10-14): done in code and tests against a fake Bot API; real-bot smoke test pending
 (release checklist).
+
+### P21 — Services over OAuth MCP (ADR 0012)
+
+1. `ConversationStore`: sealed secrets (`sealed_secrets`, schema 5) as default methods, so other
+   stores keep compiling; SQLite and testkit implementations, conformance.
+2. `okbot_runtime::oauth::Connector`: discovery from the 401 challenge (protected resource and
+   authorization server metadata), dynamic client registration, PKCE S256 with `resource`, token
+   refresh under a per-credential lock, ChaCha20-Poly1305 sealing with `state/secrets.key`.
+3. `[[mcp]] auth = "oauth"`, `credentials = "person" | "shared"`, `[mcp.oauth]`; `[http] public_url`;
+   person credentials only in direct chats and `personal` rooms; not-connected servers named in the
+   prompt; `[[command]]` uses the same credentials.
+4. Chat: `/connect` (link, then the code the callback page shows), `/disconnect`, `/connections`,
+   `GET /oauth/callback`. CLI: `okbot mcp
+   list|add|login|logout` with presets (notion, google-workspace, linear); `doctor` checks.
+
+Exit criteria: a person connects a hosted MCP server from a direct chat and the agent calls it with
+their token; the token is refreshed; a group never gets it.
+
+Status (2026-10-23): done in code and tests against a fake MCP server that is its own
+authorization server (discovery, registration, PKCE, callback and code, rotation, transient and
+refused refresh). An independent review led to the code step, `invalid_grant`-only forgetting and
+read-only bot tools in automation turns. Notion's
+and Linear's live metadata match the discovery path (read-only check); connecting a real account and
+the `workspace-mcp` setup are pending (release checklist).
+
+### P22 — Automations (ADR 0013)
+
+1. `ConversationStore`: `claim_items`, automation runs (`automation_items`, `automation_runs`).
+2. `[[automation]]`: `every`, `schedule` (task repeat rules), `webhook` + `token_env`; source (one
+   `[[mcp]]` tool with `run_as`'s credentials; `items`/`id` JSON pointers); `text` + `to` or `prompt`.
+3. Runtime: polling and schedule loops, first poll primes, daily limits, `POST /automation/<name>`,
+   prompts as restricted turns (`mcp-only`, approval for calls not marked read-only, no batching,
+   one history line, emptied session), a once-a-day notice when an account is not connected.
+4. CLI: `okbot automation list`; `doctor` shows the last run of each.
+
+Exit criteria: "report new mail from my manager" runs from configuration alone, repeats nothing
+after a restart, and its data never reaches a later turn.
+
+Status (2026-10-23): done in code and tests (polling to text, polling to a restricted prompt turn,
+webhook with repeats and the daily limit, items past the limit on the next poll, gateway approval
+in an automation turn, read-only bot tools). A run against a
+real Gmail through `workspace-mcp` is pending.
 
 ---
 

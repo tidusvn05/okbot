@@ -62,6 +62,9 @@ pub(crate) struct Grant {
     pub(crate) done: CancellationToken,
     /// Local (stdio) server processes of this turn, by session id: `(server, process)`.
     pub(crate) local: Mutex<HashMap<String, (String, Arc<Process>)>>,
+    /// An automation's turn (ADR 0013): calls of tools not marked read-only wait for the
+    /// requester's approval, whatever the server's `confirm` says.
+    pub(crate) restricted: bool,
 }
 
 /// Ends a [`Grant`] when dropped: its token stops working and pending approvals close.
@@ -614,9 +617,16 @@ async fn call(
             &tool_error(id, "This tool is not available to this person here."),
         );
     }
-    if server.rules.confirm != crate::config::Confirm::Never {
+    // An automation's turn asks before every call not marked read-only, whatever the server's
+    // rules say (ADR 0013).
+    if grant.restricted || server.rules.confirm != crate::config::Confirm::Never {
         let hints = annotations(shared, server, token, &tool).await;
-        if permission::needs_confirmation(&server.rules, hints.as_ref()) {
+        let ask = if grant.restricted {
+            permission::not_read_only(hints.as_ref())
+        } else {
+            permission::needs_confirmation(&server.rules, hints.as_ref())
+        };
+        if ask {
             let arguments = message
                 .pointer("/params/arguments")
                 .cloned()

@@ -127,18 +127,22 @@ impl Drop for Typing {
 }
 
 /// The knowledge servers plus the `[[mcp]]` servers this requester may use here (agents with
-/// MCP only), reached through the gateway with a token bound to this turn (ADR 0011).
+/// MCP only), reached through the gateway with a token bound to this turn (ADR 0011). OAuth
+/// servers without a connected account are left out and named in `not_connected`.
 async fn with_extra_mcp(
     shared: &Shared,
     grant: &RunGrant,
     event: &InboundEvent,
     run_id: RunId,
     person: String,
+    personal: bool,
+    restricted: bool,
 ) -> TurnMcp {
     let mut out = TurnMcp {
         servers: grant.mcp.clone(),
         env: grant.env.clone(),
         guard: None,
+        not_connected: Vec::new(),
     };
     let Some(base) = shared.gateway.url().map(str::to_string) else {
         return out;
@@ -147,25 +151,28 @@ async fn with_extra_mcp(
         return out;
     }
     let who = crate::permission::Who::new(shared.roles_of(event).await, event);
-    let servers: Vec<&crate::ExtraMcp> = shared
+    let admin = who.admin();
+    let mut servers: Vec<&crate::ExtraMcp> = Vec::new();
+    let mut upstream = std::collections::HashMap::new();
+    for m in shared
         .config
         .mcp
         .iter()
         .filter(|m| crate::permission::may_use(m, &who))
-        .collect();
+    {
+        use crate::connect::Upstream;
+        match crate::connect::upstream(shared, m, event, &person, personal, admin, None).await {
+            Upstream::Token(token) => {
+                upstream.insert(m.server.name.clone(), token);
+                servers.push(m);
+            }
+            Upstream::NotConnected => out.not_connected.push(m.server.name.clone()),
+            Upstream::NotHere | Upstream::Unavailable => {}
+        }
+    }
     if servers.is_empty() {
         return out;
     }
-    let admin = who.admin();
-    let upstream = servers
-        .iter()
-        .map(|m| {
-            (
-                m.server.name.clone(),
-                crate::identity::token_for(shared, m, event, admin, None),
-            )
-        })
-        .collect();
     let (token, guard) = shared.gateway.issue(crate::gateway::Grant {
         event: event.clone(),
         run_id,
@@ -175,6 +182,7 @@ async fn with_extra_mcp(
         expires: std::time::Instant::now() + shared.config.agent_timeout,
         done: CancellationToken::new(),
         local: std::sync::Mutex::default(),
+        restricted,
     });
     for m in servers {
         out.servers.push(okbot_core::McpServer {
@@ -195,6 +203,8 @@ struct TurnMcp {
     servers: Vec<okbot_core::McpServer>,
     env: Vec<(String, okbot_core::Secret<String>)>,
     guard: Option<crate::gateway::GrantGuard>,
+    /// OAuth servers the requester could use here once connected.
+    not_connected: Vec<String>,
 }
 
 /// The requester used up `[limits]` (administrators never do). A store error lets the turn run.
@@ -255,24 +265,26 @@ async fn answer_batch(
     let typing = Typing::start(shared, event).await;
     store_user_messages(shared, batch).await;
 
-    let room = shared
-        .config
-        .room(&event.conversation.channel, &event.conversation.room);
-    let tools = room.tool_policy.unwrap_or(shared.config.tool_policy);
+    let restricted = crate::automation::is_automation(event);
+    let tools = tool_policy(shared, event, restricted);
     let requester = crate::command::requester(shared, event).await;
     let timeout = shared.config.agent_timeout;
 
     let (knowledge, grant, excerpts) =
-        gather_knowledge(shared, batch, &requester, tools, admin).await;
+        gather_knowledge(shared, batch, &requester, tools, admin, restricted).await;
+    let run_id = run_id();
+    let mcp = with_extra_mcp(
+        shared,
+        &grant,
+        event,
+        run_id.clone(),
+        person.clone(),
+        requester.personal,
+        restricted,
+    )
+    .await;
 
-    let history = shared
-        .store
-        .recent(&event.conversation, shared.config.history_messages)
-        .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "history unavailable");
-            Vec::new()
-        });
+    let history = history_for(shared, event, restricted).await;
     let now = shared.clock.now();
     let new_count = batch.len().min(history.len());
     let input = PromptInput {
@@ -288,9 +300,16 @@ async fn answer_batch(
         timezone: shared.config.timezone.as_deref(),
         history_tokens: shared.config.history_tokens,
         personal: requester.personal,
+        not_connected: &mcp.not_connected,
     };
     let prompt = context::build(&input);
-    let resume = resume_for(shared, event, &input, new_count).await;
+    // An automation turn starts afresh and leaves no session behind, so its data never reaches
+    // later turns.
+    let resume = if restricted {
+        None
+    } else {
+        resume_for(shared, event, &input, new_count).await
+    };
 
     let (progress, live) = match &typing.1 {
         Some(placeholder) => {
@@ -304,8 +323,6 @@ async fn answer_batch(
         }
         None => (None, None),
     };
-    let run_id = run_id();
-    let mcp = with_extra_mcp(shared, &grant, event, run_id.clone(), person.clone()).await;
     let turn = AgentTurn {
         system: prompt.system,
         prompt: prompt.prompt,
@@ -325,14 +342,8 @@ async fn answer_batch(
     drop(grant);
     drop(mcp.guard);
     drop(live);
-    if let Some(Ok(answer)) = &outcome
-        && let Some(session) = &answer.session_id
-        && let Err(error) = shared
-            .store
-            .set_session(&event.conversation, &answer.backend, session)
-            .await
-    {
-        tracing::warn!(%error, "cannot remember the agent session");
+    if let Some(Ok(answer)) = &outcome {
+        remember_session(shared, event, answer, restricted).await;
     }
 
     let record = AgentRunRecord {
@@ -350,6 +361,66 @@ async fn answer_batch(
     finish(shared, event, outcome, record, typing.1.as_ref()).await;
 }
 
+/// The room's tool policy. An automation's data is untrusted: no web, so nothing can be sent
+/// out through a URL.
+fn tool_policy(shared: &Shared, event: &InboundEvent, restricted: bool) -> okbot_core::ToolPolicy {
+    if restricted {
+        return okbot_core::ToolPolicy::McpOnly;
+    }
+    let room = shared
+        .config
+        .room(&event.conversation.channel, &event.conversation.room);
+    room.tool_policy.unwrap_or(shared.config.tool_policy)
+}
+
+/// Keeps the agent's session for the next turn. After an automation the session is emptied, so
+/// the next turn sends the history again and the automation's data stays behind.
+async fn remember_session(
+    shared: &Shared,
+    event: &InboundEvent,
+    answer: &okbot_core::AgentReply,
+    restricted: bool,
+) {
+    let Some(session) = &answer.session_id else {
+        return;
+    };
+    let session = if restricted { "" } else { session.as_str() };
+    if let Err(error) = shared
+        .store
+        .set_session(&event.conversation, &answer.backend, session)
+        .await
+    {
+        tracing::warn!(%error, "cannot remember the agent session");
+    }
+}
+
+/// The conversation's recent messages; for an automation, the last one with its data (the
+/// history keeps a short line, and this turn alone sees the data).
+async fn history_for(
+    shared: &Shared,
+    event: &InboundEvent,
+    restricted: bool,
+) -> Vec<okbot_core::StoredMessage> {
+    let mut history = shared
+        .store
+        .recent(&event.conversation, shared.config.history_messages)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "history unavailable");
+            Vec::new()
+        });
+    let line = crate::automation::history_line(&event.text);
+    if restricted
+        && let Some(stored) = history
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == okbot_core::MessageRole::User && m.text == line)
+    {
+        stored.text.clone_from(&event.text);
+    }
+    history
+}
+
 /// The stored session of this conversation with a prompt holding only the new messages.
 async fn resume_for(
     shared: &Shared,
@@ -361,6 +432,9 @@ async fn resume_for(
         return None;
     }
     let (backend, session) = shared.store.session(&event.conversation).await.ok()??;
+    if session.is_empty() {
+        return None;
+    }
     let new = &input.history[input.history.len() - new_count..];
     let only_new = context::build(&PromptInput {
         history: new,
@@ -378,7 +452,11 @@ async fn store_user_messages(shared: &Shared, batch: &[Tracked]) {
     // Images and files are numbered across the batch, in the order the tools use.
     let mut number = 0;
     for (event, _) in batch {
-        let mut text = event.text.clone();
+        let mut text = if crate::automation::is_automation(event) {
+            crate::automation::history_line(&event.text)
+        } else {
+            event.text.clone()
+        };
         for attachment in &event.attachments {
             match attachment {
                 okbot_core::Attachment::Image { .. } => {
@@ -422,6 +500,7 @@ async fn gather_knowledge(
     requester: &Requester,
     tools: okbot_core::ToolPolicy,
     admin: bool,
+    read_only: bool,
 ) -> (KnowledgeContext, RunGrant, Option<String>) {
     let Some(k) = &shared.knowledge else {
         return (KnowledgeContext::default(), RunGrant::none(), None);
@@ -445,7 +524,8 @@ async fn gather_knowledge(
             tools,
             ttl: shared.config.agent_timeout + Duration::from_secs(30),
             attachments: &attachments,
-            admin,
+            admin: admin && !read_only,
+            read_only,
         };
         let grant = k.grant(requester, &run).await.unwrap_or_else(|error| {
             tracing::warn!(%error, "knowledge tools unavailable");

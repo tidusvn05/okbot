@@ -26,6 +26,8 @@ pub(crate) struct RunContext {
     pub(crate) attachments: Vec<okbot_core::Attachment>,
     /// The requester administers the bot ([`okbot_core::RunInfo::admin`]).
     pub(crate) admin: bool,
+    /// Only reading tools ([`okbot_core::RunInfo::read_only`]).
+    pub(crate) read_only: bool,
 }
 
 /// Issued tokens. Tokens are 256-bit random values, valid until revoked or expired.
@@ -138,6 +140,7 @@ mod tests {
             policy: "web",
             attachments: Vec::new(),
             admin: false,
+            read_only: false,
         }
     }
 

@@ -57,6 +57,7 @@ impl Bot {
             signed: false,
             rules: McpRules::default(),
             stdio: None,
+            oauth: None,
         }];
         config
             .access
@@ -621,6 +622,7 @@ async fn local_servers_run_per_session_with_their_own_environment() {
                 command: vec!["sh".into(), "-c".into(), LOCAL_SERVER.into()],
                 env: vec![("GREETING".into(), Secret::new("hello".into()))],
             }),
+            oauth: None,
         }];
     });
     bot.say("room", "bob", "go").await;
@@ -688,5 +690,66 @@ async fn only_tool_methods_pass_and_long_calls_are_not_asked_about() {
     let audit = bot.store.recorded_tool_calls();
     assert_eq!(audit[0].decision, ToolDecision::Declined);
     assert_eq!(audit[0].error.as_deref(), Some("too long to review"));
+    bot.finish().await;
+}
+
+#[tokio::test]
+async fn automation_turns_ask_before_any_call_that_is_not_read_only() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut listed = tools();
+    // Additive, not destructive: `confirm = "destructive"` alone would let it through.
+    listed
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "send_mail",
+        "inputSchema": {"type": "object"},
+        "annotations": {"readOnlyHint": false, "destructiveHint": false}}));
+    let (server, calls) = support::mcp_server(listed).await;
+    let steps = vec![
+        Step::Call("ops", "status", json!({})),
+        Step::Call("ops", "send_mail", json!({"to": "x@example.com"})),
+    ];
+    // The server's own rules let send_mail through and would ask the admins.
+    let bot = Bot::start(server, steps, channel(), |c| {
+        c.mcp[0].rules.confirm = Confirm::Destructive;
+        c.mcp[0].rules.confirm_by = okbot_runtime::ConfirmBy::Admins;
+    });
+    let mut event = inbound(
+        "fake:test",
+        "room",
+        "bob",
+        "(Automation `x`: 1 new item(s).)",
+    );
+    event.event_id = "automation:x:1:ab".into();
+    bot.channel.inject(event).await;
+    eventually(|| !bot.channel.prompts().is_empty()).await;
+    let prompt = bot.channel.prompts()[0].clone();
+    assert!(prompt.text.contains("send_mail"), "{}", prompt.text);
+    assert_eq!(
+        prompt.allowed,
+        [okbot_core::UserId::new("bob")],
+        "the person it runs as decides"
+    );
+    bot.channel
+        .answer(answer(&prompt, "bob", "deny", "room"))
+        .await;
+    bot.idle().await;
+    let results = bot.agent.results();
+    assert_eq!(
+        results[0],
+        json!("status ok"),
+        "read-only calls need no approval"
+    );
+    assert!(results[1].as_str().unwrap().contains("did not approve"));
+    assert_eq!(calls.lock().unwrap().len(), 1);
+    assert_eq!(bot.agent.turns()[0].tools, okbot_core::ToolPolicy::McpOnly);
+
+    // In a person's own turn the server's rules apply.
+    bot.say("room", "bob", "mail it").await;
+    bot.idle().await;
+    assert_eq!(
+        bot.agent.results()[2..],
+        [json!("status ok"), json!("send_mail ok")]
+    );
     bot.finish().await;
 }

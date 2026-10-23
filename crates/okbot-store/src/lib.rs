@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use okbot_core::{
-    AgentRunRecord, ChannelId, Clock, ConversationKey, ConversationStore, Fire, FireState,
-    MessageRole, NewMessage, RoleGrant, StoreError, StoredMessage, SystemClock, ToolCallRecord,
-    ToolDecision, Usage, UserId, async_trait,
+    AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore, Fire,
+    FireState, MessageRole, NewMessage, RoleGrant, SealedEntry, StoreError, StoredMessage,
+    SystemClock, ToolCallRecord, ToolDecision, Usage, UserId, async_trait,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -689,12 +689,186 @@ impl ConversationStore for SqliteStore {
                 params![cutoff],
             )?;
             removed += tx.execute(
+                "DELETE FROM automation_items WHERE seen_at < ?1",
+                params![cutoff],
+            )?;
+            removed += tx.execute(
+                "DELETE FROM automation_runs WHERE at < ?1",
+                params![cutoff],
+            )?;
+            removed += tx.execute(
                 "DELETE FROM conversations WHERE updated_at < ?1
                  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)",
                 params![cutoff],
             )?;
             tx.commit()?;
             Ok(removed as u64)
+        })
+        .await
+    }
+
+    async fn sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = (kind.to_string(), server.to_string(), subject.to_string());
+        self.with(move |conn, _| {
+            conn.query_row(
+                "SELECT sealed FROM sealed_secrets WHERE kind = ?1 AND server = ?2 AND subject = ?3",
+                params![key.0, key.1, key.2],
+                |row| row.get(0),
+            )
+            .optional()
+        })
+        .await
+    }
+
+    async fn set_sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+        sealed: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let key = (kind.to_string(), server.to_string(), subject.to_string());
+        self.with(move |conn, now| {
+            conn.execute(
+                "INSERT OR REPLACE INTO sealed_secrets (kind, server, subject, sealed, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![key.0, key.1, key.2, sealed, millis(now)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn delete_sealed(
+        &self,
+        kind: &str,
+        server: &str,
+        subject: &str,
+    ) -> Result<bool, StoreError> {
+        let key = (kind.to_string(), server.to_string(), subject.to_string());
+        self.with(move |conn, _| {
+            let removed = conn.execute(
+                "DELETE FROM sealed_secrets WHERE kind = ?1 AND server = ?2 AND subject = ?3",
+                params![key.0, key.1, key.2],
+            )?;
+            Ok(removed > 0)
+        })
+        .await
+    }
+
+    async fn sealed_entries(&self, kind: &str) -> Result<Vec<SealedEntry>, StoreError> {
+        let kind = kind.to_string();
+        self.with(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT kind, server, subject, updated_at FROM sealed_secrets WHERE kind = ?1
+                 ORDER BY server, subject",
+            )?;
+            let rows = stmt.query_map(params![kind], |row| {
+                Ok(SealedEntry {
+                    kind: row.get(0)?,
+                    server: row.get(1)?,
+                    subject: row.get(2)?,
+                    updated_at: from_millis(row.get(3)?),
+                })
+            })?;
+            rows.collect()
+        })
+        .await
+    }
+
+    async fn claim_items(
+        &self,
+        automation: &str,
+        items: Vec<String>,
+    ) -> Result<Vec<String>, StoreError> {
+        let automation = automation.to_string();
+        self.with(move |conn, now| {
+            let tx = conn.transaction()?;
+            let mut new = Vec::new();
+            for item in items {
+                let inserted = tx.execute(
+                    "INSERT OR IGNORE INTO automation_items (automation, item, seen_at)
+                     VALUES (?1, ?2, ?3)",
+                    params![automation, item, millis(now)],
+                )?;
+                if inserted > 0 {
+                    new.push(item);
+                } else {
+                    // Still listed by the source: keep it from being purged and seen again.
+                    tx.execute(
+                        "UPDATE automation_items SET seen_at = ?3 WHERE automation = ?1 AND item = ?2",
+                        params![automation, item, millis(now)],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(new)
+        })
+        .await
+    }
+
+    async fn release_items(&self, automation: &str, items: Vec<String>) -> Result<(), StoreError> {
+        let automation = automation.to_string();
+        self.with(move |conn, _| {
+            let tx = conn.transaction()?;
+            for item in items {
+                tx.execute(
+                    "DELETE FROM automation_items WHERE automation = ?1 AND item = ?2",
+                    params![automation, item],
+                )?;
+            }
+            tx.commit()
+        })
+        .await
+    }
+
+    async fn record_automation_run(&self, run: AutomationRun) -> Result<(), StoreError> {
+        self.with(move |conn, _| {
+            conn.execute(
+                "INSERT INTO automation_runs (automation, at, items, action, error)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    run.automation,
+                    millis(run.at),
+                    run.items,
+                    run.action,
+                    run.error
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn automation_runs(
+        &self,
+        automation: Option<&str>,
+        since: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<AutomationRun>, StoreError> {
+        let automation = automation.map(str::to_string);
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.with(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT automation, at, items, action, error FROM automation_runs
+                 WHERE at >= ?1 AND (?2 IS NULL OR automation = ?2)
+                 ORDER BY at DESC, id DESC LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![millis(since), automation, limit], |row| {
+                Ok(AutomationRun {
+                    automation: row.get(0)?,
+                    at: from_millis(row.get(1)?),
+                    items: row.get(2)?,
+                    action: row.get(3)?,
+                    error: row.get(4)?,
+                })
+            })?;
+            rows.collect()
         })
         .await
     }

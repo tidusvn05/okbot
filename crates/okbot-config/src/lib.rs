@@ -17,11 +17,11 @@ use okbot_core::Secret;
 
 pub use edit::ConfigEditor;
 pub use schema::{
-    AgentSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection,
-    CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery, GChatSection,
-    HttpSection, LimitsSection, McpAuth, McpSection, NotifySection, PersonSection, ProviderSection,
-    ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection, TelegramSection,
-    ZaloSection,
+    AgentSection, AutomationSection, BotProfile, BotSection, BridgeSection, ChannelAccess,
+    ChannelsSection, CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery,
+    GChatSection, HttpSection, LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection,
+    OAuthSection, PersonSection, ProviderSection, ReplyOn, RestrictSection, RoomSection,
+    ScheduleSection, SlackSection, SourceSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -30,9 +30,37 @@ pub use write::{
 
 /// Commands okbot handles itself; `[[command]]` cannot reuse them.
 pub const BUILTIN_COMMANDS: &[&str] = &[
-    "help", "reset", "new", "clear", "whoami", "stop", "cancel", "remember", "forget", "memories",
-    "memory", "pair", "tasks", "todo", "todos", "done", "snooze", "later", "resume", "start",
-    "pause", "note", "approve", "deny", "answer", "grant", "revoke", "roles",
+    "help",
+    "reset",
+    "new",
+    "clear",
+    "whoami",
+    "stop",
+    "cancel",
+    "remember",
+    "forget",
+    "memories",
+    "memory",
+    "pair",
+    "tasks",
+    "todo",
+    "todos",
+    "done",
+    "snooze",
+    "later",
+    "resume",
+    "start",
+    "pause",
+    "note",
+    "approve",
+    "deny",
+    "answer",
+    "grant",
+    "revoke",
+    "roles",
+    "connect",
+    "disconnect",
+    "connections",
 ];
 
 /// Roles every bot has: `[bot] admins` (and the owner of a personal bot), and everyone it answers.
@@ -101,6 +129,69 @@ pub fn parse_account(value: &str) -> Result<(okbot_core::ChannelId, okbot_core::
     Ok((channel, okbot_core::UserId::new(user)))
 }
 
+/// Checks an `auth = "oauth"` server.
+fn check_oauth(what: &str, m: &McpSection) -> Result<(), ConfigError> {
+    let invalid = |m: String| Err(ConfigError::Invalid(m));
+    if !(m.url.starts_with("http://") || m.url.starts_with("https://")) {
+        return invalid(format!("{what}: url must start with http:// or https://"));
+    }
+    if !m.token_env.is_empty() {
+        return invalid(format!(
+            "{what}: an oauth server takes no token_env (people connect with /connect)"
+        ));
+    }
+    if !m.env.is_empty() {
+        return invalid(format!("{what}: env is for command servers"));
+    }
+    let Some(o) = &m.oauth else {
+        return Ok(());
+    };
+    if o.client_id.as_deref().is_some_and(|c| c.trim().is_empty()) {
+        return invalid(format!("{what}: [mcp.oauth] client_id is empty"));
+    }
+    if let Some(env) = &o.client_secret_env {
+        if !is_env_name(env) {
+            return invalid(format!(
+                "{what}: [mcp.oauth] client_secret_env `{env}` is not a variable name"
+            ));
+        }
+        if o.client_id.is_none() {
+            return invalid(format!(
+                "{what}: [mcp.oauth] client_secret_env needs client_id"
+            ));
+        }
+    }
+    if let Some(bad) = o
+        .scopes
+        .iter()
+        .find(|s| s.is_empty() || s.contains(char::is_whitespace))
+    {
+        return invalid(format!("{what}: [mcp.oauth] scope `{bad}` is not a scope"));
+    }
+    Ok(())
+}
+
+/// A polling interval: `30m`, `2h`, `1d` (1 minute to 7 days; bare numbers are minutes).
+pub fn parse_every(text: &str) -> Result<std::time::Duration, String> {
+    let t = text.trim();
+    let digits = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+    let (n, unit) = t.split_at(digits);
+    let n: u64 = n
+        .parse()
+        .map_err(|_| format!("every `{text}` must look like 5m, 2h or 1d"))?;
+    let minutes = match unit.trim() {
+        "" | "m" | "min" => Some(n),
+        "h" => n.checked_mul(60),
+        "d" => n.checked_mul(24 * 60),
+        _ => None,
+    }
+    .ok_or_else(|| format!("every `{text}` must look like 5m, 2h or 1d"))?;
+    if !(1..=7 * 24 * 60).contains(&minutes) {
+        return Err(format!("every `{text}` must be 1 minute to 7 days"));
+    }
+    Ok(std::time::Duration::from_secs(minutes * 60))
+}
+
 /// An environment variable name as okbot writes them (`OPS_MCP_TOKEN`).
 fn is_env_name(value: &str) -> bool {
     !value.is_empty()
@@ -159,6 +250,8 @@ pub struct Config {
     pub roles: BTreeMap<String, Vec<String>>,
     /// `[limits]`.
     pub limits: LimitsSection,
+    /// `[[automation]]`: triggers, sources and actions (ADR 0013).
+    pub automations: Vec<AutomationSection>,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -214,6 +307,7 @@ impl Config {
             notify: file.notify,
             roles: file.roles,
             limits: file.limits,
+            automations: file.automation,
             dotenv,
         };
         config.validate()?;
@@ -228,6 +322,8 @@ impl Config {
         self.validate_mcp()?;
         self.validate_commands()?;
         self.validate_notify()?;
+        self.validate_automations()?;
+        self.validate_http()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -316,6 +412,21 @@ impl Config {
                 }
                 _ => {}
             }
+        }
+        Ok(())
+    }
+
+    fn validate_http(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        if let Some(url) = &self.http.public_url
+            && (!url.starts_with("https://") || url.ends_with('/'))
+        {
+            return invalid(format!(
+                "[http] public_url `{url}` must start with https:// and not end with `/`"
+            ));
+        }
+        if self.http.public_url.is_some() && self.http.listen.is_none() {
+            return invalid("[http] public_url needs [http] listen".into());
         }
         Ok(())
     }
@@ -413,7 +524,16 @@ impl Config {
                 return invalid(format!("[[mcp]] name `{}` is used twice", m.name));
             }
             let what = format!("[[mcp]] `{}`", m.name);
-            if m.command.is_empty() {
+            if m.auth != McpAuth::Oauth
+                && (m.credentials != McpCredentials::Person || m.oauth.is_some())
+            {
+                return invalid(format!(
+                    "{what}: credentials and [mcp.oauth] are for auth = \"oauth\""
+                ));
+            }
+            if m.command.is_empty() && m.auth == McpAuth::Oauth {
+                check_oauth(&what, m)?;
+            } else if m.command.is_empty() {
                 if !(m.url.starts_with("http://") || m.url.starts_with("https://")) {
                     return invalid(format!(
                         "{what}: url must start with http:// or https:// (or give a command)"
@@ -554,12 +674,6 @@ impl Config {
                 "[[notify]] needs [http] listen = \"127.0.0.1:<port>\" (callers post to it)".into(),
             );
         }
-        let channels: Vec<String> = self
-            .channels
-            .access()
-            .iter()
-            .map(|(platform, instance, _)| format!("{platform}:{instance}"))
-            .collect();
         let mut seen = std::collections::HashSet::new();
         for n in &self.notify {
             let name = &n.name;
@@ -591,31 +705,277 @@ impl Config {
             if n.to.is_empty() {
                 return invalid(format!("[[notify]] `{name}`: `to` names no target"));
             }
-            for target in &n.to {
-                let parsed: okbot_core::NotifyTo = target
-                    .parse()
-                    .map_err(|e| ConfigError::Invalid(format!("[[notify]] `{name}`: {e}")))?;
-                let channel = match &parsed {
-                    okbot_core::NotifyTo::Room(key) => Some(key.channel.to_string()),
-                    okbot_core::NotifyTo::User(channel, _) => Some(channel.to_string()),
-                    okbot_core::NotifyTo::Person(id) => {
-                        let owner = id == "owner" && self.bot.profile == BotProfile::Personal;
-                        if !owner && !self.people.contains_key(id) {
-                            return invalid(format!(
-                                "[[notify]] `{name}`: `{target}` is not in [people] (`okbot people link`)"
-                            ));
-                        }
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some(channel) = channel
-                    && !channels.contains(&channel)
-                {
+            self.check_targets(&format!("[[notify]] `{name}`"), &n.to)?;
+        }
+        Ok(())
+    }
+
+    fn validate_automations(&self) -> Result<(), ConfigError> {
+        let mut seen = std::collections::HashSet::new();
+        for a in &self.automations {
+            let name = &a.name;
+            if !is_slug(name) || name.len() > 64 {
+                return Err(ConfigError::Invalid(format!(
+                    "[[automation]] name `{name}`: use a-z, 0-9, `-` and `_` only, at most 64"
+                )));
+            }
+            if !seen.insert(name.as_str()) {
+                return Err(ConfigError::Invalid(format!(
+                    "[[automation]] `{name}` is defined twice"
+                )));
+            }
+            let what = format!("[[automation]] `{name}`");
+            self.check_trigger(&what, a)?;
+            self.check_action(&what, a)?;
+            self.check_source(&what, a)?;
+            if !(1..=100).contains(&a.max_items) {
+                return Err(ConfigError::Invalid(format!(
+                    "{what}: max_items must be 1 to 100"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_trigger(&self, what: &str, a: &AutomationSection) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let triggers = usize::from(a.every.is_some())
+            + usize::from(a.schedule.is_some())
+            + usize::from(a.webhook);
+        if triggers != 1 {
+            return invalid(format!(
+                "{what}: give exactly one trigger: every, schedule or webhook = true"
+            ));
+        }
+        if let Some(every) = &a.every {
+            parse_every(every).map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            if a.source.is_none() {
+                return invalid(format!(
+                    "{what}: every polls a source; add [automation.source]"
+                ));
+            }
+        }
+        if let Some(rule) = &a.schedule {
+            rule.parse::<okbot_core::Repeat>()
+                .map_err(|e| ConfigError::Invalid(format!("{what}: schedule {e}")))?;
+        }
+        if !a.webhook {
+            if !a.token_env.is_empty() {
+                return invalid(format!("{what}: token_env is for webhooks"));
+            }
+            return Ok(());
+        }
+        if self.http.listen.is_none() {
+            return invalid(format!(
+                "{what}: a webhook needs [http] listen = \"127.0.0.1:<port>\""
+            ));
+        }
+        if !is_env_name(&a.token_env) {
+            return invalid(format!(
+                "{what}: a webhook needs token_env, a variable such as OKBOT_HOOK_TOKEN"
+            ));
+        }
+        if let Some(m) = self
+            .mcp
+            .iter()
+            .find(|m| m.auth == McpAuth::Bearer && m.token_env == a.token_env)
+        {
+            return invalid(format!(
+                "{what}: token_env {} is the token agents get for [[mcp]] `{}`; use another variable",
+                a.token_env, m.name
+            ));
+        }
+        if a.source.is_some() {
+            return invalid(format!(
+                "{what}: a webhook brings its own data; it takes no source"
+            ));
+        }
+        Ok(())
+    }
+
+    fn check_action(&self, what: &str, a: &AutomationSection) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        match (&a.text, &a.prompt) {
+            (Some(_), Some(_)) | (None, None) => {
+                return invalid(format!("{what}: give either text or prompt"));
+            }
+            (Some(text), None) => {
+                if text.trim().is_empty() {
+                    return invalid(format!("{what}: text is empty"));
+                }
+                if a.to.is_empty() {
+                    return invalid(format!("{what}: text needs `to`"));
+                }
+            }
+            (None, Some(prompt)) => {
+                if prompt.trim().is_empty() {
+                    return invalid(format!("{what}: prompt is empty"));
+                }
+                if a.to.len() > 1 {
                     return invalid(format!(
-                        "[[notify]] `{name}`: `{target}` is on {channel}, which is not in [channels]"
+                        "{what}: a prompt answers in one chat; `to` names more"
                     ));
                 }
+                if a.to.first().is_some_and(|t| t == "admins") {
+                    return invalid(format!("{what}: a prompt cannot go to `admins`"));
+                }
+            }
+        }
+        self.check_targets(what, &a.to)?;
+        let run_as = self.automation_run_as(a);
+        if let Some(run_as) = &run_as {
+            self.check_person_or_account(&format!("{what} run_as"), run_as)?;
+            let personal = self.bot.profile == BotProfile::Personal;
+            if personal && run_as != "person:owner" {
+                return invalid(format!(
+                    "{what}: a personal bot runs automations as its owner; use run_as = \"person:owner\" or leave it out"
+                ));
+            }
+        }
+        if a.prompt.is_some() && run_as.is_none() {
+            return invalid(format!(
+                "{what}: a prompt needs run_as, the person the agent works for"
+            ));
+        }
+        Ok(())
+    }
+
+    fn check_source(&self, what: &str, a: &AutomationSection) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let Some(source) = &a.source else {
+            return Ok(());
+        };
+        let Some(m) = self.mcp.iter().find(|m| m.name == source.mcp) else {
+            return invalid(format!(
+                "{what}: source mcp `{}` is not an [[mcp]] server",
+                source.mcp
+            ));
+        };
+        if !m.command.is_empty() {
+            return invalid(format!(
+                "{what}: source mcp `{}` is a command server; use an HTTP one",
+                source.mcp
+            ));
+        }
+        let run_as = self.automation_run_as(a);
+        let needs_person = (m.auth == McpAuth::Oauth && m.credentials == McpCredentials::Person)
+            || m.auth == McpAuth::Signed;
+        if needs_person && run_as.is_none() {
+            return invalid(format!(
+                "{what}: `{}` acts for a person; set run_as",
+                source.mcp
+            ));
+        }
+        if m.auth == McpAuth::Oauth
+            && m.credentials == McpCredentials::Person
+            && let Some(bad) =
+                a.to.iter()
+                    .find(|t| !self.private_target(t, run_as.as_deref()))
+        {
+            return invalid(format!(
+                "{what}: `{}` reads run_as's own account, so it may only go to them or a \
+                 `personal` room, not `{bad}`",
+                source.mcp
+            ));
+        }
+        if source.tool.trim().is_empty() {
+            return invalid(format!("{what}: source tool is empty"));
+        }
+        for (key, pointer) in [("items", &source.items), ("id", &source.id)] {
+            if let Some(p) = pointer
+                && !p.starts_with('/')
+            {
+                return invalid(format!(
+                    "{what}: source {key} `{p}` must be a JSON pointer such as /messages"
+                ));
+            }
+        }
+        if source.id.is_some() && source.items.is_none() {
+            return invalid(format!("{what}: source id needs items"));
+        }
+        Ok(())
+    }
+
+    /// `target` is read only by `run_as`: their own direct chat (as a person or one of their
+    /// accounts), or a room marked `personal`.
+    fn private_target(&self, target: &str, run_as: Option<&str>) -> bool {
+        let Ok(parsed) = target.parse::<okbot_core::NotifyTo>() else {
+            return false;
+        };
+        let run_as_person = run_as.and_then(|r| r.strip_prefix("person:"));
+        match parsed {
+            okbot_core::NotifyTo::Person(id) => run_as_person == Some(id.as_str()),
+            okbot_core::NotifyTo::User(channel, user) => {
+                let account = format!("{channel}/{user}");
+                run_as == Some(account.as_str())
+                    || run_as_person
+                        .and_then(|p| self.people.get(p))
+                        .is_some_and(|p| p.accounts.contains(&account))
+            }
+            okbot_core::NotifyTo::Room(key) => self.channels.access().iter().any(|(p, i, a)| {
+                key.channel.platform() == *p
+                    && key.channel.instance() == *i
+                    && a.rooms.iter().any(|r| r.room == key.room && r.personal)
+            }),
+            _ => false,
+        }
+    }
+
+    /// Whose an automation runs as: its `run_as`, else the owner on a personal bot.
+    pub fn automation_run_as(&self, a: &AutomationSection) -> Option<String> {
+        a.run_as.clone().or_else(|| {
+            (self.bot.profile == BotProfile::Personal).then(|| "person:owner".to_string())
+        })
+    }
+
+    /// `person:<id>` of a linked person (or the owner of a personal bot), or an account.
+    fn check_person_or_account(&self, what: &str, value: &str) -> Result<(), ConfigError> {
+        if let Some(id) = value.strip_prefix("person:") {
+            let owner = id == "owner" && self.bot.profile == BotProfile::Personal;
+            if owner || self.people.contains_key(id) {
+                return Ok(());
+            }
+            return Err(ConfigError::Invalid(format!(
+                "{what}: `{value}` is not in [people] (`okbot people link`)"
+            )));
+        }
+        parse_account(value)
+            .map(drop)
+            .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))
+    }
+
+    /// Checks `[[notify]]`-style targets.
+    fn check_targets(&self, what: &str, targets: &[String]) -> Result<(), ConfigError> {
+        let channels: Vec<String> = self
+            .channels
+            .access()
+            .iter()
+            .map(|(platform, instance, _)| format!("{platform}:{instance}"))
+            .collect();
+        for target in targets {
+            let parsed: okbot_core::NotifyTo = target
+                .parse()
+                .map_err(|e| ConfigError::Invalid(format!("{what}: {e}")))?;
+            let channel = match &parsed {
+                okbot_core::NotifyTo::Room(key) => Some(key.channel.to_string()),
+                okbot_core::NotifyTo::User(channel, _) => Some(channel.to_string()),
+                okbot_core::NotifyTo::Person(id) => {
+                    let owner = id == "owner" && self.bot.profile == BotProfile::Personal;
+                    if !owner && !self.people.contains_key(id) {
+                        return Err(ConfigError::Invalid(format!(
+                            "{what}: `{target}` is not in [people] (`okbot people link`)"
+                        )));
+                    }
+                    None
+                }
+                _ => None,
+            };
+            if let Some(channel) = channel
+                && !channels.contains(&channel)
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "{what}: `{target}` is on {channel}, which is not in [channels]"
+                )));
             }
         }
         Ok(())
@@ -661,7 +1021,14 @@ impl Config {
                 names.push(m.token_env.clone());
             }
             names.extend(m.env.iter().cloned());
+            names.extend(m.oauth.iter().filter_map(|o| o.client_secret_env.clone()));
         }
+        names.extend(
+            self.automations
+                .iter()
+                .filter(|a| !a.token_env.is_empty())
+                .map(|a| a.token_env.clone()),
+        );
         names.sort();
         names.dedup();
         names

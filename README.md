@@ -39,6 +39,14 @@ touch your files.
 - **Notifications from your programs.** `[[notify]]` gives a monitor, CI job or service one HTTP call
   (`POST /notify/alerts`, or `okbot send alerts "…"`) to reach the rooms and people you list, on every platform,
   rendered for each, without an agent. See [docs/notify.md](docs/notify.md).
+- **Gmail, Drive, Sheets, Notion and more.** Point `[[mcp]] auth = "oauth"` at a service's MCP server
+  (`okbot mcp add notion | google-workspace | linear`); each person connects their own account with
+  `/connect`, used only in their own chats, and okbot keeps the tokens sealed. See
+  [docs/services.md](docs/services.md).
+- **Automations.** `[[automation]]` polls a tool, runs on a schedule or takes a webhook, and acts on
+  what is new: a templated message without an agent ("📧 new mail from…"), or an agent turn as you
+  ("summarise it") that runs without web tools and asks before any change. See
+  [docs/automations.md](docs/automations.md).
 - **Permissions you can read.** The agent reaches your servers only through okbot's gateway: roles
   (`[roles]`, temporary grants with `/grant`), rooms and tool allow-lists decide who may call what,
   risky calls wait for the person's **Allow**, every call is in `okbot audit`, and `[limits]` caps each

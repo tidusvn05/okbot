@@ -74,6 +74,7 @@ fn start(
         signed: true,
         rules: okbot_runtime::McpRules::default(),
         stdio: None,
+        oauth: None,
     }];
     config
         .access
