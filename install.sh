@@ -69,8 +69,11 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 say "downloading $name"
-fetch "$base/$name.tar.gz" "$tmp/$name.tar.gz" || fail "no $name.tar.gz in release $VERSION"
-fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || fail "no SHA256SUMS in release $VERSION"
+# A failed download is a missing file or a full temporary directory (curl's "failure writing").
+fetch "$base/$name.tar.gz" "$tmp/$name.tar.gz" ||
+  fail "cannot download $name.tar.gz from release $VERSION (not in the release, or no space left in ${TMPDIR:-/tmp}: set TMPDIR to another directory)"
+fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" ||
+  fail "cannot download SHA256SUMS from release $VERSION (not in the release, or no space left in ${TMPDIR:-/tmp})"
 
 expected="$(awk -v f="$name.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")"
 [ -n "$expected" ] || fail "$name.tar.gz is not listed in SHA256SUMS"
