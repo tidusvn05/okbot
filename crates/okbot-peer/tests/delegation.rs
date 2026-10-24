@@ -158,6 +158,7 @@ async fn start(
             key: SigningKey::for_bot(&dir.join("state")).unwrap(),
             box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
             state_dir: dir.join("state"),
+            sockets: root.join("run"),
             teams: vec![TeamConfig {
                 id: "local".into(),
                 member: name.into(),
@@ -186,7 +187,7 @@ async fn start(
         runtime.channel.set(channel.clone()).ok().unwrap();
         let sink: Arc<dyn InboundSink> = runtime.clone();
         tokio::spawn(async move { channel.run(sink, CancellationToken::new()).await });
-        let socket = okbot_peer::socket_path(&dir);
+        let socket = okbot_peer::socket_path(&root.join("run"), &dir);
         for _ in 0..100 {
             if socket.exists() {
                 break;
@@ -800,6 +801,7 @@ async fn external_node(
             key: SigningKey::for_bot(&dir.join("state")).unwrap(),
             box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
             state_dir: dir.join("state"),
+            sockets: root.join("run"),
             teams: Vec::new(),
             external: Some(("me".into(), external)),
         },

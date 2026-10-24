@@ -138,7 +138,7 @@ impl Node {
                 let member = &manifest.members[name];
                 let (ok, detail) = match (&member.dir, &member.url, &member.relay) {
                     (Some(dir), _, _) => {
-                        let socket = crate::node::socket_path(dir);
+                        let socket = crate::node::socket_path(&self.inner.sockets, dir);
                         if socket.exists() {
                             (true, format!("socket {}", socket.display()))
                         } else {

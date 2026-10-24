@@ -181,6 +181,7 @@ pub(crate) fn node_unstarted(
             key,
             box_key,
             state_dir: state,
+            sockets: okbot_peer::socket_dir(),
             teams,
             external,
         },

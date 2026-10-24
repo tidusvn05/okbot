@@ -164,7 +164,7 @@ async fn serve_local(inner: Arc<Inner>, stop: CancellationToken) {
     let Some(bot_dir) = inner.state_dir.parent() else {
         return;
     };
-    let path = crate::node::socket_path(bot_dir);
+    let path = crate::node::socket_path(&inner.sockets, bot_dir);
     if let Some(parent) = path.parent() {
         use std::os::unix::fs::PermissionsExt as _;
         if std::fs::create_dir_all(parent).is_ok() && std::env::var_os("OKBOT_PEER_DIR").is_none() {

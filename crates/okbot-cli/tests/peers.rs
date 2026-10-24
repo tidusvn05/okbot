@@ -117,6 +117,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
             key: SigningKey::for_bot(&dir.join("state")).unwrap(),
             box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
             state_dir: dir.join("state"),
+            sockets: root.join("run"),
             teams: vec![TeamConfig {
                 id: "local".into(),
                 member: name.into(),
@@ -158,7 +159,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
     let handle = runtime.handle();
     tokio::spawn(async move { runtime.run(CancellationToken::new()).await.unwrap() });
     if accept {
-        let socket = okbot_peer::socket_path(&dir);
+        let socket = okbot_peer::socket_path(&root.join("run"), &dir);
         for _ in 0..200 {
             if socket.exists() {
                 break;

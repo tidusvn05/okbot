@@ -33,12 +33,12 @@ pub fn socket_dir() -> PathBuf {
     std::env::temp_dir().join(format!("okbot-{user}"))
 }
 
-/// The socket of the bot in `bot_dir`, named after its canonical path (short whatever the path's
-/// length, and the same for the bot and for the members that call it).
-pub fn socket_path(bot_dir: &Path) -> PathBuf {
+/// The socket in `sockets` of the bot in `bot_dir`, named after its canonical path (short whatever
+/// the path's length, and the same for the bot and for the members that call it).
+pub fn socket_path(sockets: &Path, bot_dir: &Path) -> PathBuf {
     let dir = std::fs::canonicalize(bot_dir).unwrap_or_else(|_| bot_dir.to_path_buf());
     let digest = sha2::Sha256::digest(dir.as_os_str().as_encoded_bytes());
-    socket_dir().join(format!("{}.sock", &hex::encode(digest)[..20]))
+    sockets.join(format!("{}.sock", &hex::encode(digest)[..20]))
 }
 /// Header carrying the response's signature.
 pub const SIGNATURE_HEADER: &str = "okbot-peer-signature";
@@ -95,8 +95,10 @@ pub struct NodeConfig {
     pub key: SigningKey,
     /// This bot's X25519 key, for sealed messages through relays.
     pub box_key: crate::seal::BoxKey,
-    /// This bot's `state/` directory (its socket lives there).
+    /// This bot's `state/` directory.
     pub state_dir: PathBuf,
+    /// Where the sockets of this machine's bots are ([`socket_dir`]).
+    pub sockets: PathBuf,
     /// Teams.
     pub teams: Vec<TeamConfig>,
     /// A2A agents and clients that are not okbots, and this bot's name among them.
@@ -158,6 +160,7 @@ pub(crate) struct OpenPrompt {
 pub(crate) struct Inner {
     pub(crate) key: SigningKey,
     pub(crate) box_key: crate::seal::BoxKey,
+    pub(crate) sockets: PathBuf,
     pub(crate) state_dir: PathBuf,
     pub(crate) teams: BTreeMap<String, Team>,
     pub(crate) store: Arc<dyn ConversationStore>,
@@ -232,6 +235,7 @@ impl Inner {
         Ok(Self {
             key: config.key,
             box_key: config.box_key,
+            sockets: config.sockets,
             state_dir: config.state_dir,
             teams,
             store,
@@ -435,7 +439,7 @@ impl Inner {
         let authorization = format!("{SCHEME}{}", token::sign(&self.key, &claims));
         let (status, signature, reply) = match (&target.dir, &target.url, &target.relay) {
             (Some(dir), _, _) => {
-                let socket = socket_path(dir);
+                let socket = socket_path(&self.sockets, dir);
                 local_request(&socket, &team.config.id, &authorization, &body).await?
             }
             (_, Some(url), _) => self.http_request(url, &authorization, body).await?,
