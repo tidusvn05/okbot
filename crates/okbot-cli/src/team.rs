@@ -147,7 +147,9 @@ pub(crate) fn node_unstarted(
     let default_member = slug(&config.bot.name);
     let mut teams = Vec::new();
     for (id, t) in &config.teams {
-        let source = if t.manifest.starts_with("https://") {
+        let fetched =
+            t.manifest.starts_with("https://") || t.manifest.starts_with("http://127.0.0.1");
+        let source = if fetched {
             okbot_peer::ManifestSource::Url {
                 url: t.manifest.clone(),
                 team_key: t

@@ -122,6 +122,8 @@ accept = true
 roles = { leader = ["member"] }
 ```
 
+- To try a team that spans machines on one machine, members may fetch the manifest from
+  `http://127.0.0.1:<port>/…` (loopback only), and members' `url`s may be `http://127.0.0.1:<port>/a2a/<team>`.
 - Members fetch the manifest every 10 minutes. A manifest with a lower version is refused; an expired
   one (`expires`, at most 90 days ahead) stops the team until it is signed again.
 - **Removing a member** is `okbot team remove acme writer && okbot team sign acme`. Members stop

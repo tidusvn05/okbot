@@ -720,7 +720,14 @@ endpoint, agents speaking 1.0 and 0.3, a client's task with its person and roles
 `GetTask`). Run with Claude Code on two bots of this VPS (2026-10-24): a delegation answered in
 16 s, and with `wait = 1` the result came back later as a new turn. That run moved the sockets to
 `$XDG_RUNTIME_DIR/okbot/` (bot directories with long paths exceeded the socket path limit) and let
-`okbot chat` delegate. A run across two real machines is pending (release checklist).
+`okbot chat` delegate. The same day, a team spanning "machines" was run on this VPS with Claude
+Code: a signed manifest fetched over loopback HTTP, `lead` (endpoint and relay), `writer` (its own
+endpoint), `laptop` (no HTTP, through the relay, sealed) and `assistant` (`okbot chat`): direct and
+relayed delegations answered; a caller holding an older manifest was refused by the callee; a member
+added while bots ran was accepted at once (forced refresh); a program and a 0.3 client used
+`/a2a/external`; a delegation to an `[[a2a.agent]]` arrived as `external/partner`; a stopped relayed
+member failed after the forward timeout and worked again once back. A run across two real machines
+is pending (release checklist).
 
 ---
 

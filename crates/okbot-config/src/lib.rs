@@ -528,10 +528,14 @@ impl Config {
                     team.member
                 ));
             }
-            if team.manifest.starts_with("http://") {
-                return invalid(format!("[teams.{id}] manifest must be https:// or a file"));
+            let fetched = team.manifest.starts_with("https://")
+                || team.manifest.starts_with("http://127.0.0.1");
+            if team.manifest.starts_with("http://") && !fetched {
+                return invalid(format!(
+                    "[teams.{id}] manifest must be https:// (or http://127.0.0.1 on one machine) or a file"
+                ));
             }
-            if team.manifest.starts_with("https://") && team.team_key.is_empty() {
+            if fetched && team.team_key.is_empty() {
                 return invalid(format!(
                     "[teams.{id}] a manifest fetched over the network needs `team_key`"
                 ));
