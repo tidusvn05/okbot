@@ -4,13 +4,17 @@
     scripts/release.py version 0.5.0       set the workspace version and every internal dependency
     scripts/release.py order               print the crates in publishing order
     scripts/release.py pending             print the crates whose version is not on crates.io yet
-    scripts/release.py publish [--dry-run] publish every crate to crates.io, in order
+    scripts/release.py publish [--dry-run | --stop-at-new]
+                                           publish every crate to crates.io, in order
     scripts/release.py trustpub OWNER/REPO [--workflow F] [--environment E] [--crates a,b] [--only]
                                            set up crates.io Trusted Publishing for the crates
 
 `publish` can be run again after a failure: versions already on crates.io are skipped. When
 crates.io rate-limits new crates (HTTP 429, about one new crate every 10 minutes after a short
-burst), it waits until the time crates.io gives and retries.
+burst), it waits until the time crates.io gives and retries. With `--stop-at-new` (the release
+workflow, whose Trusted Publishing token cannot create crates) it publishes the crates before the
+first one crates.io does not have at all, then stops and names it: publish that one by hand, its
+dependencies are on crates.io by then, and run it again.
 
 `trustpub` needs a crates.io API token with the `trusted-publishing` scope: CRATES_IO_TOKEN, or
 the token saved by `cargo login`.
@@ -104,11 +108,6 @@ def index_versions(name):
             return None
         raise
     return {json.loads(line).get("vers") for line in lines if line.strip()}
-
-
-def published(name, version):
-    """Whether crates.io already has `name` at `version`."""
-    return version in (index_versions(name) or set())
 
 
 def pending():
@@ -227,7 +226,7 @@ def retry_after(output):
     return 600
 
 
-def publish(dry_run):
+def publish(dry_run, stop_at_new=False):
     order, version = publish_order()
     if dry_run:
         # Before the first publish the dependencies are not on crates.io: cargo packages the whole
@@ -239,9 +238,14 @@ def publish(dry_run):
     if "-" in version:
         sys.exit(f"refusing to publish the pre-release version {version}; run `version` first")
     for name in order:
-        if published(name, version):
+        versions = index_versions(name)
+        if version in (versions or set()):
             print(f"= {name} {version} is already on crates.io")
             continue
+        if versions is None and stop_at_new:
+            sys.exit(f"{name} is not on crates.io yet and Trusted Publishing cannot create a crate: "
+                     f"publish it once by hand (docs/releasing.md, 'A new crate later'), then run "
+                     f"this again")
         command = ["cargo", "publish", "--locked", "-p", name]
         while True:
             print(f"> {' '.join(command)}", flush=True)
@@ -272,8 +276,8 @@ def main():
         print(f"{version}: " + " ".join(order))
     elif args == ["pending"]:
         pending()
-    elif args[:1] == ["publish"] and args[1:] in ([], ["--dry-run"]):
-        publish(dry_run=args[1:] == ["--dry-run"])
+    elif args[:1] == ["publish"] and args[1:] in ([], ["--dry-run"], ["--stop-at-new"]):
+        publish(dry_run=args[1:] == ["--dry-run"], stop_at_new=args[1:] == ["--stop-at-new"])
     elif args[:1] == ["trustpub"]:
         trustpub(args[1:])
     else:

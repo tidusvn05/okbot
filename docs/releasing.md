@@ -54,9 +54,22 @@ a temporary token, as follows.
 
 ### A new crate later
 
-When a release adds a crate (a new `okbot-channel-*`), the `crates` job stops and names it. Publish
-that crate by hand, as in the first release but with `cargo publish -p <crate>` and
-`scripts/release.py trustpub tidusvn05/okbot --crates <crate> --only`. Then re-run the job.
+When a release adds a crate (a new `okbot-channel-*`, `okbot-peer` in v0.10.0), the `crates` job
+publishes the crates that come before it in publishing order (`scripts/release.py order`), then
+stops and names it. By then its dependencies, dev-dependencies included, are on crates.io at the new
+version, so it can be published by hand with a token that has the `publish-new` and
+`trusted-publishing` scopes:
+
+```sh
+cargo login                                   # paste the temporary token
+cargo publish --locked -p <crate>
+scripts/release.py trustpub tidusvn05/okbot --crates <crate> --only
+cargo logout
+```
+
+Then re-run the failed job (`gh run rerun <run id> --failed`): it skips what is published and goes
+on. Before v0.11.0 the job refused to start while any crate was new, so `okbot-core` and
+`okbot-testkit` 0.10.0 had to be published by hand too, with `trustpub_only` lifted for the time.
 
 ### Other repositories
 

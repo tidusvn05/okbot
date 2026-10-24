@@ -198,17 +198,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Crates to publish
         id: pending
-        run: |
-          scripts/release.py pending
-          new="$(sed -n 's/^new=//p' "$GITHUB_OUTPUT" | tail -1)"
-          if [ -n "$new" ]; then
-            echo "::error::not on crates.io yet: $new. Trusted Publishing cannot create a crate: publish it once by hand (docs/releasing.md, 'A new crate'), then re-run this job."
-            exit 1
-          fi
+        run: scripts/release.py pending
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
         if: steps.pending.outputs.count != '0'
-      - run: scripts/release.py publish
+      # Stops at a crate crates.io does not have yet, after publishing what comes before it
+      # (docs/releasing.md, "A new crate later").
+      - run: scripts/release.py publish --stop-at-new
         if: steps.pending.outputs.count != '0'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
