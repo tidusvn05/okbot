@@ -126,6 +126,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
                 max_concurrent: 2,
                 task_timeout: Duration::from_secs(60),
             }],
+            external: None,
         },
         store.clone(),
         clock,

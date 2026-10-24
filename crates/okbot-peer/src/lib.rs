@@ -9,6 +9,7 @@
 
 pub mod a2a;
 mod channel;
+pub mod external;
 mod inbound;
 pub mod key;
 pub mod manifest;
@@ -18,6 +19,7 @@ mod relay;
 pub mod seal;
 pub mod token;
 
+pub use external::{ExternalAgent, ExternalClient, ExternalConfig};
 pub use key::{PublicKey, SigningKey};
 pub use manifest::Manifest;
 pub use node::{ManifestSource, NodeConfig, SIGNATURE_HEADER, SOCKET_FILE, TeamConfig};

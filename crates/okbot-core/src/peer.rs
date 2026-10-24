@@ -315,6 +315,10 @@ pub trait Peers: Send + Sync {
     /// own delegations included; reported with the task's end.
     async fn report_usage(&self, conversation: &ConversationKey, task: Option<&str>, tokens: u64);
 
+    /// What the turn answering the task of `conversation` (`task`, or the oldest) is doing now,
+    /// shown to the caller while the task works. Called from the agent's output reader: quick.
+    fn progress(&self, conversation: &ConversationKey, task: Option<&str>, text: &str);
+
     /// The runtime could not answer the task of `conversation` (`task`, or the oldest): it fails
     /// with `reason` instead of completing with a fixed reply.
     async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str);

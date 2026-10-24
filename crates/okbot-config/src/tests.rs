@@ -833,3 +833,51 @@ fn teams_load_with_their_defaults_and_refuse_admins() {
         assert!(error.contains(expected), "{team}: {error}");
     }
 }
+
+#[test]
+fn a2a_agents_and_clients_are_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n\
+        [people.lan]\naccounts = [\"discord:main/1\"]\n[roles]\nops = []\n";
+    let ok = format!(
+        "{base}[a2a]\ndelegate_roles = [\"everyone\"]\n\
+         [[a2a.agent]]\nname = \"travel\"\nurl = \"https://agent.example.com/a2a\"\nversion = \"0.3\"\n\
+         [[a2a.client]]\nname = \"n8n\"\ntoken_env = \"N8N_TOKEN\"\nroles = [\"ops\"]\nperson = \"lan\"\n"
+    );
+    let config = Config::from_text(dir.path(), &ok).unwrap();
+    assert_eq!(config.a2a.agent[0].version, "0.3");
+    assert_eq!(config.a2a.client[0].person.as_deref(), Some("lan"));
+    for (section, expected) in [
+        (
+            "[[a2a.agent]]\nname = \"t\"\nurl = \"http://x\"\n",
+            "https://",
+        ),
+        (
+            "[[a2a.agent]]\nname = \"t\"\nurl = \"https://x\"\nversion = \"2\"\n",
+            "`1.0` or `0.3`",
+        ),
+        (
+            "[[a2a.client]]\nname = \"c\"\ntoken_env = \"T\"\nroles = [\"admins\"]\n",
+            "never given",
+        ),
+        (
+            "[[a2a.client]]\nname = \"c\"\ntoken_env = \"T\"\nperson = \"bob\"\n",
+            "not in [people]",
+        ),
+        (
+            "[[a2a.client]]\nname = \"c\"\ntoken_env = \"\"\n",
+            "needs token_env",
+        ),
+        ("[teams.external]\n", "reserved"),
+    ] {
+        let error = Config::from_text(dir.path(), &format!("{base}{section}"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{section}: {error}");
+    }
+    let no_http = "config_version = 1\n[bot]\nname = \"x\"\n[[a2a.client]]\nname = \"c\"\ntoken_env = \"T\"\n";
+    let error = Config::from_text(dir.path(), no_http)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("[http] listen"), "{error}");
+}

@@ -47,8 +47,15 @@ pub(crate) async fn handle(
     let Some(team) = inner.teams.get(team) else {
         return Reply::plain(404, "no such team");
     };
-    let caller = match authenticate(inner, team, authorization, body).await {
-        Ok(claims) => claims.iss,
+    let authenticated = if team.config.id == crate::external::TEAM {
+        bearer(inner, authorization)
+    } else {
+        authenticate(inner, team, authorization, body)
+            .await
+            .map(|claims| claims.iss)
+    };
+    let caller = match authenticated {
+        Ok(caller) => caller,
         Err(reason) => {
             tracing::warn!(team = %team.config.id, %reason, "peer request refused");
             return Reply::plain(401, &reason);
@@ -70,6 +77,19 @@ pub(crate) async fn handle(
         signature: Some(inner.sign_response(team, &caller, &body)),
         body,
     }
+}
+
+/// An `[[a2a.client]]` by its bearer token.
+fn bearer(inner: &Inner, authorization: Option<&str>) -> Result<String, String> {
+    let token = authorization
+        .and_then(|a| a.strip_prefix("Bearer "))
+        .ok_or("a bearer token is required")?;
+    inner
+        .external
+        .as_ref()
+        .and_then(|e| e.client(token.trim()))
+        .map(|c| c.name.clone())
+        .ok_or_else(|| "unknown token".into())
 }
 
 /// Checks the token: a member of the team, signed by its key, for this bot, fresh and new.
@@ -211,11 +231,18 @@ fn admit(
             team.config.id
         )));
     }
-    let Some(context) = message.context() else {
-        return Err((
+    // A client's own context is not trusted: its task starts a chain of one.
+    let client = inner
+        .external
+        .as_ref()
+        .filter(|_| team.config.id == crate::external::TEAM)
+        .and_then(|e| e.clients.iter().find(|c| c.name == caller));
+    let context = match client {
+        Some(client) => crate::external::context(client, inner.now(), team.config.task_timeout),
+        None => message.context().ok_or((
             code::INVALID_PARAMS,
-            "the okbot delegation context is missing".into(),
-        ));
+            "the okbot delegation context is missing".to_string(),
+        ))?,
     };
     if context.chain.last().map(String::as_str) != Some(caller) {
         return Err(refused("the chain must end with the caller"));
@@ -514,6 +541,29 @@ async fn stop_turn(inner: &Inner, record: &PeerTaskRecord, caller: &str) {
     let _ = sink.deliver(event).await;
 }
 
+/// Longest progress text kept.
+const MAX_PROGRESS_CHARS: usize = 500;
+
+/// What the turn of `task` (or the oldest of `conversation`) is doing now.
+pub(crate) fn progress(
+    inner: &Inner,
+    conversation: &ConversationKey,
+    task: Option<&str>,
+    text: &str,
+) {
+    if let Some(task) = task
+        .map(str::to_string)
+        .or_else(|| oldest(inner, conversation))
+    {
+        let count = text.chars().count();
+        let text: String = text
+            .chars()
+            .skip(count.saturating_sub(MAX_PROGRESS_CHARS))
+            .collect();
+        lock(&inner.progress).insert(task, text);
+    }
+}
+
 /// Tokens the runtime's turn used for `task` (or the oldest of `conversation`).
 pub(crate) fn usage(
     inner: &Inner,
@@ -559,6 +609,7 @@ pub(crate) async fn finish(
     }
     lock(&inner.prompts).remove(&record.id);
     let tokens = lock(&inner.usage).remove(&record.id).or(record.tokens);
+    lock(&inner.progress).remove(&record.id);
     let record = PeerTaskRecord {
         state,
         text,
@@ -578,6 +629,10 @@ pub(crate) fn task_model(inner: &Inner, record: &PeerTaskRecord) -> a2a::Task {
     let mut parts = Vec::new();
     if let Some(text) = &record.text {
         parts.push(Part::Text(text.clone()));
+    } else if record.state == PeerTaskState::Working
+        && let Some(progress) = lock(&inner.progress).get(&record.id)
+    {
+        parts.push(Part::Text(progress.clone()));
     }
     if record.state == PeerTaskState::InputRequired
         && let Some(open) = lock(&inner.prompts).get(&record.id)

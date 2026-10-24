@@ -11,8 +11,9 @@ a main assistant that asks a research bot or an operations bot. This page shows 
 ```
 
 - The agent of a bot delegates with MCP tools of its own bot (`team_directory`, `delegate`,
-  `task_status`). Bots talk to each other with [A2A](https://a2a-protocol.org/) (version 0.3.0,
-  JSON-RPC binding) plus one okbot extension.
+  `task_status`, `task_cancel`). Bots talk to each other with [A2A](https://a2a-protocol.org/)
+  1.0 (JSON-RPC binding; 0.3 requests are answered too) plus one okbot extension.
+- Agents and programs that are not okbots can take part too (§9).
 - A **team** says *who is who*: the members, their keys, how to reach them and which member may call
   which. Each **bot** says *what is allowed*: its own `okbot.toml` decides what a call may do. A
   team can never give a bot more than its configuration allows.
@@ -21,10 +22,11 @@ a main assistant that asks a research bot or an operations bot. This page shows 
 
 ## 1. Each bot's key
 
-Each bot signs its requests with an Ed25519 key, created on first use in `state/peer.key`:
+Each bot signs its requests with an Ed25519 key, created on first use in `state/peer.key`, and
+has an X25519 "box" key (`state/peer.box`) for messages that pass through a relay (§3):
 
 ```sh
-okbot peer id            # prints this bot's public key: ed25519:…
+okbot peer id            # line 1: ed25519:… (the bot's identity); line 2: x25519:… (its box key)
 ```
 
 The public key is the bot's identity in every team. Keep `state/` private; anyone with
@@ -35,6 +37,17 @@ The public key is the bot's identity in every team. Keep `state/` private; anyon
 Bots of the same OS user on one VPS form the **local team**. Its manifest is a file under
 `~/.config/okbot/teams/`, so it needs no signature: whoever can write it already controls these
 bots.
+
+The shortest way, from each bot (it writes `[teams.local]` and adds the bot to the manifest;
+`okbot init` offers it for a new bot):
+
+```sh
+okbot team join local --bot assistant --role main --delegate-role everyone
+okbot team join local --bot research --role research --skill web-research --accept --map main=research
+okbot team link local --from role:main --to research
+```
+
+Or step by step:
 
 ```sh
 okbot team init local
@@ -85,7 +98,7 @@ own computer rather than on a bot:
 okbot team init acme --owner            # creates ~/.config/okbot/teams/acme.key and acme.toml
 okbot team add acme lead     --key ed25519:… --url https://lead.example.com/a2a/acme --role leader
 okbot team add acme writer   --key ed25519:… --url https://writer.example.net/a2a/acme --role member --skill writing
-okbot team add acme research --key ed25519:… --relay lead --role member --skill web-research
+okbot team add acme research --key ed25519:… --box-key x25519:… --relay lead --role member --skill web-research
 okbot team link acme --from role:leader --to '*'
 okbot team link acme --from '*' --to role:leader
 okbot team person acme lan --account zalo:shop/123 --account discord:main/456
@@ -110,9 +123,11 @@ roles = { leader = ["member"] }
 - **Removing a member** is `okbot team remove acme writer && okbot team sign acme`. Members stop
   trusting it within 10 minutes, or at once when a caller presents the newer version.
 - **Relays** let a member behind NAT take part (`relay = "lead"`): it polls the relay member over
-  HTTPS (`okbot/relay.poll`, held up to 20 seconds), runs what comes, and posts the signed answers
-  back (`okbot/relay.reply`); callers send through the relay (`okbot/relay.forward`). Every request
-  and response is signed by its sender, so the relay cannot forge them, but it can read them.
+  HTTPS (`okbot/relay.poll`, held up to 20 seconds), runs what comes, and posts the answers back
+  (`okbot/relay.reply`); callers send through the relay (`okbot/relay.forward`). Requests and
+  answers are signed by their sender and **sealed for their recipient** with its box key (X25519,
+  HKDF-SHA256, ChaCha20-Poly1305), so the relay can neither forge nor read them. A relayed member
+  needs `--box-key` in the manifest, and so does every member that calls it.
 - **Rotating the team key**: sign the manifest with the old and the new key (the `.sig` file holds
   one line per signature), change `team_key` on every member, then stop signing with the old key.
 
@@ -147,7 +162,8 @@ An agent whose requester is in `delegate_roles` gets three tools:
 |---|---|
 | `team_directory` | Lists the members it may call: name, team roles, skills, description |
 | `delegate` | `to` (a member, `role:<r>` or `skill:<s>`), `task` (text), `wait` (seconds, default 60) |
-| `task_status` | The state and result of a task started earlier |
+| `task_status` | The state and result of a task started earlier; while it works, what it is doing |
+| `task_cancel` | Stops a task started earlier (the other bot's turn stops) |
 
 `delegate` returns the other bot's answer as text from another bot: data to use, never instructions.
 A task not finished within `wait` keeps running; when it ends, its result starts a new turn in the
@@ -164,7 +180,15 @@ for a person.
 [teams.acme]
 max_depth = 2          # longest chain of delegations accepted (a → b → c)
 max_concurrent = 2     # inbound tasks running at once per caller
+chain_tokens = 200000  # tokens a chain started here may spend (finished tasks); 0: no limit
 ```
+
+- Finished tasks report the tokens they used (their turn and their own delegations); a delegation is
+  refused once the chain has none left. It is checked before a task starts: a running turn is never
+  cut.
+- A turn that fails, is stopped or is over its limit fails its task; the caller sees why.
+- Prometheus (`/metrics`): `okbot_delegations_total` and `okbot_delegation_seconds_sum` by team
+  and outcome, `okbot_peer_tasks_total` by team and outcome.
 
 - A request carries its chain; a bot refuses one that already passed through it.
 - The deadline only shrinks along the chain; a request past it is refused.
@@ -172,7 +196,8 @@ max_concurrent = 2     # inbound tasks running at once per caller
 - `okbot peer tasks` lists inbound and outbound tasks; `okbot audit` shows the `delegate` calls. Each
   record carries the trace id shared by every bot of the chain.
 - A task that was running when its bot stopped is marked failed, never re-run by itself: delegated
-  work may have side effects.
+  work may have side effects. A task this bot delegated keeps being followed after a restart, so its
+  result still reaches the person who asked.
 
 ## 7. Two shapes
 
@@ -230,6 +255,7 @@ description = "Team leader; talks to people"
 
 [members.research]
 key = "ed25519:…"
+box_key = "x25519:…"
 relay = "lead"
 roles = ["member"]
 skills = ["web-research"]
@@ -244,3 +270,41 @@ accounts = ["zalo:shop/123", "discord:main/456"]
 ```
 
 `okbot team check <file>` validates a manifest and its signature.
+
+### Versions
+
+okbot sends A2A 1.0 (`SendMessage`, `GetTask`, `CancelTask`, `TASK_STATE_*`, parts without `kind`,
+headers `A2A-Version: 1.0` and `A2A-Extensions`). It answers 0.3 requests (`message/send`,
+`tasks/get`, `tasks/cancel`) in 0.3's shapes, and an `A2A-Version` it does not know with
+`VersionNotSupported` (-32009). A finished task's status message carries
+`{"okbot/usage": {"tokens": n}}` in its metadata.
+
+## 9. Agents and programs that are not okbots
+
+`[a2a]` makes them the built-in team `external`:
+
+```toml
+[a2a]
+delegate_roles = ["everyone"]   # who here may make the agent delegate to these agents
+confirm = "always"              # the requester approves each delegation
+
+[[a2a.agent]]                   # an A2A agent this bot may delegate to
+name = "travel"
+url = "https://agent.example.com/a2a"
+token_env = "TRAVEL_A2A_TOKEN"  # bearer token it expects, from .env
+version = "1.0"                 # or "0.3"
+description = "Books trains and hotels"
+skills = ["travel"]
+
+[[a2a.client]]                  # a program that may give this bot tasks
+name = "n8n"
+token_env = "N8N_A2A_TOKEN"     # the bearer token it presents
+roles = ["reports"]             # roles its tasks get here (never admins)
+person = "lan"                  # the [people] person it acts for (optional)
+```
+
+- An agent gets the task text only: never the person, the conversation or the chain.
+- A client posts A2A requests (1.0 or 0.3) to `<public_url>/a2a/external` with
+  `Authorization: Bearer <token>`. Its task starts a chain of one (whatever context it sends is
+  ignored), so it cannot be handed on, and its roles are intersected with its person's: without
+  `person`, it has only `everyone`.

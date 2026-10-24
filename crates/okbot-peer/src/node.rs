@@ -38,6 +38,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum ManifestSource {
     /// A file on this machine (trusted as is).
     File(PathBuf),
+    /// Built from `[a2a]` (the team `external`).
+    Builtin,
     /// An `https://` URL, with `<url>.sig` signed by the team key.
     Url {
         /// The manifest URL.
@@ -77,6 +79,8 @@ pub struct NodeConfig {
     pub state_dir: PathBuf,
     /// Teams.
     pub teams: Vec<TeamConfig>,
+    /// A2A agents and clients that are not okbots, and this bot's name among them.
+    pub external: Option<(String, crate::external::ExternalConfig)>,
 }
 
 /// One team as this bot knows it.
@@ -153,6 +157,10 @@ pub(crate) struct Inner {
     pub(crate) relay: crate::relay::Relay,
     /// Tokens reported for inbound tasks, until they end.
     pub(crate) usage: Mutex<HashMap<String, u64>>,
+    /// `[a2a]` agents and clients.
+    pub(crate) external: Option<crate::external::ExternalConfig>,
+    /// What the turn of each working inbound task is doing.
+    pub(crate) progress: Mutex<HashMap<String, String>>,
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -170,7 +178,7 @@ impl Inner {
             let manifest = match &team.source {
                 ManifestSource::File(path) => load_file(path, &team.id)?,
                 // Fetched before the node serves (see `Node::start`); empty until then.
-                ManifestSource::Url { .. } => Manifest::new(&team.id),
+                ManifestSource::Url { .. } | ManifestSource::Builtin => Manifest::new(&team.id),
             };
             teams.insert(
                 team.id.clone(),
@@ -181,6 +189,25 @@ impl Inner {
                 },
             );
         }
+        let external = config.external.map(|(me, external)| {
+            teams.insert(
+                crate::external::TEAM.to_string(),
+                Team {
+                    config: TeamConfig {
+                        id: crate::external::TEAM.into(),
+                        member: me.clone(),
+                        source: ManifestSource::Builtin,
+                        accept: !external.clients.is_empty(),
+                        max_depth: 1,
+                        max_concurrent: external.max_concurrent,
+                        task_timeout: external.task_timeout,
+                    },
+                    manifest: RwLock::new(Arc::new(external.manifest(&me))),
+                    forced: Mutex::new(None),
+                },
+            );
+            external
+        });
         let _ = rustls::crypto::ring::default_provider().install_default();
         Ok(Self {
             key: config.key,
@@ -202,6 +229,8 @@ impl Inner {
             down: Mutex::default(),
             relay: crate::relay::Relay::default(),
             usage: Mutex::default(),
+            external,
+            progress: Mutex::default(),
         })
     }
 
@@ -214,7 +243,9 @@ impl Inner {
         let mut problems = Vec::new();
         for team in self.teams.values() {
             let manifest = team.manifest();
-            if team.signed() && manifest.team.version == 0 {
+            if (team.signed() && manifest.team.version == 0)
+                || team.config.source == ManifestSource::Builtin
+            {
                 continue;
             }
             match manifest.members.get(&team.config.member) {
@@ -256,6 +287,7 @@ impl Inner {
     /// Reads a team's manifest again (from its file or URL).
     pub(crate) async fn refresh(&self, team: &Team) -> Result<bool, Error> {
         let manifest = match &team.config.source {
+            ManifestSource::Builtin => return Ok(false),
             ManifestSource::File(path) => load_file(path, &team.config.id)?,
             ManifestSource::Url { url, team_key } => {
                 let get = |u: String| async move {
@@ -293,6 +325,18 @@ impl Inner {
             .get(name)
             .ok_or_else(|| Error::Token(format!("`{name}` is not a member")))
             .and_then(member_key)
+    }
+
+    /// The A2A version `member` of `team` speaks: 1.0 for okbots, as configured for agents.
+    pub(crate) fn version_of(&self, team: &Team, member: &str) -> a2a::Version {
+        if team.config.source == ManifestSource::Builtin {
+            return self
+                .external
+                .as_ref()
+                .and_then(|e| e.agent(member))
+                .map_or(a2a::Version::V10, |a| a.version);
+        }
+        a2a::Version::V10
     }
 
     pub(crate) fn is_down(&self, team: &str, member: &str) -> bool {
@@ -345,6 +389,14 @@ impl Inner {
         member: &str,
         request: &a2a::Request,
     ) -> Result<Value, PeerError> {
+        if team.config.source == ManifestSource::Builtin {
+            let agent = self
+                .external
+                .as_ref()
+                .and_then(|e| e.agent(member))
+                .ok_or_else(|| PeerError::NoRoute(member.to_string()))?;
+            return crate::external::call(&self.http, agent, request).await;
+        }
         let manifest = team.manifest();
         let target = manifest
             .members

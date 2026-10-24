@@ -49,6 +49,35 @@ pub(crate) fn is_peer(event: &InboundEvent) -> bool {
     event.conversation.channel.platform() == PEER_PLATFORM
 }
 
+/// For a task from another bot: passes what the agent is doing to the caller (`task_status`).
+pub(crate) fn progress_fn(shared: &Shared, event: &InboundEvent) -> Option<okbot_core::ProgressFn> {
+    let peers = shared.peers.clone().filter(|_| is_peer(event))?;
+    let conversation = event.conversation.clone();
+    let task = event.message_id.as_ref().map(|m| m.as_str().to_string());
+    let text = std::sync::Mutex::new(String::new());
+    Some(okbot_core::ProgressFn::new(move |p| {
+        let mut text = text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = match p {
+            okbot_core::AgentProgress::TextDelta(t) => {
+                text.push_str(&t);
+                text.clone()
+            }
+            okbot_core::AgentProgress::Text(t) => {
+                *text = t;
+                text.clone()
+            }
+            okbot_core::AgentProgress::ToolUse(name) => {
+                text.clear();
+                crate::live::status_for(&name).trim_matches('_').to_string()
+            }
+            _ => return,
+        };
+        peers.progress(&conversation, task.as_deref(), &now);
+    }))
+}
+
 /// For a task from another bot: reports the tokens its turn used (with its own delegations).
 pub(crate) async fn report_usage(shared: &Shared, event: &InboundEvent, tokens: u64) {
     if let Some(peers) = shared.peers.as_ref().filter(|_| is_peer(event)) {
@@ -397,11 +426,18 @@ fn describe(task: &PeerTask) -> String {
             "`{}` is waiting for the person's answer to: {answer}",
             task.peer
         ),
-        PeerTaskState::Submitted | PeerTaskState::Working => format!(
-            "`{}` is still working on it (task `{}`). Its result will come to this conversation \
-             when it is done.",
-            task.peer, task.id
-        ),
+        PeerTaskState::Submitted | PeerTaskState::Working => {
+            let doing = if answer.is_empty() {
+                String::new()
+            } else {
+                format!(" Latest progress: {answer}")
+            };
+            format!(
+                "`{}` is still working on it (task `{}`). Its result will come to this \
+                 conversation when it is done.{doing}",
+                task.peer, task.id
+            )
+        }
     }
 }
 

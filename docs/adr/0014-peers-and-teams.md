@@ -129,3 +129,33 @@ fail in one of them (ADR 0011).
   the agent's tools and the configuration do not change.
 - New crate `okbot-peer` (an adapter: `Channel` for inbound tasks, the `Peers` port for outbound);
   `okbot-core` gains the `Peers` port and its types.
+
+## Amendments (2026-10-24, P28)
+- **A2A 1.0 first.** okbot sends A2A 1.0 (`SendMessage`, `GetTask`, `CancelTask`, `TASK_STATE_*`,
+  parts without `kind`, `A2A-Version: 1.0`, `A2A-Extensions`) and answers 0.3 requests in 0.3's
+  shapes; a version it does not know gets `VersionNotSupported` (-32009). The Agent Card lists both
+  interfaces in `supportedInterfaces`.
+- **Sealed through relays.** Each bot also has an X25519 key (`state/peer.box`, `box_key` in the
+  manifest). What passes through a relay is sealed for its recipient (a fresh X25519 key per
+  message, HKDF-SHA256, ChaCha20-Poly1305); the okp1 tokens still sign the plain bodies. A member
+  reached through a relay must have a `box_key`, so a relay forwards bytes it cannot read.
+- **Agents and programs outside okbot** form the built-in team `external` (`[a2a]`):
+  `[[a2a.agent]]` are agents this bot may delegate to (bearer token, the version they speak; they
+  get the task text only, never the person or the chain); `[[a2a.client]]` may give this bot tasks
+  at `/a2a/external` with a bearer token. A client's task starts a chain of one (its own context is
+  ignored), acts for the client's `person` if configured, and gets the client's roles intersected
+  with that person's — so without a person, only `everyone`.
+- **Durable to the end.** Outbound tasks record who asked; after a restart the runtime follows the
+  unfinished ones again. A peer turn that fails, stops or is over its limit fails its task
+  (`Peers::fail`) rather than completing it with a chat apology. `CancelTask` stops the callee's
+  turn; the agent has `task_cancel`.
+- **Token budget.** `[teams.<id>] chain_tokens` caps the tokens a chain started here may spend.
+  Finished tasks report what they used (`okbot/usage` in the status message's metadata: their turn
+  and their own delegations); a delegation is refused once the chain has none left. It is checked
+  before a task starts; a running turn is never cut.
+- **Progress, not streaming.** A working task carries the latest progress of its turn (the tool in
+  use, or the text being written) in `GetTask`. `SendStreamingMessage` is not offered: the runtime's
+  HTTP server answers each request once, and callers already poll.
+- **Setup and metrics.** `okbot team join` writes `[teams.<team>]` (and adds a local bot to the
+  local manifest); `okbot init` offers it. Prometheus gains `okbot_delegations_total`,
+  `okbot_delegation_seconds_sum` and `okbot_peer_tasks_total`.

@@ -29,6 +29,7 @@ struct FakePeers {
     cancelled: Mutex<Vec<()>>,
     failed: Mutex<Vec<(ConversationKey, Option<String>, String)>>,
     usage: Mutex<Vec<(Option<String>, u64)>>,
+    progress: Mutex<Vec<String>>,
 }
 
 fn task(state: PeerTaskState, text: &str) -> PeerTask {
@@ -67,6 +68,10 @@ impl Peers for FakePeers {
     async fn cancel(&self, _: &str, _: &str, _: &str) -> Result<PeerTask, PeerError> {
         self.cancelled.lock().unwrap().push(());
         Ok(task(PeerTaskState::Canceled, "stopped"))
+    }
+
+    fn progress(&self, _: &ConversationKey, _: Option<&str>, text: &str) {
+        self.progress.lock().unwrap().push(text.to_string());
     }
 
     async fn report_usage(&self, _: &ConversationKey, task: Option<&str>, tokens: u64) {
@@ -615,4 +620,45 @@ async fn a_peer_turn_reports_the_tokens_it_used() {
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0].1, 110, "input + output of the turn");
     bot.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_peer_turn_passes_its_progress_to_the_caller() {
+    let channel = Arc::new(FakeChannel::new("peer:local", ChannelCaps::basic()));
+    let peers = Arc::new(FakePeers::default());
+    let agent = okbot_testkit::FakeAgent::streaming(
+        "streamer",
+        vec![
+            okbot_core::AgentProgress::ToolUse("WebSearch".into()),
+            okbot_core::AgentProgress::TextDelta("Found two ".into()),
+            okbot_core::AgentProgress::TextDelta("releases".into()),
+        ],
+        Duration::from_millis(5),
+        "done",
+    );
+    let runtime = Runtime::builder(RuntimeConfig::new(
+        "okbot",
+        std::env::temp_dir().join("okbot-team-tests"),
+    ))
+    .store(Arc::new(MemoryStore::new(Arc::new(
+        okbot_core::SystemClock,
+    ))))
+    .agent(Arc::new(agent))
+    .renderer(Arc::new(PlainRenderer))
+    .channel(channel.clone())
+    .peers(peers.clone())
+    .build()
+    .unwrap();
+    let handle = runtime.handle();
+    tokio::spawn(async move { runtime.run(CancellationToken::new()).await.unwrap() });
+    channel
+        .inject(inbound("peer:local", "a/1", "assistant", "what is new?"))
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    assert_eq!(
+        peers.progress.lock().unwrap().clone(),
+        ["Searching the web…", "Found two ", "Found two releases"]
+    );
 }

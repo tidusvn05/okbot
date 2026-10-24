@@ -17,11 +17,12 @@ use okbot_core::Secret;
 
 pub use edit::ConfigEditor;
 pub use schema::{
-    AgentSection, AutomationSection, BotProfile, BotSection, BridgeSection, ChannelAccess,
-    ChannelsSection, CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery,
-    GChatSection, HttpSection, LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection,
-    OAuthSection, PersonSection, ProviderSection, ReplyOn, RestrictSection, RoomSection,
-    ScheduleSection, SlackSection, SourceSection, TeamSection, TelegramSection, ZaloSection,
+    A2aAgentSection, A2aClientSection, A2aSection, AgentSection, AutomationSection, BotProfile,
+    BotSection, BridgeSection, ChannelAccess, ChannelsSection, CommandSection, Confirm, ConfirmBy,
+    Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection, LimitsSection, McpAuth,
+    McpCredentials, McpSection, NotifySection, OAuthSection, PersonSection, ProviderSection,
+    ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection, SourceSection,
+    TeamSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -255,6 +256,8 @@ pub struct Config {
     pub automations: Vec<AutomationSection>,
     /// `[teams.<id>]`: teams of okbots this bot belongs to (ADR 0014).
     pub teams: BTreeMap<String, TeamSection>,
+    /// `[a2a]`: A2A agents and clients that are not okbots.
+    pub a2a: A2aSection,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -312,6 +315,7 @@ impl Config {
             limits: file.limits,
             automations: file.automation,
             teams: file.teams,
+            a2a: file.a2a,
             dotenv,
         };
         config.validate()?;
@@ -327,7 +331,7 @@ impl Config {
         self.validate_commands()?;
         self.validate_notify()?;
         self.validate_automations()?;
-        self.validate_teams()?;
+        self.validate_peers()?;
         self.validate_http()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
@@ -436,8 +440,82 @@ impl Config {
         Ok(())
     }
 
+    /// `[teams]` and `[a2a]` (ADR 0014).
+    fn validate_peers(&self) -> Result<(), ConfigError> {
+        self.validate_teams()?;
+        self.validate_a2a()
+    }
+
+    fn validate_a2a(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        let a = &self.a2a;
+        self.check_roles("[a2a] delegate_roles", &a.delegate_roles)?;
+        if a.confirm == Confirm::Destructive {
+            return invalid("[a2a] confirm is `never` or `always`".into());
+        }
+        if !a.client.is_empty() && self.http.listen.is_none() {
+            return invalid(
+                "[[a2a.client]] needs [http] listen (clients post to /a2a/external)".into(),
+            );
+        }
+        let mut names = std::collections::HashSet::new();
+        for agent in &a.agent {
+            if !is_slug(&agent.name) || !names.insert(&agent.name) {
+                return invalid(format!(
+                    "[[a2a.agent]] name `{}` must be a unique slug (a-z, 0-9, `-`, `_`)",
+                    agent.name
+                ));
+            }
+            if !agent.url.starts_with("https://") && !agent.url.starts_with("http://127.0.0.1") {
+                return invalid(format!(
+                    "[[a2a.agent]] `{}`: url must be https://",
+                    agent.name
+                ));
+            }
+            if !matches!(agent.version.as_str(), "1.0" | "0.3") {
+                return invalid(format!(
+                    "[[a2a.agent]] `{}`: version is `1.0` or `0.3`",
+                    agent.name
+                ));
+            }
+        }
+        for client in &a.client {
+            if !is_slug(&client.name) || !names.insert(&client.name) {
+                return invalid(format!(
+                    "[[a2a.client]] name `{}` must be a unique slug, not an agent's",
+                    client.name
+                ));
+            }
+            if client.token_env.is_empty() {
+                return invalid(format!("[[a2a.client]] `{}` needs token_env", client.name));
+            }
+            if client.roles.iter().any(|r| r == "admins") {
+                return invalid(format!(
+                    "[[a2a.client]] `{}`: `admins` is never given to another program",
+                    client.name
+                ));
+            }
+            self.check_roles(
+                &format!("[[a2a.client]] `{}` roles", client.name),
+                &client.roles,
+            )?;
+            if let Some(person) = &client.person
+                && !self.people.contains_key(person)
+            {
+                return invalid(format!(
+                    "[[a2a.client]] `{}`: person `{person}` is not in [people]",
+                    client.name
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_teams(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
+        if self.teams.contains_key("external") {
+            return invalid("[teams.external] is reserved for [a2a] agents and clients".into());
+        }
         for (id, team) in &self.teams {
             if !is_slug(id) {
                 return invalid(format!(

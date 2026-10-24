@@ -714,6 +714,11 @@ Exit criteria: a delegated task survives a restart of either bot; a chain stops 
 budget; a relay sees only sealed bytes; a 0.3 client and a 1.0 client both get answers; an external
 A2A agent answers a delegation and an external client's task runs with its mapped roles only.
 
+Status (2026-10-24): done in code and tests (resume after restart, failed and cancelled turns,
+`team join`, metrics, the token budget, sealing through a relay, 0.3 and 1.0 clients against one
+endpoint, agents speaking 1.0 and 0.3, a client's task with its person and roles, progress through
+`GetTask`).
+
 ---
 
 ## Part 5 — Release checklist (every release)

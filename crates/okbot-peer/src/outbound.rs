@@ -149,8 +149,15 @@ impl Node {
                         }
                     }
                     (_, Some(url), _) => match self.inner.http.get(url).send().await {
-                        // Without a token the endpoint answers 401: it is there.
+                        // Without a token the endpoint answers 401: it is there. An agent
+                        // outside okbot may answer anything short of a server error.
                         Ok(r) if r.status().as_u16() == 401 => (true, url.clone()),
+                        Ok(r)
+                            if team.config.id == crate::external::TEAM
+                                && r.status().as_u16() < 500 =>
+                        {
+                            (true, url.clone())
+                        }
                         Ok(r) => (
                             false,
                             format!("{url} answered HTTP {}", r.status().as_u16()),
@@ -267,10 +274,8 @@ impl Node {
     }
 
     async fn get(&self, team: &Team, peer: &str, id: &str) -> Result<PeerTask, PeerError> {
-        let request = a2a::Request::new(
-            a2a::method(a2a::Op::Get, a2a::Version::V10),
-            json!({"id": id}),
-        );
+        let version = self.inner.version_of(team, peer);
+        let request = a2a::Request::new(a2a::method(a2a::Op::Get, version), json!({"id": id}));
         let value = self.inner.call(team, peer, &request).await?;
         task_from(&team.config.id, peer, &value)
     }
@@ -355,15 +360,21 @@ impl Peers for Node {
                 context.origin.conversation, team.config.member
             )))[..24]
                 .to_string();
-            let message = a2a::Message::user(
+            let mut message = a2a::Message::user(
                 &delegation.message_id,
                 &context_id,
                 vec![Part::Text(delegation.task.clone())],
-            )
-            .with_context(&context);
+            );
+            if team.config.id == crate::external::TEAM {
+                // An agent outside okbot gets the task only: no person, no chain.
+                message.extensions.clear();
+            } else {
+                message = message.with_context(&context);
+            }
+            let version = self.inner.version_of(team, &member);
             let request = a2a::Request::new(
-                a2a::method(a2a::Op::Send, a2a::Version::V10),
-                json!({"message": message.to_wire(a2a::Version::V10)}),
+                a2a::method(a2a::Op::Send, version),
+                json!({"message": message.to_wire(version)}),
             );
             match self.inner.call(team, &member, &request).await {
                 Ok(value) => {
@@ -392,10 +403,8 @@ impl Peers for Node {
 
     async fn cancel(&self, team: &str, peer: &str, task: &str) -> Result<PeerTask, PeerError> {
         let team = self.team(team)?;
-        let request = a2a::Request::new(
-            a2a::method(a2a::Op::Cancel, a2a::Version::V10),
-            json!({"id": task}),
-        );
+        let version = self.inner.version_of(team, peer);
+        let request = a2a::Request::new(a2a::method(a2a::Op::Cancel, version), json!({"id": task}));
         let value = self.inner.call(team, peer, &request).await?;
         let task = task_from(&team.config.id, peer, &value)?;
         self.record(&task, None).await;
@@ -404,6 +413,10 @@ impl Peers for Node {
 
     async fn report_usage(&self, conversation: &ConversationKey, task: Option<&str>, tokens: u64) {
         crate::inbound::usage(&self.inner, conversation, task, tokens);
+    }
+
+    fn progress(&self, conversation: &ConversationKey, task: Option<&str>, text: &str) {
+        crate::inbound::progress(&self.inner, conversation, task, text);
     }
 
     async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str) {
@@ -424,9 +437,10 @@ impl Peers for Node {
         );
         message.context_id = None;
         message.task_id = Some(task.id.clone());
+        let version = self.inner.version_of(team, &task.peer);
         let request = a2a::Request::new(
-            a2a::method(a2a::Op::Send, a2a::Version::V10),
-            json!({"message": message.to_wire(a2a::Version::V10)}),
+            a2a::method(a2a::Op::Send, version),
+            json!({"message": message.to_wire(version)}),
         );
         let value = self.inner.call(team, &task.peer, &request).await?;
         let next = task_from(&team.config.id, &task.peer, &value)?;

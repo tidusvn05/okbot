@@ -340,7 +340,7 @@ async fn answer_batch(
             );
             (Some(progress), Some(live))
         }
-        None => (None, None),
+        None => (crate::team::progress_fn(shared, event), None),
     };
     let turn = AgentTurn {
         system: prompt.system,

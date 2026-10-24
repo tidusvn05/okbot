@@ -127,7 +127,7 @@ pub(crate) async fn node(
     config: &okbot_config::Config,
     store: std::sync::Arc<okbot_store::SqliteStore>,
 ) -> anyhow::Result<Option<okbot_peer::Node>> {
-    if config.teams.is_empty() {
+    if config.teams.is_empty() && config.a2a.agent.is_empty() && config.a2a.client.is_empty() {
         return Ok(None);
     }
     let node = node_unstarted(config, store)?;
@@ -175,17 +175,63 @@ pub(crate) fn node_unstarted(
         });
     }
     let box_key = okbot_peer::BoxKey::for_bot(&state)?;
+    let external = external(config)?.map(|e| (default_member.clone(), e));
     okbot_peer::Node::new(
         okbot_peer::NodeConfig {
             key,
             box_key,
             state_dir: state,
             teams,
+            external,
         },
         store,
         std::sync::Arc::new(okbot_core::SystemClock),
     )
     .context("cannot start the bot's teams")
+}
+
+/// `[a2a]` agents and clients, with their tokens.
+fn external(config: &okbot_config::Config) -> anyhow::Result<Option<okbot_peer::ExternalConfig>> {
+    let a = &config.a2a;
+    if a.agent.is_empty() && a.client.is_empty() {
+        return Ok(None);
+    }
+    let mut agents = Vec::new();
+    for agent in &a.agent {
+        agents.push(okbot_peer::ExternalAgent {
+            name: agent.name.clone(),
+            url: agent.url.clone(),
+            token: if agent.token_env.is_empty() {
+                None
+            } else {
+                Some(
+                    config
+                        .secret(&agent.token_env)
+                        .with_context(|| format!("[[a2a.agent]] `{}` token_env", agent.name))?,
+                )
+            },
+            version: okbot_peer::a2a::Version::parse(Some(&agent.version))
+                .unwrap_or(okbot_peer::a2a::Version::V10),
+            description: agent.description.clone(),
+            skills: agent.skills.clone(),
+        });
+    }
+    let mut clients = Vec::new();
+    for client in &a.client {
+        clients.push(okbot_peer::ExternalClient {
+            name: client.name.clone(),
+            token: config
+                .secret(&client.token_env)
+                .with_context(|| format!("[[a2a.client]] `{}` token_env", client.name))?,
+            person: client.person.clone(),
+        });
+    }
+    Ok(Some(okbot_peer::ExternalConfig {
+        agents,
+        clients,
+        max_concurrent: a.max_concurrent,
+        task_timeout: std::time::Duration::from_secs(a.task_timeout),
+    }))
 }
 
 /// A bot name as a member name: lowercase, other characters as `-`.

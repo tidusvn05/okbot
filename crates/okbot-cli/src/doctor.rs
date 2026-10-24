@@ -526,7 +526,7 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
 
 /// `[teams]` (ADR 0014): manifests, membership, and the members this bot may call.
 async fn check_teams(config: &Config, store: okbot_store::SqliteStore, r: &mut Report) {
-    if config.teams.is_empty() {
+    if config.teams.is_empty() && config.a2a.agent.is_empty() && config.a2a.client.is_empty() {
         return;
     }
     let node = match crate::team::node_unstarted(config, std::sync::Arc::new(store)) {

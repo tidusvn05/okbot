@@ -25,6 +25,9 @@ Two rules decide everything:
 
 ## 1. Bots on one machine
 
+The shortest way: `okbot team join local --bot <name>` for each bot (`okbot init` offers it). It
+writes `[teams.local]` and adds the bot to the manifest. Step by step:
+
 ```sh
 okbot team init local
 okbot team add local assistant --dir /srv/bots/assistant --role main
@@ -67,7 +70,7 @@ okbot peer id                     # on each bot's machine: its public key
 okbot team init acme --owner
 okbot team add acme lead   --key ed25519:… --url https://lead.example.com/a2a/acme --role leader
 okbot team add acme writer --key ed25519:… --url https://writer.example.net/a2a/acme --skill writing
-okbot team add acme laptop --key ed25519:… --relay lead --skill research
+okbot team add acme laptop --key ed25519:… --box-key x25519:… --relay lead --skill research
 okbot team link acme --from role:leader --to '*'
 okbot team sign acme --days 30
 okbot team publish acme --to /var/www/team
@@ -92,7 +95,8 @@ roles = { leader = ["everyone"] }
   again before `expires`. Removing a member (`okbot team remove`, then `okbot team sign`) takes
   effect within 10 minutes.
 - A bot behind NAT (a laptop) uses `--relay <member>`: it polls that member, which passes requests
-  on. Requests and answers stay signed, so the relay cannot forge them, but it can read them.
+  on. Requests and answers are signed and sealed with the recipient's box key (`okbot peer id`, second
+  line; `--box-key`), so the relay can neither forge nor read them.
 - The published manifest lists members, their URLs and the `people` in it: put it where only the
   team can fetch it, and prefer each bot's own `[people]` for accounts.
 
@@ -116,7 +120,12 @@ max_concurrent = 2     # tasks at once per calling bot
 wait = 60              # seconds delegate waits before the task continues in the background
 task_timeout = 600     # seconds a task this bot delegates may take
 confirm = "always"     # the requester approves each delegation first
+chain_tokens = 200000  # tokens a chain started here may spend; 0: no limit
 ```
+
+The agent can also stop a task (`task_cancel`), and `task_status` shows what a running task is
+doing. Prometheus counts delegations and tasks from other bots (`okbot_delegations_total`,
+`okbot_peer_tasks_total`).
 
 A task still running after `wait` keeps going; its result starts a new turn in the conversation it
 came from. Each bot's agent turn counts against the person's `[limits]` on that bot.
@@ -127,7 +136,31 @@ came from. Each bot's agent turn counts against the person's `[limits]` on that 
 - `okbot peer tasks`: tasks given and received, with the trace id shared by every bot of a chain.
 - `okbot audit`: the `delegate` calls, with who asked.
 
-## 6. Two shapes
+## 6. Agents and programs that are not okbots
+
+```toml
+[a2a]
+delegate_roles = ["everyone"]
+
+[[a2a.agent]]
+name = "travel"
+url = "https://agent.example.com/a2a"
+token_env = "TRAVEL_A2A_TOKEN"
+version = "1.0"
+skills = ["travel"]
+
+[[a2a.client]]
+name = "n8n"
+token_env = "N8N_A2A_TOKEN"
+roles = ["everyone"]
+person = "lan"
+```
+
+An agent (any A2A 1.0 or 0.3 server) gets the task text only, never the person. A client posts A2A
+requests to `<public_url>/a2a/external` with its bearer token; its task cannot be handed on, and
+without `person` it has only `everyone`.
+
+## 7. Two shapes
 
 **Main assistant with specialists.** The assistant faces people. The research bot reads the web and
 has no link to ops. The ops bot accepts only the assistant, maps it to a narrow role, and sets

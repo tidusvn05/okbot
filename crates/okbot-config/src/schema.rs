@@ -35,6 +35,92 @@ pub(crate) struct File {
     pub(crate) automation: Vec<AutomationSection>,
     #[serde(default)]
     pub(crate) teams: BTreeMap<String, TeamSection>,
+    #[serde(default)]
+    pub(crate) a2a: A2aSection,
+}
+
+/// `[a2a]`: A2A agents that are not okbots (ADR 0014): agents this bot may delegate to, and
+/// programs that may give it tasks. They are the team `external`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct A2aSection {
+    /// Who here may make the agent delegate to `[[a2a.agent]]`s.
+    #[serde(default = "admins_only")]
+    pub delegate_roles: Vec<String>,
+    /// `always`: the requester approves each delegation first.
+    #[serde(default)]
+    pub confirm: Confirm,
+    /// Seconds `delegate` waits before the task continues in the background.
+    #[serde(default = "default_wait")]
+    pub wait: u64,
+    /// Tasks from each client at once.
+    #[serde(default = "default_concurrent")]
+    pub max_concurrent: u32,
+    /// Seconds a task from a client may take.
+    #[serde(default = "default_task_timeout")]
+    pub task_timeout: u64,
+    /// Agents this bot may delegate to.
+    #[serde(default)]
+    pub agent: Vec<A2aAgentSection>,
+    /// Programs that may give this bot tasks (`POST /a2a/external`).
+    #[serde(default)]
+    pub client: Vec<A2aClientSection>,
+}
+
+impl Default for A2aSection {
+    fn default() -> Self {
+        Self {
+            delegate_roles: admins_only(),
+            confirm: Confirm::Never,
+            wait: default_wait(),
+            max_concurrent: default_concurrent(),
+            task_timeout: default_task_timeout(),
+            agent: Vec::new(),
+            client: Vec::new(),
+        }
+    }
+}
+
+/// `[[a2a.agent]]`: an A2A agent this bot may delegate to.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct A2aAgentSection {
+    /// Its name for the agent here (`delegate` to it).
+    pub name: String,
+    /// Its JSON-RPC endpoint (`https://`).
+    pub url: String,
+    /// Variable (environment or `.env`) holding the bearer token it expects, if any.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token_env: String,
+    /// The A2A version it speaks: `1.0` or `0.3`.
+    #[serde(default = "default_a2a_version")]
+    pub version: String,
+    /// What it does.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Skills, for `skill:<name>` targets.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+fn default_a2a_version() -> String {
+    "1.0".into()
+}
+
+/// `[[a2a.client]]`: a program that may give this bot tasks with a bearer token.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct A2aClientSection {
+    /// Its name (in logs, audit, `peer:external/<name>`).
+    pub name: String,
+    /// Variable holding the bearer token it presents.
+    pub token_env: String,
+    /// Roles its tasks get here (never `admins`).
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// The `[people]` person it acts for; without one, its tasks have only `everyone`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
 }
 
 /// `[teams.<id>]`: this bot in a team of okbots that delegate work to each other (ADR 0014). The

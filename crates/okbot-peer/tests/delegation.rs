@@ -167,6 +167,7 @@ async fn start(
                 max_concurrent: 2,
                 task_timeout: Duration::from_secs(60),
             }],
+            external: None,
         },
         store.clone(),
         clock,
@@ -438,12 +439,22 @@ async fn a_task_that_runs_long_keeps_running_and_concurrency_is_capped() {
     }
     let file = manifest(root.path(), &["assistant", "slow"], links("role:main", "*"));
     let assistant = start(root.path(), "assistant", &file, false, Behaviour::Echo).await;
-    let _slow = start(root.path(), "slow", &file, true, Behaviour::Silent).await;
+    let slow = start(root.path(), "slow", &file, true, Behaviour::Silent).await;
 
     let mut quick = delegation("slow", "m-1", Vec::new());
     quick.wait = Duration::from_millis(200);
     let task = assistant.node.delegate(quick.clone()).await.unwrap();
     assert_eq!(task.state, PeerTaskState::Working);
+    // What the other turn is doing shows while it works.
+    let event = slow.runtime.events.lock().unwrap()[0].clone();
+    slow.node
+        .progress(&event.conversation, Some(&task.id), "Searching the web…");
+    let now = assistant
+        .node
+        .status("local", "slow", &task.id)
+        .await
+        .unwrap();
+    assert_eq!(now.text.as_deref(), Some("Searching the web…"));
     quick.message_id = "m-2".into();
     assistant.node.delegate(quick.clone()).await.unwrap();
     quick.message_id = "m-3".into();
@@ -732,4 +743,177 @@ async fn a_0_3_client_gets_0_3_answers_and_a_1_0_client_gets_1_0() {
         .await
         .unwrap();
     assert_eq!(reply["error"]["code"], -32009, "{reply}");
+}
+
+/// An A2A agent outside okbot: answers every send with a completed task, in its version, and
+/// records what it received.
+async fn foreign_agent(
+    version: &'static str,
+) -> (String, Arc<Mutex<Vec<(serde_json::Value, Option<String>)>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let app = axum::Router::new().route(
+        "/a2a",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<serde_json::Value>| {
+                let log = log.clone();
+                async move {
+                    let auth = headers
+                        .get("authorization")
+                        .map(|v| v.to_str().unwrap().to_string());
+                    log.lock().unwrap().push((body.clone(), auth));
+                    let text = body
+                        .pointer("/params/message/parts/0/text")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("?")
+                        .to_string();
+                    let result = if version == "1.0" {
+                        serde_json::json!({"task": {"id": "x-1", "contextId": "c",
+                            "status": {"state": "TASK_STATE_COMPLETED", "message": {
+                                "role": "ROLE_AGENT", "messageId": "r", "parts": [{"text": format!("booked: {text}")}]}}}})
+                    } else {
+                        serde_json::json!({"kind": "task", "id": "x-1", "contextId": "c",
+                            "status": {"state": "completed", "message": {"kind": "message",
+                                "role": "agent", "messageId": "r",
+                                "parts": [{"kind": "text", "text": format!("booked: {text}")}]}}})
+                    };
+                    axum::Json(serde_json::json!({"jsonrpc": "2.0", "id": body["id"], "result": result}))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}/a2a"), seen)
+}
+
+async fn external_node(
+    root: &Path,
+    external: okbot_peer::ExternalConfig,
+    behaviour: Behaviour,
+) -> (Node, Arc<FakeRuntime>) {
+    let dir = bot_dir(root, "me");
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let node = Node::new(
+        NodeConfig {
+            key: SigningKey::for_bot(&dir.join("state")).unwrap(),
+            box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
+            state_dir: dir.join("state"),
+            teams: Vec::new(),
+            external: Some(("me".into(), external)),
+        },
+        Arc::new(MemoryStore::new(clock.clone())),
+        clock,
+    )
+    .unwrap();
+    assert_eq!(node.start().await, Vec::<String>::new());
+    let runtime = Arc::new(FakeRuntime {
+        channel: OnceLock::new(),
+        node: OnceLock::new(),
+        behaviour,
+        events: Mutex::default(),
+        answers: Mutex::default(),
+    });
+    let channel = node.channels().into_iter().next().unwrap();
+    runtime.channel.set(channel.clone()).ok().unwrap();
+    let sink: Arc<dyn InboundSink> = runtime.clone();
+    tokio::spawn(async move { channel.run(sink, CancellationToken::new()).await });
+    (node, runtime)
+}
+
+#[tokio::test]
+async fn agents_outside_okbot_get_the_task_only_in_their_version() {
+    let root = tempfile::tempdir().unwrap();
+    let (new_url, new_seen) = foreign_agent("1.0").await;
+    let (old_url, old_seen) = foreign_agent("0.3").await;
+    let agent = |name: &str, url: String, version| okbot_peer::ExternalAgent {
+        name: name.into(),
+        url,
+        token: Some(okbot_core::Secret::new(format!("{name}-token"))),
+        version,
+        description: format!("{name} agent"),
+        skills: vec!["travel".into()],
+    };
+    let (node, _) = external_node(
+        root.path(),
+        okbot_peer::ExternalConfig {
+            agents: vec![
+                agent("modern", new_url, okbot_peer::a2a::Version::V10),
+                agent("legacy", old_url, okbot_peer::a2a::Version::V03),
+            ],
+            clients: Vec::new(),
+            max_concurrent: 2,
+            task_timeout: Duration::from_secs(60),
+        },
+        Behaviour::Echo,
+    )
+    .await;
+    assert_eq!(node.directory().await.unwrap().len(), 2);
+    for (name, seen, method) in [
+        ("modern", &new_seen, "SendMessage"),
+        ("legacy", &old_seen, "message/send"),
+    ] {
+        let task = node
+            .delegate(delegation(name, &format!("m-{name}"), Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(task.state, PeerTaskState::Completed, "{name}");
+        assert_eq!(task.text.as_deref(), Some("booked: Find the release notes"));
+        let (body, auth) = seen.lock().unwrap()[0].clone();
+        assert_eq!(body["method"], method);
+        assert_eq!(
+            auth.as_deref(),
+            Some(format!("Bearer {name}-token").as_str())
+        );
+        assert!(
+            body.pointer("/params/message/metadata").is_none(),
+            "no person, no chain"
+        );
+    }
+}
+
+#[tokio::test]
+async fn clients_outside_okbot_give_tasks_with_a_bearer_token() {
+    let root = tempfile::tempdir().unwrap();
+    let (node, runtime) = external_node(
+        root.path(),
+        okbot_peer::ExternalConfig {
+            agents: Vec::new(),
+            clients: vec![okbot_peer::ExternalClient {
+                name: "n8n".into(),
+                token: okbot_core::Secret::new("n8n-secret".into()),
+                person: Some("lan".into()),
+            }],
+            max_concurrent: 2,
+            task_timeout: Duration::from_secs(60),
+        },
+        Behaviour::Silent,
+    )
+    .await;
+    let url = serve_http(runtime.channel.get().unwrap().clone()).await;
+    let send = |token: &'static str| {
+        reqwest::Client::new()
+            .post(&url)
+            .bearer_auth(token)
+            .header("a2a-version", "1.0")
+            .json(&serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+                "params": {"message": {"role": "ROLE_USER", "messageId": "m-1",
+                    "parts": [{"text": "summarise the inbox"}],
+                    // A client cannot claim a chain or a person: ignored.
+                    "metadata": {"okbot/delegation": {"origin": {"bot": "x", "conversation": "",
+                        "person": "boss", "name": "x"}, "chain": [], "deadline": "2099-01-01T00:00:00Z",
+                        "budget": {"turns": 9}, "trace": "t"}}}}}))
+            .send()
+    };
+    assert_eq!(send("wrong").await.unwrap().status().as_u16(), 401);
+    let reply: serde_json::Value = send("n8n-secret").await.unwrap().json().await.unwrap();
+    assert!(reply["result"]["task"]["id"].is_string(), "{reply}");
+    let event = runtime.events.lock().unwrap()[0].clone();
+    assert_eq!(event.conversation.channel.to_string(), "peer:external");
+    let caller = node.caller(&event.conversation).await.unwrap();
+    assert_eq!(caller.roles, ["n8n"]);
+    assert_eq!(caller.context.origin.person.as_deref(), Some("lan"));
+    assert_eq!(caller.context.chain, ["n8n"]);
+    assert_eq!(caller.context.budget.turns, 1, "it cannot delegate further");
 }
