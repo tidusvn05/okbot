@@ -489,7 +489,7 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
         Status::Ok,
         dir.join(okbot_config::CONFIG_FILE).display().to_string(),
     );
-    if config.channels.is_empty() {
+    if config.channels.is_empty() && config.teams.is_empty() && config.a2a.client.is_empty() {
         r.add(
             "channels",
             Status::Warn,

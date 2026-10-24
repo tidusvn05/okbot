@@ -621,6 +621,45 @@ async fn a_member_behind_nat_is_reached_through_its_relay() {
         .await
         .unwrap();
     assert_eq!(from_lead.state, PeerTaskState::Completed, "{from_lead:?}");
+
+    // `okbot chat` in the lead's directory: same keys, but it does not serve the team, so its
+    // requests for research go to the running lead, whose queue research polls.
+    let chat = unserved(root.path(), "lead", &file).await;
+    let from_chat = chat
+        .delegate(delegation("research", "m-3", Vec::new()))
+        .await
+        .unwrap();
+    assert_eq!(from_chat.state, PeerTaskState::Completed, "{from_chat:?}");
+    assert_eq!(research.runtime.events.lock().unwrap().len(), 3);
+}
+
+/// A node with a bot's keys that delegates without serving its teams, as `okbot chat` does.
+async fn unserved(root: &Path, name: &str, manifest: &Path) -> Node {
+    let dir = root.join(name);
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let node = Node::new(
+        NodeConfig {
+            key: SigningKey::for_bot(&dir.join("state")).unwrap(),
+            box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
+            state_dir: dir.join("state"),
+            sockets: root.join("run"),
+            teams: vec![TeamConfig {
+                id: "local".into(),
+                member: name.into(),
+                source: ManifestSource::File(manifest.to_path_buf()),
+                accept: false,
+                max_depth: 2,
+                max_concurrent: 2,
+                task_timeout: Duration::from_secs(60),
+            }],
+            external: None,
+        },
+        Arc::new(MemoryStore::new(clock.clone())),
+        clock,
+    )
+    .unwrap();
+    assert_eq!(node.start().await, [] as [std::string::String; 0]);
+    node
 }
 
 #[tokio::test]
