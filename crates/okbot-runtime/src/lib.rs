@@ -30,6 +30,7 @@ mod policy;
 mod roles;
 mod schedule;
 mod stdio;
+mod team;
 #[cfg(test)]
 mod test_support;
 mod turn;
@@ -50,7 +51,7 @@ pub use config::{
     ArgKind, Automation, AutomationAction, CommandArg, Confirm, ConfirmBy, Credentials, ExtraMcp,
     Limits, McpCommand, McpRules, Member, NotifyRoute, OAuthSettings, OWNER, ROLE_ADMINS,
     ROLE_EVERYONE, Restrict, Roles, RunAs, RuntimeConfig, ScheduleConfig, Source, StdioServer,
-    Trigger,
+    TeamPolicy, Trigger,
 };
 pub use http::HttpOptions;
 pub use roles::{MAX_GRANT, parse_duration};
@@ -141,6 +142,11 @@ pub(crate) struct Shared {
     pub(crate) gateway: Arc<gateway::Gateway>,
     /// OAuth credentials of `[[mcp]] auth = "oauth"` servers.
     pub(crate) oauth: Option<Arc<oauth::Connector>>,
+    /// Other bots of this bot's teams (ADR 0014).
+    pub(crate) peers: Option<Arc<dyn okbot_core::Peers>>,
+    /// The runtime's own sink, for results of delegated work that arrive later (weak: the sink
+    /// holds this state).
+    pub(crate) sink: std::sync::OnceLock<std::sync::Weak<EventSink>>,
 }
 
 impl Shared {
@@ -158,6 +164,9 @@ impl Shared {
     /// The person behind the author of `event`: the owner on a personal bot, or the person the
     /// operator linked the account to.
     pub(crate) async fn person_of(&self, event: &InboundEvent) -> Option<okbot_core::Person> {
+        if team::is_peer(event) {
+            return team::person(self, event).await;
+        }
         if self.config.personal {
             let mut owners = self.owners().await;
             let me = (event.conversation.channel.clone(), event.author.id.clone());
@@ -184,6 +193,10 @@ impl Shared {
 
     /// An administrator: listed in `[bot] admins`, or the owner of a personal bot.
     pub(crate) async fn is_admin(&self, event: &InboundEvent) -> bool {
+        // Never through another bot (ADR 0014).
+        if team::is_peer(event) {
+            return false;
+        }
         self.gate.is_admin(event) || (self.config.personal && self.person_of(event).await.is_some())
     }
 
@@ -191,6 +204,17 @@ impl Shared {
     /// account or its linked person, and grants that have not expired. A store error drops the
     /// grants (fails closed).
     pub(crate) async fn roles_of(
+        &self,
+        event: &InboundEvent,
+    ) -> std::collections::BTreeSet<String> {
+        if team::is_peer(event) {
+            return team::roles(self, event).await;
+        }
+        self.own_roles(event).await
+    }
+
+    /// The roles of the event's author on this bot, as for a message they write here.
+    pub(crate) async fn own_roles(
         &self,
         event: &InboundEvent,
     ) -> std::collections::BTreeSet<String> {
@@ -229,6 +253,9 @@ impl Shared {
 
     /// The key the author's usage and tool calls are recorded under.
     pub(crate) async fn person_key(&self, event: &InboundEvent) -> String {
+        if let Some(key) = team::person_key(self, event).await {
+            return key;
+        }
         let person = self.person_of(event).await;
         okbot_core::person_key(
             &event.conversation.channel,
@@ -251,9 +278,16 @@ pub struct RuntimeBuilder {
     channels: Vec<Arc<dyn Channel>>,
     http: Option<HttpOptions>,
     oauth: Option<Arc<oauth::Connector>>,
+    peers: Option<Arc<dyn okbot_core::Peers>>,
 }
 
 impl RuntimeBuilder {
+    /// Sets the bot's peers (ADR 0014): the agent may delegate to them.
+    pub fn peers(mut self, peers: Arc<dyn okbot_core::Peers>) -> Self {
+        self.peers = Some(peers);
+        self
+    }
+
     /// Sets the OAuth connector (needed by `[[mcp]] auth = "oauth"` servers).
     pub fn oauth(mut self, connector: Arc<oauth::Connector>) -> Self {
         self.oauth = Some(connector);
@@ -346,6 +380,8 @@ impl RuntimeBuilder {
             notified: crate::notify::Recent::default(),
             gateway: Arc::default(),
             oauth: self.oauth,
+            peers: self.peers,
+            sink: std::sync::OnceLock::new(),
         });
         Ok(Runtime {
             shared: shared.clone(),
@@ -361,7 +397,7 @@ impl RuntimeBuilder {
 }
 
 /// Receives events from channels.
-struct EventSink {
+pub(crate) struct EventSink {
     tx: mpsc::Sender<Tracked>,
     in_flight: Arc<InFlight>,
     shared: Arc<Shared>,
@@ -430,6 +466,7 @@ impl Runtime {
             channels: Vec::new(),
             http: None,
             oauth: None,
+            peers: None,
         }
     }
 
@@ -471,7 +508,16 @@ impl Runtime {
                 }
             });
         }
-        if !shared.config.mcp.is_empty() {
+        let _ = shared.sink.set(Arc::downgrade(&sink));
+        if shared.peers.is_some() {
+            let shared = shared.clone();
+            let sink = sink.clone();
+            tasks.spawn(async move {
+                team::resume(&shared).await;
+                drop(sink); // the sink stays up while resuming
+            });
+        }
+        if !shared.config.mcp.is_empty() || shared.peers.is_some() {
             let gateway = gateway::serve(shared.clone(), channel_stop.clone())
                 .await
                 .map_err(|source| RunError::Http {
@@ -480,7 +526,7 @@ impl Runtime {
                 })?;
             tasks.spawn(gateway);
         }
-        let sweep = http.is_some() || !shared.config.mcp.is_empty();
+        let sweep = http.is_some() || !shared.config.mcp.is_empty() || shared.peers.is_some();
         if let Some(options) = http {
             let server = http::serve(options, shared.clone(), sink.clone(), channel_stop.clone())
                 .await

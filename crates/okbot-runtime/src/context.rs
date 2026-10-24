@@ -42,6 +42,8 @@ pub(crate) struct PromptInput<'a> {
     pub(crate) personal: bool,
     /// `[[mcp]]` servers the asker could use here after connecting an account (ADR 0012).
     pub(crate) not_connected: &'a [String],
+    /// For a task from another bot of a team: who asks and for whom (ADR 0014).
+    pub(crate) peer: Option<&'a str>,
 }
 
 /// The system prompt and the conversation prompt.
@@ -175,6 +177,9 @@ pub(crate) fn build(input: &PromptInput<'_>) -> Prompt {
             local_time(input.now, input.timezone)
         ),
     );
+    if let Some(note) = input.peer {
+        section(&mut system, "team", note);
+    }
     if !input.not_connected.is_empty() {
         let names: Vec<String> = input
             .not_connected
@@ -264,6 +269,7 @@ mod tests {
             history_tokens: 6000,
             personal: event.is_direct,
             not_connected: &[],
+            peer: None,
         }
     }
 

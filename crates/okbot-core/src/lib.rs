@@ -13,6 +13,7 @@
 //! | [`MemoryStore`] | okbase integration | the runtime (chat commands) |
 //! | [`TaskStore`] | okbase integration | the runtime (chat commands, scheduler) |
 //! | [`Renderer`] | Markdown dialect renderer | the runtime |
+//! | [`Peers`] | the peer adapter (ADR 0014) | the runtime (delegation) |
 //! | [`Clock`] | [`SystemClock`], test clocks | everything that reads time |
 //!
 //! # Writing a channel
@@ -62,6 +63,7 @@ mod knowledge;
 mod memory;
 mod message;
 mod notify;
+mod peer;
 mod prompt;
 mod render;
 mod secret;
@@ -85,6 +87,10 @@ pub use message::{
     Attachment, InboundEvent, OutboundMessage, RenderedMessage, ReplyTarget, SentRef,
 };
 pub use notify::NotifyTo;
+pub use peer::{
+    Budget, Delegation, DelegationContext, Origin, PEER_CANCEL_PREFIX, PEER_PLATFORM, PeerCaller,
+    PeerError, PeerInfo, PeerPrompt, PeerTarget, PeerTask, PeerTaskRecord, PeerTaskState, Peers,
+};
 pub use prompt::{
     ButtonStyle, FieldStyle, Form, FormField, MAX_BUTTONS, MAX_FIELDS, Prompt, PromptAnswer,
     PromptButton,

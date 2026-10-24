@@ -1,0 +1,44 @@
+---
+source: crates/okbot-peer/src/a2a.rs
+expression: request
+---
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "message/send",
+  "params": {
+    "message": {
+      "contextId": "c-1",
+      "extensions": [
+        "https://github.com/tidusvn05/okbot/blob/main/docs/peers.md#delegation-v1"
+      ],
+      "kind": "message",
+      "messageId": "m-1",
+      "metadata": {
+        "okbot/delegation": {
+          "budget": {
+            "turns": 4
+          },
+          "chain": [
+            "assistant"
+          ],
+          "deadline": "2026-10-24T09:15:00Z",
+          "origin": {
+            "bot": "assistant",
+            "conversation": "zalo:shop|-|123|-",
+            "name": "Lan",
+            "person": "lan"
+          },
+          "trace": "4f1c2a9e0b7d3e61"
+        }
+      },
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Find the release notes"
+        }
+      ],
+      "role": "user"
+    }
+  }
+}

@@ -180,6 +180,28 @@ pub struct RuntimeConfig {
     /// The console account that is the terminal's own user, the owner of a personal bot. When
     /// unset, every console account is.
     pub console_owner: Option<UserId>,
+    /// This bot's settings in its teams (`[teams.<id>]`, ADR 0014).
+    pub teams: Vec<TeamPolicy>,
+}
+
+/// What members of a team may do here, and who here may delegate to them (`[teams.<id>]`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeamPolicy {
+    /// The team id.
+    pub id: String,
+    /// The caller's team role → roles here. `admins` is never given.
+    pub roles: HashMap<String, Vec<String>>,
+    /// Who here may make the agent delegate.
+    pub delegate_roles: Vec<String>,
+    /// The requester approves each delegation first.
+    pub confirm: bool,
+    /// How long `delegate` waits by default.
+    pub wait: Duration,
+    /// Tokens a chain started here may spend; `None`: no limit.
+    pub chain_tokens: Option<u64>,
+    /// Tasks from this team may act as their origin person (own accounts, private memory),
+    /// when that person is in `[people]`. The person is named by the caller.
+    pub act_as_person: bool,
 }
 
 /// A `[[notify]]` destination: the token callers present and where its messages go.
@@ -603,6 +625,7 @@ impl RuntimeConfig {
             roles: Roles::default(),
             limits: Limits::default(),
             console_owner: None,
+            teams: Vec::new(),
         }
     }
 

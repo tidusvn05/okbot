@@ -29,6 +29,8 @@ pub(crate) enum Kind {
     Callback { mcp: String, callback: String },
     /// To a tool call waiting in the gateway for approval (ADR 0011): `true` to allow.
     Confirm(Option<tokio::sync::oneshot::Sender<bool>>),
+    /// To a delegation waiting for the origin person's choice (ADR 0014): the button id.
+    Choice(Option<tokio::sync::oneshot::Sender<String>>),
 }
 
 pub(crate) struct Pending {
@@ -446,7 +448,9 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
                 Next::Expired(prompts.remove(&answer.prompt).expect("present"))
             }
             Some(p) => match &p.kind {
-                Kind::Confirm(_) => Next::Confirm(prompts.remove(&answer.prompt).expect("present")),
+                Kind::Confirm(_) | Kind::Choice(_) => {
+                    Next::Confirm(prompts.remove(&answer.prompt).expect("present"))
+                }
                 Kind::Callback { mcp, callback } => {
                     let go = Next::Go(
                         mcp.clone(),
@@ -593,16 +597,19 @@ fn same_room(a: &okbot_core::ConversationKey, b: &okbot_core::ConversationKey) -
     a.channel == b.channel && a.room == b.room
 }
 
-/// Releases a tool call waiting for approval and shows who decided.
+/// Releases a tool call (or a delegation) waiting for an answer and shows who decided.
 async fn release(shared: &Shared, p: Pending, answer: &PromptAnswer) {
     let allow = answer.button == "allow";
+    let choice = matches!(p.kind, Kind::Choice(_));
     // The call may have stopped waiting (the agent gave up): then nothing was allowed.
     let waiting = match p.kind {
         Kind::Confirm(Some(tx)) => tx.send(allow).is_ok(),
+        Kind::Choice(Some(tx)) => tx.send(answer.button.clone()).is_ok(),
         _ => false,
     };
     let outcome = match (waiting, allow) {
         (false, _) => "⌛ No longer waiting; nothing was done.".to_string(),
+        (true, _) if choice => format!("➡️ {} chose `{}`", answer.user.display_name, answer.button),
         (true, true) => format!("✅ Allowed by {}", answer.user.display_name),
         (true, false) => format!("❌ Declined by {}", answer.user.display_name),
     };

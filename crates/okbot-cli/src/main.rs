@@ -22,6 +22,7 @@ mod run;
 mod send;
 mod service;
 mod task;
+mod team;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -107,6 +108,12 @@ enum Command {
     /// Automations: their triggers, actions and latest runs.
     #[command(subcommand, alias = "automations")]
     Automation(automation::AutomationCommand),
+    /// This bot's peer key and the tasks it delegated or received (ADR 0014).
+    #[command(subcommand, alias = "peers")]
+    Peer(team::PeerCommand),
+    /// Teams of bots that delegate work to each other: members, links, people, signing.
+    #[command(subcommand, alias = "teams")]
+    Team(team::TeamCommand),
     /// Stop and forget a bot (its directory is kept).
     Remove {
         /// Bot name.
@@ -201,6 +208,8 @@ async fn main() -> ExitCode {
         Command::Audit(args) => access::audit(args).await,
         Command::Mcp(command) => mcp::run(command).await,
         Command::Automation(command) => automation::run(command).await,
+        Command::Peer(command) => team::peer(command).await,
+        Command::Team(command) => team::team(command),
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),

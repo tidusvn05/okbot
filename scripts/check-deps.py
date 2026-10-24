@@ -21,6 +21,7 @@ ALLOWED = {
     "okbot-agent": {CORE},
     "okbot-knowledge": {CORE},
     "okbot-runtime": {CORE},
+    "okbot-peer": {CORE},
     TESTKIT: {CORE},
 }
 

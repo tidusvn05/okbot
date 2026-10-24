@@ -517,10 +517,40 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
             check_notify(&config, &store, &mut r).await;
             check_oauth(&config, &store, &mut r).await;
             check_automations(&config, &store, &mut r).await;
+            check_teams(&config, store, &mut r).await;
         }
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// `[teams]` (ADR 0014): manifests, membership, and the members this bot may call.
+async fn check_teams(config: &Config, store: okbot_store::SqliteStore, r: &mut Report) {
+    if config.teams.is_empty() && config.a2a.agent.is_empty() && config.a2a.client.is_empty() {
+        return;
+    }
+    let node = match crate::team::node_unstarted(config, std::sync::Arc::new(store)) {
+        Ok(node) => node,
+        Err(error) => {
+            r.add("teams", Status::Fail, format!("{error:#}"));
+            return;
+        }
+    };
+    for (label, ok, detail) in node.check().await {
+        r.add(label, if ok { Status::Ok } else { Status::Warn }, detail);
+    }
+    let remote = config
+        .teams
+        .values()
+        .any(|t| t.manifest.starts_with("https://"));
+    if remote && config.http.public_url.is_none() {
+        r.add(
+            "teams",
+            Status::Warn,
+            "a team spans machines but [http] public_url is not set: members reach this bot only \
+             through a relay",
+        );
+    }
 }
 
 /// `auth = "oauth"` servers (ADR 0012): where people connect, and whose accounts are connected.

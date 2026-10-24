@@ -1,0 +1,36 @@
+---
+source: crates/okbot-peer/src/a2a.rs
+expression: result
+---
+{
+  "contextId": "c-1",
+  "id": "t-1",
+  "kind": "task",
+  "status": {
+    "message": {
+      "kind": "message",
+      "messageId": "a-1",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "Restart nginx?"
+        },
+        {
+          "data": {
+            "buttons": [
+              {
+                "id": "allow",
+                "label": "Allow"
+              }
+            ],
+            "prompt": "p-1"
+          },
+          "kind": "data"
+        }
+      ],
+      "role": "agent"
+    },
+    "state": "input-required",
+    "timestamp": "2026-10-24T09:00:00Z"
+  }
+}

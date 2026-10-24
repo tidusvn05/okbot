@@ -143,6 +143,7 @@ async fn with_extra_mcp(
         env: grant.env.clone(),
         guard: None,
         not_connected: Vec::new(),
+        delegated: std::sync::Arc::default(),
     };
     let Some(base) = shared.gateway.url().map(str::to_string) else {
         return out;
@@ -170,7 +171,9 @@ async fn with_extra_mcp(
             Upstream::NotHere | Upstream::Unavailable => {}
         }
     }
-    if servers.is_empty() {
+    // An automation's turn never delegates: its data is untrusted (ADR 0013).
+    let team = !restricted && crate::team::offered(shared, &who).await;
+    if servers.is_empty() && !team {
         return out;
     }
     let (token, guard) = shared.gateway.issue(crate::gateway::Grant {
@@ -183,7 +186,17 @@ async fn with_extra_mcp(
         done: CancellationToken::new(),
         local: std::sync::Mutex::default(),
         restricted,
+        team,
+        delegated: out.delegated.clone(),
     });
+    if team {
+        out.servers.push(okbot_core::McpServer {
+            name: crate::team::SERVER.into(),
+            url: format!("{base}/mcp/{}", crate::team::SERVER),
+            bearer_token_env: crate::team::TOKEN_ENV.into(),
+        });
+        out.env.push((crate::team::TOKEN_ENV.into(), token.clone()));
+    }
     for m in servers {
         out.servers.push(okbot_core::McpServer {
             name: m.server.name.clone(),
@@ -205,6 +218,8 @@ struct TurnMcp {
     guard: Option<crate::gateway::GrantGuard>,
     /// OAuth servers the requester could use here once connected.
     not_connected: Vec<String>,
+    /// Tokens used by tasks this turn delegated (ADR 0014).
+    delegated: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// The requester used up `[limits]` (administrators never do). A store error lets the turn run.
@@ -242,7 +257,9 @@ pub(crate) async fn answer(shared: &Shared, batch: &[Tracked], cancel: &Cancella
         let admin = shared.is_admin(event).await;
         let person = shared.person_key(event).await;
         if over_limit(shared, &person, admin).await {
-            reply(shared, event, &shared.config.replies.limit_reached).await;
+            if !crate::team::fail(shared, event, "the daily limit of this bot is reached").await {
+                reply(shared, event, &shared.config.replies.limit_reached).await;
+            }
             return;
         }
         answer_batch(shared, batch, event, cancel, admin, person).await;
@@ -285,6 +302,7 @@ async fn answer_batch(
     .await;
 
     let history = history_for(shared, event, restricted).await;
+    let peer_note = crate::team::prompt_note(shared, event).await;
     let now = shared.clock.now();
     let new_count = batch.len().min(history.len());
     let input = PromptInput {
@@ -301,6 +319,7 @@ async fn answer_batch(
         history_tokens: shared.config.history_tokens,
         personal: requester.personal,
         not_connected: &mcp.not_connected,
+        peer: peer_note.as_deref(),
     };
     let prompt = context::build(&input);
     // An automation turn starts afresh and leaves no session behind, so its data never reaches
@@ -321,7 +340,7 @@ async fn answer_batch(
             );
             (Some(progress), Some(live))
         }
-        None => (None, None),
+        None => (crate::team::progress_fn(shared, event), None),
     };
     let turn = AgentTurn {
         system: prompt.system,
@@ -341,6 +360,7 @@ async fn answer_batch(
     };
     drop(grant);
     drop(mcp.guard);
+    let delegated = mcp.delegated.load(std::sync::atomic::Ordering::Relaxed);
     drop(live);
     if let Some(Ok(answer)) = &outcome {
         remember_session(shared, event, answer, restricted).await;
@@ -358,7 +378,7 @@ async fn answer_batch(
         started_at: now,
         person: Some(person),
     };
-    finish(shared, event, outcome, record, typing.1.as_ref()).await;
+    finish(shared, event, outcome, record, typing.1.as_ref(), delegated).await;
 }
 
 /// The room's tool policy. An automation's data is untrusted: no web, so nothing can be sent
@@ -551,6 +571,7 @@ async fn finish(
     outcome: Option<Result<okbot_core::AgentReply, okbot_core::AgentError>>,
     mut record: AgentRunRecord,
     placeholder: Option<&SentRef>,
+    delegated: u64,
 ) {
     let kind = match &outcome {
         None => crate::metrics::Outcome::Cancelled,
@@ -562,17 +583,26 @@ async fn finish(
         _ => record.backend.clone(),
     };
     shared.metrics.turn(&backend, kind, record.duration);
+    if crate::team::is_peer(event) {
+        shared
+            .metrics
+            .peer_task(event.conversation.channel.instance(), kind);
+    }
     match outcome {
         None => {
             tracing::info!(run = %record.run_id, "turn cancelled");
             record.error = Some("cancelled".into());
-            reply_over(shared, event, &shared.config.replies.stopped, placeholder).await;
+            if !crate::team::fail(shared, event, "stopped").await {
+                reply_over(shared, event, &shared.config.replies.stopped, placeholder).await;
+            }
         }
         Some(Ok(answer)) => {
             tracing::info!(run = %record.run_id, backend = %answer.backend, ms = record.duration.as_millis(), "answered");
             record.backend = answer.backend;
             record.model = answer.model;
             record.usage = answer.usage;
+            let tokens = record.usage.as_ref().map_or(0, |u| u.input + u.output) + delegated;
+            crate::team::report_usage(shared, event, tokens).await;
             if reply_over(shared, event, &answer.text, placeholder).await {
                 let message = NewMessage {
                     conversation: event.conversation.clone(),
@@ -591,7 +621,10 @@ async fn finish(
         Some(Err(error)) => {
             tracing::error!(run = %record.run_id, %error, "agent turn failed");
             record.error = Some(error.to_string());
-            reply_over(shared, event, &shared.config.replies.error, placeholder).await;
+            // Another bot learns that the task failed, not a chat apology.
+            if !crate::team::fail(shared, event, "the agent of this bot failed").await {
+                reply_over(shared, event, &shared.config.replies.error, placeholder).await;
+            }
         }
     }
     if let Err(error) = shared.store.record_run(record).await {

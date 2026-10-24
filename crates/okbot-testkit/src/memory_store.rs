@@ -7,8 +7,8 @@ use std::time::Duration;
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{
     AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore, Fire,
-    FireState, NewMessage, PAIRING_MAX_FAILURES, RoleGrant, SealedEntry, StoreError, StoredMessage,
-    ToolCallRecord, Usage, UserId, async_trait,
+    FireState, NewMessage, PAIRING_MAX_FAILURES, PeerTaskRecord, PeerTaskState, RoleGrant,
+    SealedEntry, StoreError, StoredMessage, ToolCallRecord, Usage, UserId, async_trait,
 };
 
 #[derive(Default)]
@@ -31,6 +31,8 @@ struct State {
     /// (automation, item) → seen
     items: HashMap<(String, String), Timestamp>,
     automation_runs: Vec<AutomationRun>,
+    /// (inbound, id) → task
+    peer_tasks: HashMap<(bool, String), PeerTaskRecord>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -346,6 +348,7 @@ impl ConversationStore for MemoryStore {
                 + s.grants.len()
                 + s.items.len()
                 + s.automation_runs.len()
+                + s.peer_tasks.len()
         };
         let start = count(&state);
         state.messages.retain(|(_, m)| m.at >= before);
@@ -354,6 +357,7 @@ impl ConversationStore for MemoryStore {
         state.grants.retain(|_, g| g.expires_at > now);
         state.items.retain(|_, seen| *seen >= before);
         state.automation_runs.retain(|r| r.at >= before);
+        state.peer_tasks.retain(|_, t| t.updated_at >= before);
         state.seen.retain(|_, expires| *expires > now);
         state
             .fires
@@ -460,6 +464,86 @@ impl ConversationStore for MemoryStore {
             .take(limit)
             .cloned()
             .collect())
+    }
+
+    async fn put_peer_task(&self, task: PeerTaskRecord) -> Result<(), StoreError> {
+        let mut state = self.lock();
+        let key = (task.inbound, task.id.clone());
+        let duplicate = state.peer_tasks.values().any(|t| {
+            t.inbound == task.inbound
+                && t.team == task.team
+                && t.peer == task.peer
+                && t.message_id == task.message_id
+                && t.id != task.id
+        });
+        if duplicate {
+            return Err(StoreError::Backend("duplicate peer message".into()));
+        }
+        match state.peer_tasks.get_mut(&key) {
+            Some(old) => {
+                old.state = task.state;
+                old.conversation = task.conversation;
+                old.text = task.text;
+                old.tokens = task.tokens;
+                old.updated_at = task.updated_at;
+            }
+            None => {
+                state.peer_tasks.insert(key, task);
+            }
+        }
+        Ok(())
+    }
+
+    async fn peer_task(
+        &self,
+        inbound: bool,
+        id: &str,
+    ) -> Result<Option<PeerTaskRecord>, StoreError> {
+        Ok(self
+            .lock()
+            .peer_tasks
+            .get(&(inbound, id.to_string()))
+            .cloned())
+    }
+
+    async fn peer_task_by_message(
+        &self,
+        inbound: bool,
+        team: &str,
+        peer: &str,
+        message_id: &str,
+    ) -> Result<Option<PeerTaskRecord>, StoreError> {
+        Ok(self
+            .lock()
+            .peer_tasks
+            .values()
+            .find(|t| {
+                t.inbound == inbound
+                    && t.team == team
+                    && t.peer == peer
+                    && t.message_id == message_id
+            })
+            .cloned())
+    }
+
+    async fn peer_tasks(&self, limit: usize) -> Result<Vec<PeerTaskRecord>, StoreError> {
+        let mut tasks: Vec<PeerTaskRecord> = self.lock().peer_tasks.values().cloned().collect();
+        tasks.sort_by_key(|t| std::cmp::Reverse((t.updated_at, t.created_at)));
+        tasks.truncate(limit);
+        Ok(tasks)
+    }
+
+    async fn interrupt_peer_tasks(&self, now: Timestamp) -> Result<u64, StoreError> {
+        let mut changed = 0;
+        for task in self.lock().peer_tasks.values_mut() {
+            if task.inbound && !task.state.is_final() {
+                task.state = PeerTaskState::Failed;
+                task.text = Some("interrupted: the bot stopped".into());
+                task.updated_at = now;
+                changed += 1;
+            }
+        }
+        Ok(changed)
     }
 }
 

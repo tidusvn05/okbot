@@ -158,6 +158,11 @@ fn runtime_config(
             config.mcp.push(extra);
         }
         config.commands = crate::bot::commands(&bot)?;
+        // The terminal user may delegate to the bot's teams (ADR 0014).
+        config.teams = crate::bot::team_policies(&bot);
+        for team in &mut config.teams {
+            team.delegate_roles = vec![okbot_runtime::ROLE_EVERYONE.into()];
+        }
         for (id, person) in &bot.people {
             let accounts = person
                 .accounts
@@ -168,6 +173,25 @@ fn runtime_config(
         }
     }
     Ok(config)
+}
+
+/// The chat's database in `state_dir`.
+fn open_store(state_dir: &Path) -> anyhow::Result<Arc<SqliteStore>> {
+    let store = SqliteStore::open(&state_dir.join("okbot.db"))
+        .with_context(|| format!("cannot open the database in {}", state_dir.display()))?;
+    Ok(Arc::new(store))
+}
+
+/// The bot's teams, to delegate from the terminal. Their channels are not run: tasks for this bot
+/// go to the bot itself (`okbot run`), whose socket stays its own.
+async fn peers(
+    bot: Option<&okbot_config::Config>,
+    store: Arc<SqliteStore>,
+) -> anyhow::Result<Option<okbot_peer::Node>> {
+    match bot {
+        Some(bot) => crate::team::node(bot, store).await,
+        None => Ok(None),
+    }
 }
 
 /// The knowledge bundle at `kb`, when there is one.
@@ -245,8 +269,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
         .map_or(args.state_dir.clone(), |d| d.path().to_path_buf());
     std::fs::create_dir_all(&state_dir)
         .with_context(|| format!("cannot create {}", state_dir.display()))?;
-    let store = SqliteStore::open(&state_dir.join("okbot.db"))
-        .with_context(|| format!("cannot open the database in {}", state_dir.display()))?;
+    let store = open_store(&state_dir)?;
 
     let stop = CancellationToken::new();
     // Inside a bot directory, chat as that bot: its profile, time zone and linked people apply.
@@ -284,9 +307,10 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let closed = console.closed();
     let http = http_addr(&args, bot.as_ref());
     let connector = connector(bot.as_ref()).await?;
+    let peers = peers(bot.as_ref(), store.clone()).await?;
     let config = runtime_config(&args, &name, &state_dir, bot, timezone)?;
     let mut builder = Runtime::builder(config)
-        .store(Arc::new(store))
+        .store(store)
         .agent(Arc::new(chain))
         .renderer(Arc::new(MarkdownRenderer))
         .channel(console.clone());
@@ -301,6 +325,9 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     }
     if let Some(connector) = connector {
         builder = builder.oauth(connector);
+    }
+    if let Some(peers) = peers {
+        builder = builder.peers(Arc::new(peers));
     }
     let runtime = builder.build()?;
     let handle = runtime.handle();

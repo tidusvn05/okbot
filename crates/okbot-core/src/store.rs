@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::TokenUsage;
 use crate::caps::ToolPolicy;
 use crate::id::{ChannelId, ConversationKey, MessageId, RunId, UserId};
+use crate::peer::PeerTaskRecord;
 use crate::{BoxError, async_trait};
 
 /// A storage failure.
@@ -471,6 +472,47 @@ pub trait ConversationStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<AutomationRun>, StoreError> {
         let _ = (automation, since, limit);
+        Err(unsupported())
+    }
+
+    /// Stores a peer task (ADR 0014), replacing the one with the same id and direction.
+    async fn put_peer_task(&self, task: PeerTaskRecord) -> Result<(), StoreError> {
+        let _ = task;
+        Err(unsupported())
+    }
+
+    /// A peer task by its id and direction.
+    async fn peer_task(
+        &self,
+        inbound: bool,
+        id: &str,
+    ) -> Result<Option<PeerTaskRecord>, StoreError> {
+        let _ = (inbound, id);
+        Err(unsupported())
+    }
+
+    /// The task a message created, if any (a retried request returns the same task).
+    async fn peer_task_by_message(
+        &self,
+        inbound: bool,
+        team: &str,
+        peer: &str,
+        message_id: &str,
+    ) -> Result<Option<PeerTaskRecord>, StoreError> {
+        let _ = (inbound, team, peer, message_id);
+        Err(unsupported())
+    }
+
+    /// Peer tasks, newest first, at most `limit`.
+    async fn peer_tasks(&self, limit: usize) -> Result<Vec<PeerTaskRecord>, StoreError> {
+        let _ = limit;
+        Err(unsupported())
+    }
+
+    /// Marks inbound tasks that were not finished as failed ("interrupted"), at start-up: work with
+    /// side effects is never re-run by itself. Returns how many.
+    async fn interrupt_peer_tasks(&self, now: Timestamp) -> Result<u64, StoreError> {
+        let _ = now;
         Err(unsupported())
     }
 }

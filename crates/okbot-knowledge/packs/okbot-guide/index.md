@@ -24,6 +24,7 @@ your own notes elsewhere.
 * [Servers and infrastructure](servers.md) - SSH to several hosts with ssh-mcp, Kubernetes, Grafana and Ansible.
 * [Your own tools and commands](own-tools.md) - Your own MCP server, signed identity, prompts and chat commands.
 * [Automations](automations.md) - Acting without being asked: mail reports, briefings, webhooks.
+* [Teams of bots](teams.md) - Bots that hand work to each other: keys, team manifests, links, roles, relays and limits.
 * [Notifications from your programs](notifications.md) - Messages from scripts, monitors and CI.
 * [Running on a VPS](deploy.md) - Services, several bots, reverse proxies, backups and upgrades.
 * [Security and privacy](security.md) - What okbot protects and the settings that keep a bot safe.

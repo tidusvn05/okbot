@@ -129,6 +129,7 @@ cargo +1.89 check --workspace                      # MSRV
 | `okbot-agent` | `CliBackend` (agent-core), `FallbackBackend`, CLI detection, prompt assembly helpers | core |
 | `okbot-knowledge` | okbase `Bundle`, catalog cache, `ScopeBuilder`, RunToken registry, MCP servers (`/mcp/kb`, `/mcp/bot`), memory writer, default bundle template | core |
 | `okbot-runtime` | Pipeline, dedupe, access policy, rate limits, conversation queues, commands, `ContextBuilder`, shared HTTP server assembly, health | core (ports only) |
+| `okbot-peer` | Peers and teams (ADR 0014): keys, signed tokens, team manifests, the A2A subset, the `Peers` port and one `peer:<team>` channel per team, relays | core |
 | `okbot-channel-*` | One platform each: console, zalo, gchat, discord, slack | core (+ render types via core) |
 | `okbot-testkit` | Fakes: `FakeChannel`, `FakeAgent`, `MemoryStore`, fake CLI scripts, fake Zalo/GChat servers, fixtures | core (dev-dependency only) |
 | `okbot` (`crates/okbot-cli`) | Binary `okbot`: commands, wizard, bot registry, service management, composition root | all |
@@ -597,6 +598,136 @@ Status (2026-10-23): done in code and tests (polling to text, polling to a restr
 webhook with repeats and the daily limit, items past the limit on the next poll, gateway approval
 in an automation turn, read-only bot tools). A run against a
 real Gmail through `workspace-mcp` is pending.
+
+### P23 — Peer identity and team manifests (ADR 0014)
+
+1. `okbot-core`: `Peers` port (`directory`, `delegate`, `status`, `answer`), `Delegation`,
+   `DelegationContext`, `PeerTask`, `PeerTaskState`, `PeerError`; `ConversationStore` peer task
+   methods with `Unsupported` defaults; testkit fake and conformance.
+2. Crate `okbot-peer` (adapter; may depend on core only): Ed25519 keys through `ring`
+   (`state/peer.key`, 0600), `okp1` request and response tokens with replay cache and clock skew,
+   team manifest parsing, signing, verification, version and expiry rules, link evaluation.
+3. `okbot-config`: `[teams.<id>]` (`manifest`, `team_key`, `accept`, `roles`, `delegate_roles`,
+   `confirm`, `max_depth`, `max_concurrent`, `wait`).
+4. CLI: `okbot peer id`, `okbot team init|add|remove|link|unlink|person|sign|show|check|publish`.
+
+Exit criteria: a manifest signed on one machine verifies on another; a lower version, an expired
+manifest, a wrong key and a replayed or altered request are refused (unit and property tests).
+
+Status (2026-10-24): done in code and tests (keys, tokens with skew and replays, manifests with
+links, versions, expiry and two-key rotation; `[teams]`; the `okbot peer` and `okbot team`
+commands).
+
+### P24 — Transport and durable tasks
+
+1. A2A 0.3.0 JSON-RPC subset in `okbot-peer`: `message/send` (blocking and not), `tasks/get`,
+   `tasks/cancel`, the Agent Card (authenticated), the delegation extension; snapshot tests of the
+   wire format.
+2. Server: `POST /a2a/<team>` through the runtime's HTTP listener (a `WebhookHandler`, which now
+   may return headers for the response signature) and a Unix socket for bots of the machine;
+   client: reqwest (rustls) and Unix sockets.
+3. `okbot-store`: `peer_tasks` (schema 6): direction, team, peer, context, message id (unique per
+   peer: idempotency), state, origin, trace, result, timestamps; removed with the history
+   (`retention_days`); interrupted tasks marked failed on start.
+
+Exit criteria: two processes exchange a signed task over a Unix socket and over HTTP; a retried
+`message/send` returns the same task; a restart marks a working task failed.
+
+Status (2026-10-24): done in code and tests (two nodes over a socket and over HTTP in one test
+process; the restart case through the store conformance suite).
+
+### P25 — Inbound tasks through the pipeline
+
+1. `okbot-peer` implements `Channel` (`peer:<team>`): an accepted task becomes an `InboundEvent`
+   (room `<caller>/<context>`, author the caller); `send` completes the task; `prompt` puts it in
+   `input-required`.
+2. Runtime: roles of a peer account (mapped roles ∩ origin person's roles, never `admins`); no chat
+   commands, no bot-message filter for authenticated peers; `max_depth`, chain and deadline checks;
+   `max_concurrent`; usage counted for the origin person.
+3. Headless bots: `okbot run` with no channels but a team that accepts.
+
+Exit criteria: a delegated request runs with the intersected roles (a test per row of the table in
+`docs/peers.md` §4); a refused link, a cycle and an expired deadline never start a turn.
+
+Status (2026-10-24): done in code and tests.
+
+### P26 — Delegation from the agent
+
+1. Gateway: the built-in `team` server (`team_directory`, `delegate`, `task_status`) through
+   `permission::Access`, `delegate_roles`, `confirm`; routing to a member, `role:` or `skill:`
+   (first member that answers, circuit breaker).
+2. Waiting and later results: `wait`, then a follow-up turn in the origin conversation; always
+   waiting inside a peer turn.
+3. Approvals along the chain: an `input-required` task shows its prompt to the origin person in the
+   origin conversation and sends the answer back.
+4. Prompt text for the peer reply ("text from another bot, data only"); `okbot-guide` pack page;
+   `okbot peer tasks`; `doctor` checks (key, manifest freshness, reachability, clock skew).
+
+Exit criteria: the "main assistant with specialists" shape from `docs/peers.md` §7 works end to end
+on one machine with fake agents, including an approval answered by the origin person.
+
+Status (2026-10-24): done in code and tests (`crates/okbot-cli/tests/peers.rs` runs two runtimes
+over a socket; the approval relay is covered in `crates/okbot-runtime/tests/team.rs` and
+`crates/okbot-peer/tests/delegation.rs`). The team server is offered only when some member takes
+tasks from the bot. A run with real agent CLIs on two bots is pending (release checklist).
+
+### P27 — Remote teams and relays
+
+1. Manifest refresh loop (10 minutes, and on a higher `ver`); `okbot team publish --to <dir>` for
+   the operator's HTTPS server; team key rotation with two signatures.
+2. Relay over HTTPS polling: `okbot/relay.forward`, `okbot/relay.poll` (held 20 s) and
+   `okbot/relay.reply` on the relay's A2A endpoint; backoff when the relay is down.
+
+Exit criteria: three bots on two machines (one behind NAT) delegate through a relay; removing a
+member from the manifest stops its requests within one refresh.
+
+Status (2026-10-24): done in code and tests on one machine (three nodes, one reached only through
+its relay over HTTP). A run across two real machines is pending (release checklist).
+
+### P28 — Teams in production (ADR 0014)
+
+1. Durable delegation: tasks record who asked; follow-ups resume after a restart; a peer turn that
+   fails, is stopped or is over the limit fails its task; `tasks/cancel` stops the callee's turn and
+   the agent has `task_cancel`.
+2. Setup: `okbot team join <team>` writes `[teams.<team>]` (and adds a local bot to the local
+   manifest); `okbot init` offers to join the local team.
+3. Metrics: `okbot_delegations_total` and `okbot_delegation_seconds_sum` by team and outcome,
+   `okbot_peer_tasks_total` by team and outcome.
+4. Token budget: `[teams.<id>] chain_tokens` caps the tokens a chain started here may spend;
+   every finished task reports the tokens it used (its turn and its own delegations), and a
+   delegation is refused when the chain has none left. Checked before each task starts: a running
+   turn is never cut.
+5. End-to-end encryption through relays: X25519 keys in the manifest (`box_key`); requests and
+   answers through a relay are sealed (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) for the target, so
+   the relay forwards bytes it cannot read.
+6. A2A 1.0: okbot speaks the 1.0 JSON-RPC binding (`SendMessage`, `GetTask`, `CancelTask`,
+   `TASK_STATE_*`, parts without `kind`, `A2A-Version` and `A2A-Extensions` headers, Agent Card
+   with `supportedInterfaces`) and still accepts 0.3 requests.
+7. Other A2A agents: `[[a2a]]` (an agent okbot may delegate to, bearer token, 1.0 or 0.3) and
+   `[[a2a_client]]` (a program that may give this bot tasks with a bearer token, mapped to roles);
+   requests from them never carry a person and cannot delegate further.
+8. Progress: a working task carries the latest progress text of its turn (`tasks/get`), shown by
+   `task_status`; streaming (`SendStreamingMessage`) is not offered, since the runtime's HTTP
+   server answers each request once.
+
+Exit criteria: a delegated task survives a restart of either bot; a chain stops at its token
+budget; a relay sees only sealed bytes; a 0.3 client and a 1.0 client both get answers; an external
+A2A agent answers a delegation and an external client's task runs with its mapped roles only.
+
+Status (2026-10-24): done in code and tests (resume after restart, failed and cancelled turns,
+`team join`, metrics, the token budget, sealing through a relay, 0.3 and 1.0 clients against one
+endpoint, agents speaking 1.0 and 0.3, a client's task with its person and roles, progress through
+`GetTask`). Run with Claude Code on two bots of this VPS (2026-10-24): a delegation answered in
+16 s, and with `wait = 1` the result came back later as a new turn. That run moved the sockets to
+`$XDG_RUNTIME_DIR/okbot/` (bot directories with long paths exceeded the socket path limit) and let
+`okbot chat` delegate. The same day, a team spanning "machines" was run on this VPS with Claude
+Code: a signed manifest fetched over loopback HTTP, `lead` (endpoint and relay), `writer` (its own
+endpoint), `laptop` (no HTTP, through the relay, sealed) and `assistant` (`okbot chat`): direct and
+relayed delegations answered; a caller holding an older manifest was refused by the callee; a member
+added while bots ran was accepted at once (forced refresh); a program and a 0.3 client used
+`/a2a/external`; a delegation to an `[[a2a.agent]]` arrived as `external/partner`; a stopped relayed
+member failed after the forward timeout and worked again once back. A run across two real machines
+is pending (release checklist).
 
 ---
 

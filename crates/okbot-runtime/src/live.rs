@@ -14,7 +14,7 @@ struct State {
 }
 
 /// A short status for a tool name.
-fn status_for(tool: &str) -> &'static str {
+pub(crate) fn status_for(tool: &str) -> &'static str {
     let lower = tool.to_ascii_lowercase();
     if lower.contains("web") {
         "_Searching the web…_"

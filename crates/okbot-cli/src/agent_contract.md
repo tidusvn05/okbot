@@ -87,6 +87,22 @@ Personal memory is per account unless the operator links accounts:
 in that chat). Linked accounts share `kb/memory/people/<person>/`. Also `people list|unlink|remove`.
 Only link accounts the user confirms are theirs: linked accounts see each other's notes.
 
+## Several bots that work together (teams)
+
+Bots can hand work to each other (ADR 0014, `docs/peers.md`). On one machine: `okbot team join local
+--bot <name>` for each bot (it writes `[teams.local]` and adds the bot to the manifest), then
+`okbot team link local --from role:<r> --to <member>`. A bot takes work only with `accept = true`;
+`roles = { <team role> = ["<role here>"] }` maps the caller's team role to roles here, intersected
+with the roles the person who asked has here (never `admins`). `delegate_roles` (default admins)
+says who may make the agent delegate. A delegated task never uses the person's own accounts or
+private memory unless `act_as_person = true` (only for teams whose operators the user trusts).
+Across machines the team's owner keeps the team key
+(`okbot team init <team> --owner`, `add --key --box-key --url|--relay`, `sign`, `publish --to`);
+members set `manifest` (https URL) and `team_key`. Agents and programs outside okbot: `[a2a]` with
+`[[a2a.agent]]` and `[[a2a.client]]`. `okbot peer id` prints a bot's keys, `okbot peer tasks` the
+tasks, `okbot doctor` checks the team; restart the bots afterwards. Never map a team role to a role
+whose tools change things without `confirm` on those servers.
+
 ## Your own MCP servers and chat commands
 
 To give the bot the user's own tools, add an `[[mcp]]` server to `okbot.toml`: `name`, then either
