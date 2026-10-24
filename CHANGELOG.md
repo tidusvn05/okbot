@@ -4,6 +4,27 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.10.0] - 2026-10-24
+
+### Features
+
+- **interact:** a callback reply can show the prompt's next step (b455ef6)
+- OAuth for MCP servers and built-in automations (#39) (8c3831d)
+- **kb:** knowledge packs and the okbot-guide pack (#40) (4150dfd)
+- **peers:** teams of bots that delegate work to each other (#44) (f1a58a1)
+
+### Documentation
+
+- **guide:** list only reviewed MCP servers; SSH and infrastructure page (#42) (cf1579f)
+
+### Dependencies
+
+- **deps:** bump agent-call and okbase; run the msrv CI job on 1.89 (#43) (0f462b7)
+
+### Other
+
+- reopen development as 0.10.0-dev; v0.9.0 release results (#38) (591045e)
+
 ## [0.9.0] - 2026-10-21
 
 ### Features
