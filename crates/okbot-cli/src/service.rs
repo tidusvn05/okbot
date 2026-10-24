@@ -200,7 +200,9 @@ pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
     let unit = unit_name(&bot);
     match action {
         Action::Start => {
-            if config.channels.is_empty() {
+            // A bot that only works for its teams runs without a chat channel (`okbot run`).
+            if config.channels.is_empty() && config.teams.is_empty() && config.a2a.client.is_empty()
+            {
                 bail!("`{bot}` has no channel; add one with `okbot init --force` first");
             }
             let file = install(&bot, &dir)?;
