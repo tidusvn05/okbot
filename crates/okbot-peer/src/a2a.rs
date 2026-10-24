@@ -14,6 +14,8 @@ pub const EXTENSION: &str =
     "https://github.com/tidusvn05/okbot/blob/main/docs/peers.md#delegation-v1";
 /// Where the delegation context sits in a message's metadata.
 pub const METADATA_KEY: &str = "okbot/delegation";
+/// Where a finished task's token use sits in its status message's metadata.
+pub const USAGE_KEY: &str = "okbot/usage";
 
 /// JSON-RPC error codes.
 pub mod code {
@@ -262,7 +264,10 @@ mod tests {
             },
             chain: vec!["assistant".into()],
             deadline: "2026-10-24T09:15:00Z".parse().unwrap(),
-            budget: Budget { turns: 4 },
+            budget: Budget {
+                turns: 4,
+                tokens: None,
+            },
             trace: "4f1c2a9e0b7d3e61".into(),
         }
     }

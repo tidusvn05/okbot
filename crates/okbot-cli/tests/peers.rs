@@ -138,6 +138,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
         delegate_roles: vec!["everyone".into()],
         confirm: false,
         wait: Duration::from_secs(20),
+        chain_tokens: None,
     }];
     let channel = Arc::new(FakeChannel::new("fake:test", ChannelCaps::basic()));
     let agent = Arc::new(Agent::default());

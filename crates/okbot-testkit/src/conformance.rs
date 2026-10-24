@@ -360,6 +360,7 @@ async fn peer_tasks(store: &dyn ConversationStore, clock: &ManualClock) {
             is_bot: false,
         }),
         direct: !inbound,
+        tokens: None,
         created_at: clock.now(),
         updated_at: clock.now(),
     };
@@ -390,6 +391,7 @@ async fn peer_tasks(store: &dyn ConversationStore, clock: &ManualClock) {
         .put_peer_task(PeerTaskRecord {
             state: PeerTaskState::Completed,
             text: Some("done".into()),
+            tokens: Some(1200),
             updated_at: clock.now(),
             ..task("t-1", false, "m-1")
         })
@@ -406,6 +408,7 @@ async fn peer_tasks(store: &dyn ConversationStore, clock: &ManualClock) {
     );
     assert_eq!(out.requester.as_ref().map(|r| r.id.as_str()), Some("lan"));
     assert!(out.direct);
+    assert_eq!(out.tokens, Some(1200));
     assert_eq!(store.peer_tasks(10).await.expect("list")[0].id, "t-1");
     assert!(
         !store.peer_tasks(10).await.expect("list")[0].inbound,

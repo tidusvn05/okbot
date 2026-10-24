@@ -219,6 +219,7 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             delegate_roles: t.delegate_roles.clone(),
             confirm: t.confirm == okbot_config::Confirm::Always,
             wait: std::time::Duration::from_secs(t.wait),
+            chain_tokens: (t.chain_tokens > 0).then_some(t.chain_tokens),
         })
         .collect();
     rc.limits = okbot_runtime::Limits {

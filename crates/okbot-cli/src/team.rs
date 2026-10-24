@@ -46,6 +46,9 @@ pub(crate) enum TeamCommand {
     },
     /// Add or update a member.
     Add(AddArgs),
+    /// Make a bot a member: writes `[teams.<team>]` in its okbot.toml and, for a team kept on
+    /// this machine, adds the bot to the manifest.
+    Join(JoinArgs),
     /// Remove a member.
     Remove {
         /// Team id.
@@ -200,6 +203,46 @@ pub(crate) fn slug(name: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
+/// `okbot team join`.
+#[derive(Debug, Default, clap::Args)]
+pub(crate) struct JoinArgs {
+    /// Team id.
+    pub(crate) team: String,
+    /// Bot name; default: the bot in the current directory.
+    #[arg(long)]
+    pub(crate) bot: Option<String>,
+    /// Its member name; default: the bot's name as a slug.
+    #[arg(long)]
+    pub(crate) member: Option<String>,
+    /// Other members may give this bot work.
+    #[arg(long)]
+    pub(crate) accept: bool,
+    /// The caller's team role mapped to roles here: `leader=ops,support` (repeatable).
+    #[arg(long = "map")]
+    pub(crate) map: Vec<String>,
+    /// Who here may make the agent delegate (default: admins).
+    #[arg(long = "delegate-role")]
+    pub(crate) delegate_roles: Vec<String>,
+    /// The requester approves each delegation.
+    #[arg(long)]
+    pub(crate) confirm: bool,
+    /// A team on several machines: the manifest's https:// URL.
+    #[arg(long)]
+    pub(crate) manifest: Option<String>,
+    /// With `--manifest`: the team's public key.
+    #[arg(long)]
+    pub(crate) team_key: Option<String>,
+    /// Team roles of this bot in a local manifest (repeatable).
+    #[arg(long = "role")]
+    pub(crate) roles: Vec<String>,
+    /// Skills of this bot in a local manifest (repeatable).
+    #[arg(long = "skill")]
+    pub(crate) skills: Vec<String>,
+    /// What this bot does, for the others.
+    #[arg(long)]
+    pub(crate) description: Option<String>,
+}
+
 /// `okbot team add`.
 #[derive(Debug, clap::Args)]
 pub(crate) struct AddArgs {
@@ -337,6 +380,10 @@ pub(crate) fn team(command: TeamCommand) -> anyhow::Result<()> {
             description,
         } => init(&team, owner, description),
         TeamCommand::Add(args) => add(args),
+        TeamCommand::Join(args) => {
+            let dir = registry::resolve(args.bot.as_deref())?;
+            join(&dir, &args)
+        }
         TeamCommand::Remove { team, member } => {
             let mut manifest = load(&team)?;
             if manifest.members.remove(&member).is_none() {
@@ -403,6 +450,138 @@ pub(crate) fn team(command: TeamCommand) -> anyhow::Result<()> {
         TeamCommand::Check { file, key } => check(&file, key.as_deref()),
         TeamCommand::Publish { team, to } => publish(&team, to.as_deref()),
     }
+}
+
+/// The `[teams.<team>]` section for `args`.
+fn team_section(args: &JoinArgs) -> anyhow::Result<String> {
+    use toml::Value;
+    let mut t = toml::Table::new();
+    if let Some(member) = &args.member {
+        t.insert("member".into(), Value::String(member.clone()));
+    }
+    match (&args.manifest, &args.team_key) {
+        (Some(url), Some(key)) => {
+            key.parse::<PublicKey>()?;
+            t.insert("manifest".into(), Value::String(url.clone()));
+            t.insert("team_key".into(), Value::String(key.clone()));
+        }
+        (Some(_), None) => {
+            bail!("--manifest needs --team-key (the key the manifest is signed with)")
+        }
+        (None, Some(_)) => bail!("--team-key goes with --manifest"),
+        (None, None) => {}
+    }
+    if args.accept {
+        t.insert("accept".into(), Value::Boolean(true));
+    }
+    if !args.map.is_empty() {
+        let mut roles = toml::Table::new();
+        for entry in &args.map {
+            let Some((team_role, local)) = entry.split_once('=') else {
+                bail!("--map `{entry}`: write `<team role>=<role>[,<role>…]`");
+            };
+            let local: Vec<Value> = local
+                .split(',')
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(|r| Value::String(r.to_string()))
+                .collect();
+            roles.insert(team_role.trim().to_string(), Value::Array(local));
+        }
+        t.insert("roles".into(), Value::Table(roles));
+    }
+    if !args.delegate_roles.is_empty() {
+        let roles = args
+            .delegate_roles
+            .iter()
+            .cloned()
+            .map(Value::String)
+            .collect();
+        t.insert("delegate_roles".into(), Value::Array(roles));
+    }
+    if args.confirm {
+        t.insert("confirm".into(), Value::String("always".into()));
+    }
+    let mut teams = toml::Table::new();
+    teams.insert(args.team.clone(), Value::Table(t));
+    let mut root = toml::Table::new();
+    root.insert("teams".into(), Value::Table(teams));
+    Ok(toml::to_string(&root)?)
+}
+
+/// Writes `[teams.<team>]` into the bot in `dir`; adds it to a manifest kept on this machine.
+pub(crate) fn join(dir: &Path, args: &JoinArgs) -> anyhow::Result<()> {
+    let config = okbot_config::Config::load(dir)?;
+    if config.teams.contains_key(&args.team) {
+        bail!(
+            "this bot is already in team `{}` ([teams.{}] in okbot.toml)",
+            args.team,
+            args.team
+        );
+    }
+    let member = args
+        .member
+        .clone()
+        .unwrap_or_else(|| slug(&config.bot.name));
+    let mut editor = okbot_config::ConfigEditor::open(dir)?;
+    editor.append(&format!("\n{}", team_section(args)?))?;
+    editor.save()?;
+    let key = SigningKey::for_bot(&dir.join("state"))?;
+    println!(
+        "joined team `{}` as `{member}` in {}",
+        args.team,
+        dir.display()
+    );
+    if args.manifest.is_some() {
+        println!("ask the team's owner to add this bot:");
+        println!(
+            "  okbot team add {} {member} --key {} --url <public_url>/a2a/{}  (or --relay <member>)",
+            args.team,
+            key.public(),
+            args.team
+        );
+        return Ok(());
+    }
+    let path = manifest_path(&args.team)?;
+    let mut manifest = if path.exists() {
+        load(&args.team)?
+    } else if args.team == "local" {
+        Manifest::new("local")
+    } else {
+        println!(
+            "no manifest for `{}` here yet: `okbot team init {}`",
+            args.team, args.team
+        );
+        return Ok(());
+    };
+    if manifest.members.contains_key(&member) {
+        return Ok(());
+    }
+    if key_path(&args.team)?.exists() || sig_path(&path).exists() {
+        println!(
+            "team `{}` is signed: add this bot with `okbot team add {} {member} --key {} …`, then sign",
+            args.team,
+            args.team,
+            key.public()
+        );
+        return Ok(());
+    }
+    manifest.members.insert(
+        member.clone(),
+        Member {
+            dir: Some(std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())),
+            roles: args.roles.clone(),
+            skills: args.skills.clone(),
+            description: args.description.clone().unwrap_or_default(),
+            ..Member::default()
+        },
+    );
+    save(manifest, &format!("member `{member}` added"))?;
+    println!(
+        "link it to others: okbot team link {} --from <who> --to <whom>",
+        args.team
+    );
+    Ok(())
 }
 
 fn add(args: AddArgs) -> anyhow::Result<()> {

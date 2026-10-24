@@ -197,6 +197,8 @@ pub struct TeamPolicy {
     pub confirm: bool,
     /// How long `delegate` waits by default.
     pub wait: Duration,
+    /// Tokens a chain started here may spend; `None`: no limit.
+    pub chain_tokens: Option<u64>,
 }
 
 /// A `[[notify]]` destination: the token callers present and where its messages go.

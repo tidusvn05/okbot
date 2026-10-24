@@ -684,6 +684,36 @@ member from the manifest stops its requests within one refresh.
 Status (2026-10-24): done in code and tests on one machine (three nodes, one reached only through
 its relay over HTTP). A run across two real machines is pending (release checklist).
 
+### P28 — Teams in production (ADR 0014)
+
+1. Durable delegation: tasks record who asked; follow-ups resume after a restart; a peer turn that
+   fails, is stopped or is over the limit fails its task; `tasks/cancel` stops the callee's turn and
+   the agent has `task_cancel`.
+2. Setup: `okbot team join <team>` writes `[teams.<team>]` (and adds a local bot to the local
+   manifest); `okbot init` offers to join the local team.
+3. Metrics: `okbot_delegations_total` and `okbot_delegation_seconds_sum` by team and outcome,
+   `okbot_peer_tasks_total` by team and outcome.
+4. Token budget: `[teams.<id>] chain_tokens` caps the tokens a chain started here may spend;
+   every finished task reports the tokens it used (its turn and its own delegations), and a
+   delegation is refused when the chain has none left. Checked before each task starts: a running
+   turn is never cut.
+5. End-to-end encryption through relays: X25519 keys in the manifest (`box_key`); requests and
+   answers through a relay are sealed (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) for the target, so
+   the relay forwards bytes it cannot read.
+6. A2A 1.0: okbot speaks the 1.0 JSON-RPC binding (`SendMessage`, `GetTask`, `CancelTask`,
+   `TASK_STATE_*`, parts without `kind`, `A2A-Version` and `A2A-Extensions` headers, Agent Card
+   with `supportedInterfaces`) and still accepts 0.3 requests.
+7. Other A2A agents: `[[a2a]]` (an agent okbot may delegate to, bearer token, 1.0 or 0.3) and
+   `[[a2a_client]]` (a program that may give this bot tasks with a bearer token, mapped to roles);
+   requests from them never carry a person and cannot delegate further.
+8. Progress: a working task carries the latest progress text of its turn (`tasks/get`), shown by
+   `task_status`; streaming (`SendStreamingMessage`) is not offered, since the runtime's HTTP
+   server answers each request once.
+
+Exit criteria: a delegated task survives a restart of either bot; a chain stops at its token
+budget; a relay sees only sealed bytes; a 0.3 client and a 1.0 client both get answers; an external
+A2A agent answers a delegation and an external client's task runs with its mapped roles only.
+
 ---
 
 ## Part 5 — Release checklist (every release)

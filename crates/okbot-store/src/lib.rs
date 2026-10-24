@@ -883,11 +883,11 @@ impl ConversationStore for SqliteStore {
             conn.execute(
                 "INSERT INTO peer_tasks (id, inbound, team, peer, context_id, message_id, state,
                                          conversation, trace, text, created_at, updated_at,
-                                         requester, direct)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                                         requester, direct, tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT (inbound, id) DO UPDATE SET state = excluded.state,
                      conversation = excluded.conversation, text = excluded.text,
-                     updated_at = excluded.updated_at",
+                     tokens = excluded.tokens, updated_at = excluded.updated_at",
                 params![
                     task.id,
                     task.inbound,
@@ -905,6 +905,7 @@ impl ConversationStore for SqliteStore {
                         .as_ref()
                         .map(|r| serde_json::to_string(r).expect("a user serializes")),
                     task.direct,
+                    task.tokens.map(|t| i64::try_from(t).unwrap_or(i64::MAX)),
                 ],
             )?;
             Ok(())
@@ -979,7 +980,7 @@ impl ConversationStore for SqliteStore {
 }
 
 const PEER_COLUMNS: &str = "id, inbound, team, peer, context_id, message_id, state, conversation, \
-                            trace, text, created_at, updated_at, requester, direct";
+                            trace, text, created_at, updated_at, requester, direct, tokens";
 
 fn peer_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeerTaskRecord> {
     let bad = |i: usize, e: String| {
@@ -1009,6 +1010,9 @@ fn peer_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeerTaskRecord> {
             .get::<_, Option<String>>(12)?
             .and_then(|r| serde_json::from_str(&r).ok()),
         direct: row.get(13)?,
+        tokens: row
+            .get::<_, Option<i64>>(14)?
+            .and_then(|t| u64::try_from(t).ok()),
     })
 }
 

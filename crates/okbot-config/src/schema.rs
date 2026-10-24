@@ -76,6 +76,9 @@ pub struct TeamSection {
     /// Seconds a delegated task may take (its deadline), unless the chain's is sooner.
     #[serde(default = "default_task_timeout")]
     pub task_timeout: u64,
+    /// Tokens a chain of delegations started here may spend (finished tasks); 0: no limit.
+    #[serde(default)]
+    pub chain_tokens: u64,
 }
 
 fn admins_only() -> Vec<String> {

@@ -225,6 +225,9 @@ fn admit(
     if context.budget.turns == 0 {
         return Err(refused("the chain has no agent turns left"));
     }
+    if context.budget.tokens == Some(0) {
+        return Err(refused("the chain has used its token budget"));
+    }
     Ok(context)
 }
 
@@ -272,6 +275,7 @@ async fn submit(
         text: None,
         requester: None,
         direct: false,
+        tokens: None,
         created_at: now,
         updated_at: now,
     };
@@ -500,6 +504,21 @@ async fn stop_turn(inner: &Inner, record: &PeerTaskRecord, caller: &str) {
     let _ = sink.deliver(event).await;
 }
 
+/// Tokens the runtime's turn used for `task` (or the oldest of `conversation`).
+pub(crate) fn usage(
+    inner: &Inner,
+    conversation: &ConversationKey,
+    task: Option<&str>,
+    tokens: u64,
+) {
+    if let Some(task) = task
+        .map(str::to_string)
+        .or_else(|| oldest(inner, conversation))
+    {
+        *lock(&inner.usage).entry(task).or_default() += tokens;
+    }
+}
+
 /// The runtime could not answer: the task (or the oldest of the conversation) fails, with the
 /// older tasks the same turn was answering.
 pub(crate) async fn fail(
@@ -529,9 +548,11 @@ pub(crate) async fn finish(
         }
     }
     lock(&inner.prompts).remove(&record.id);
+    let tokens = lock(&inner.usage).remove(&record.id).or(record.tokens);
     let record = PeerTaskRecord {
         state,
         text,
+        tokens,
         updated_at: inner.now(),
         ..record.clone()
     };
@@ -562,13 +583,20 @@ pub(crate) fn task_json(inner: &Inner, record: &PeerTaskRecord) -> Value {
             data: json!({"prompt": open.prompt.id, "buttons": buttons}),
         });
     }
+    let message = (!parts.is_empty() || record.tokens.is_some()).then(|| {
+        let mut message = a2a::Message::agent(parts);
+        if let Some(tokens) = record.tokens {
+            message.metadata = Some(json!({a2a::USAGE_KEY: {"tokens": tokens}}));
+        }
+        message
+    });
     let task = a2a::Task {
         kind: "task".into(),
         id: record.id.clone(),
         context_id: record.context_id.clone(),
         status: a2a::Status {
             state: record.state.as_str().into(),
-            message: (!parts.is_empty()).then(|| a2a::Message::agent(parts)),
+            message,
             timestamp: Some(record.updated_at.to_string()),
         },
     };

@@ -148,6 +148,8 @@ pub(crate) struct Inner {
     down: Mutex<HashMap<(String, String), Instant>>,
     /// Requests for members this bot relays.
     pub(crate) relay: crate::relay::Relay,
+    /// Tokens reported for inbound tasks, until they end.
+    pub(crate) usage: Mutex<HashMap<String, u64>>,
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -195,6 +197,7 @@ impl Inner {
             prompts: Mutex::default(),
             down: Mutex::default(),
             relay: crate::relay::Relay::default(),
+            usage: Mutex::default(),
         })
     }
 

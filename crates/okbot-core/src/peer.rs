@@ -77,6 +77,9 @@ pub struct Origin {
 pub struct Budget {
     /// Agent turns.
     pub turns: u32,
+    /// Input plus output tokens of finished tasks; `None`: no token limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
 }
 
 /// Whom to delegate to.
@@ -217,6 +220,8 @@ pub struct PeerTask {
     pub text: Option<String>,
     /// While input is required: the question's buttons, to show the origin person.
     pub prompt: Option<PeerPrompt>,
+    /// Tokens the task used (its turn and its own delegations), once it ended.
+    pub tokens: Option<u64>,
 }
 
 /// A question a task asks the origin person (an approval), answered with one of its buttons.
@@ -283,6 +288,8 @@ pub struct PeerTaskRecord {
     pub requester: Option<UserRef>,
     /// Outbound: the conversation is a one-to-one chat.
     pub direct: bool,
+    /// Tokens the task used, once it ended.
+    pub tokens: Option<u64>,
     /// When it was created.
     pub created_at: Timestamp,
     /// When it last changed.
@@ -303,6 +310,10 @@ pub trait Peers: Send + Sync {
 
     /// Asks the other bot to stop a task this bot delegated.
     async fn cancel(&self, team: &str, peer: &str, task: &str) -> Result<PeerTask, PeerError>;
+
+    /// The tokens the turn answering the task of `conversation` (`task`, or the oldest) used, its
+    /// own delegations included; reported with the task's end.
+    async fn report_usage(&self, conversation: &ConversationKey, task: Option<&str>, tokens: u64);
 
     /// The runtime could not answer the task of `conversation` (`task`, or the oldest): it fails
     /// with `reason` instead of completing with a fixed reply.

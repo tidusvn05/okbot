@@ -143,6 +143,7 @@ async fn with_extra_mcp(
         env: grant.env.clone(),
         guard: None,
         not_connected: Vec::new(),
+        delegated: std::sync::Arc::default(),
     };
     let Some(base) = shared.gateway.url().map(str::to_string) else {
         return out;
@@ -186,6 +187,7 @@ async fn with_extra_mcp(
         local: std::sync::Mutex::default(),
         restricted,
         team,
+        delegated: out.delegated.clone(),
     });
     if team {
         out.servers.push(okbot_core::McpServer {
@@ -216,6 +218,8 @@ struct TurnMcp {
     guard: Option<crate::gateway::GrantGuard>,
     /// OAuth servers the requester could use here once connected.
     not_connected: Vec<String>,
+    /// Tokens used by tasks this turn delegated (ADR 0014).
+    delegated: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// The requester used up `[limits]` (administrators never do). A store error lets the turn run.
@@ -356,6 +360,7 @@ async fn answer_batch(
     };
     drop(grant);
     drop(mcp.guard);
+    let delegated = mcp.delegated.load(std::sync::atomic::Ordering::Relaxed);
     drop(live);
     if let Some(Ok(answer)) = &outcome {
         remember_session(shared, event, answer, restricted).await;
@@ -373,7 +378,7 @@ async fn answer_batch(
         started_at: now,
         person: Some(person),
     };
-    finish(shared, event, outcome, record, typing.1.as_ref()).await;
+    finish(shared, event, outcome, record, typing.1.as_ref(), delegated).await;
 }
 
 /// The room's tool policy. An automation's data is untrusted: no web, so nothing can be sent
@@ -566,6 +571,7 @@ async fn finish(
     outcome: Option<Result<okbot_core::AgentReply, okbot_core::AgentError>>,
     mut record: AgentRunRecord,
     placeholder: Option<&SentRef>,
+    delegated: u64,
 ) {
     let kind = match &outcome {
         None => crate::metrics::Outcome::Cancelled,
@@ -577,6 +583,11 @@ async fn finish(
         _ => record.backend.clone(),
     };
     shared.metrics.turn(&backend, kind, record.duration);
+    if crate::team::is_peer(event) {
+        shared
+            .metrics
+            .peer_task(event.conversation.channel.instance(), kind);
+    }
     match outcome {
         None => {
             tracing::info!(run = %record.run_id, "turn cancelled");
@@ -590,6 +601,8 @@ async fn finish(
             record.backend = answer.backend;
             record.model = answer.model;
             record.usage = answer.usage;
+            let tokens = record.usage.as_ref().map_or(0, |u| u.input + u.output) + delegated;
+            crate::team::report_usage(shared, event, tokens).await;
             if reply_over(shared, event, &answer.text, placeholder).await {
                 let message = NewMessage {
                     conversation: event.conversation.clone(),

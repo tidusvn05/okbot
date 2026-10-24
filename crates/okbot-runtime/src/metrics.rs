@@ -37,6 +37,14 @@ pub(crate) struct Metrics {
     duplicates: AtomicU64,
     ignored: AtomicU64,
     turns: Mutex<BTreeMap<(String, Outcome), TurnStats>>,
+    /// Delegations by team and outcome (ADR 0014).
+    delegations: Mutex<BTreeMap<(String, String), TurnStats>>,
+    /// Tasks from other bots by team and outcome.
+    peer_tasks: Mutex<BTreeMap<(String, Outcome), u64>>,
+}
+
+fn label(text: &str) -> String {
+    text.replace(['"', '\\', '\n'], "_")
 }
 
 impl Metrics {
@@ -60,6 +68,29 @@ impl Metrics {
         let stats = turns.entry((backend.to_string(), outcome)).or_default();
         stats.count += 1;
         stats.seconds += took.as_secs_f64();
+    }
+
+    /// A delegation ended: `outcome` is the task's state, or why it did not start.
+    pub(crate) fn delegation(&self, team: &str, outcome: &str, took: Duration) {
+        let mut all = self
+            .delegations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stats = all
+            .entry((team.to_string(), outcome.to_string()))
+            .or_default();
+        stats.count += 1;
+        stats.seconds += took.as_secs_f64();
+    }
+
+    /// A turn for a task from another bot ended.
+    pub(crate) fn peer_task(&self, team: &str, outcome: Outcome) {
+        *self
+            .peer_tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry((team.to_string(), outcome))
+            .or_default() += 1;
     }
 
     /// The Prometheus exposition text; `in_flight` is the current queue depth.
@@ -124,7 +155,62 @@ impl Metrics {
                 stats.seconds
             );
         }
+        drop(turns);
+        self.render_teams(&mut out, &bot);
         out
+    }
+
+    fn render_teams(&self, out: &mut String, bot: &str) {
+        let delegations = self
+            .delegations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !delegations.is_empty() {
+            let _ = writeln!(
+                out,
+                "# HELP okbot_delegations_total Tasks handed to other bots, by team and outcome.\n# TYPE okbot_delegations_total counter"
+            );
+            for ((team, outcome), stats) in delegations.iter() {
+                let _ = writeln!(
+                    out,
+                    "okbot_delegations_total{{bot=\"{bot}\",team=\"{}\",outcome=\"{}\"}} {}",
+                    label(team),
+                    label(outcome),
+                    stats.count
+                );
+            }
+            let _ = writeln!(
+                out,
+                "# HELP okbot_delegation_seconds_sum Time agents waited for other bots.\n# TYPE okbot_delegation_seconds_sum counter"
+            );
+            for ((team, outcome), stats) in delegations.iter() {
+                let _ = writeln!(
+                    out,
+                    "okbot_delegation_seconds_sum{{bot=\"{bot}\",team=\"{}\",outcome=\"{}\"}} {:.3}",
+                    label(team),
+                    label(outcome),
+                    stats.seconds
+                );
+            }
+        }
+        let tasks = self
+            .peer_tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !tasks.is_empty() {
+            let _ = writeln!(
+                out,
+                "# HELP okbot_peer_tasks_total Turns for tasks from other bots, by team and outcome.\n# TYPE okbot_peer_tasks_total counter"
+            );
+            for ((team, outcome), count) in tasks.iter() {
+                let _ = writeln!(
+                    out,
+                    "okbot_peer_tasks_total{{bot=\"{bot}\",team=\"{}\",outcome=\"{}\"}} {count}",
+                    label(team),
+                    outcome.label()
+                );
+            }
+        }
     }
 }
 
@@ -153,5 +239,21 @@ mod tests {
         assert!(text.contains(
             "okbot_turn_seconds_sum{bot=\"shop\",backend=\"codex\",outcome=\"failed\"} 3.000"
         ));
+        assert!(!text.contains("okbot_delegations_total"), "only once used");
+        m.delegation("acme", "completed", Duration::from_secs(2));
+        m.delegation("acme", "unreachable", Duration::from_millis(500));
+        m.peer_task("acme", Outcome::Answered);
+        let text = m.render("shop", 0);
+        assert!(text.contains(
+            "okbot_delegations_total{bot=\"shop\",team=\"acme\",outcome=\"completed\"} 1"
+        ));
+        assert!(text.contains(
+            "okbot_delegation_seconds_sum{bot=\"shop\",team=\"acme\",outcome=\"unreachable\"} 0.500"
+        ));
+        assert!(
+            text.contains(
+                "okbot_peer_tasks_total{bot=\"shop\",team=\"acme\",outcome=\"answered\"} 1"
+            )
+        );
     }
 }

@@ -28,6 +28,7 @@ enum Behaviour {
 /// A runtime stand-in: answers each event through the channel it came from.
 struct FakeRuntime {
     channel: OnceLock<Arc<dyn Channel>>,
+    node: OnceLock<Node>,
     behaviour: Behaviour,
     events: Mutex<Vec<InboundEvent>>,
     answers: Mutex<Vec<PromptAnswer>>,
@@ -41,7 +42,13 @@ impl InboundSink for FakeRuntime {
         let to = ReplyTarget::to_event(&event);
         match self.behaviour {
             Behaviour::Echo => {
+                let node = self.node.get().cloned();
                 tokio::spawn(async move {
+                    if let Some(node) = node {
+                        let task = event.message_id.as_ref().map(|m| m.as_str().to_string());
+                        node.report_usage(&event.conversation, task.as_deref(), 42)
+                            .await;
+                    }
                     let text = format!("done: {}", event.text);
                     channel.send(&to, &RenderedMessage { text }).await.unwrap();
                 });
@@ -166,10 +173,12 @@ async fn start(
     assert_eq!(node.start().await, [] as [std::string::String; 0]);
     let runtime = Arc::new(FakeRuntime {
         channel: OnceLock::new(),
+        node: OnceLock::new(),
         behaviour,
         events: Mutex::default(),
         answers: Mutex::default(),
     });
+    runtime.node.set(node.clone()).ok().unwrap();
     if let Some(channel) = node.channels().into_iter().next() {
         runtime.channel.set(channel.clone()).ok().unwrap();
         let sink: Arc<dyn InboundSink> = runtime.clone();
@@ -203,7 +212,10 @@ fn delegation(to: &str, message: &str, chain: Vec<String>) -> Delegation {
             },
             chain,
             deadline: SystemClock.now() + jiff::SignedDuration::from_secs(300),
-            budget: Budget { turns: 4 },
+            budget: Budget {
+                turns: 4,
+                tokens: None,
+            },
             trace: "trace-1".into(),
         },
         wait: Duration::from_secs(5),
@@ -245,6 +257,11 @@ async fn a_task_is_answered_once_and_retries_return_it() {
         .unwrap();
     assert_eq!(task.state, PeerTaskState::Completed);
     assert_eq!(task.text.as_deref(), Some("done: Find the release notes"));
+    assert_eq!(
+        task.tokens,
+        Some(42),
+        "the other bot reports what its turn used"
+    );
 
     let events = research.runtime.events.lock().unwrap().clone();
     assert_eq!(events.len(), 1);
@@ -330,6 +347,15 @@ async fn links_chains_and_acceptance_are_enforced() {
         .await;
     assert!(
         matches!(&refused, Err(PeerError::Refused(m)) if m.contains("longer")),
+        "{refused:?}"
+    );
+
+    // A chain without tokens left.
+    let mut spent = delegation("research", "m-6", Vec::new());
+    spent.context.budget.tokens = Some(0);
+    let refused = assistant.node.delegate(spent).await;
+    assert!(
+        matches!(&refused, Err(PeerError::Refused(m)) if m.contains("token budget")),
         "{refused:?}"
     );
 

@@ -196,6 +196,10 @@ fn task_from(team: &str, peer: &str, value: &Value) -> Result<PeerTask, PeerErro
                 .collect();
             Some(PeerPrompt { id, buttons })
         });
+    let tokens = message
+        .and_then(|m| m.metadata.as_ref())
+        .and_then(|m| m.pointer(&format!("/{}/tokens", a2a::USAGE_KEY.replace('/', "~1"))))
+        .and_then(Value::as_u64);
     Ok(PeerTask {
         team: team.to_string(),
         peer: peer.to_string(),
@@ -203,6 +207,7 @@ fn task_from(team: &str, peer: &str, value: &Value) -> Result<PeerTask, PeerErro
         state,
         text,
         prompt,
+        tokens,
     })
 }
 
@@ -227,6 +232,7 @@ impl Node {
             (Some(old), _) => PeerTaskRecord {
                 state: task.state,
                 text: task.text.clone(),
+                tokens: task.tokens.or(old.tokens),
                 updated_at: now,
                 ..old
             },
@@ -248,6 +254,7 @@ impl Node {
                 text: task.text.clone(),
                 requester: d.requester.clone(),
                 direct: d.direct,
+                tokens: task.tokens,
                 created_at: now,
                 updated_at: now,
             },
@@ -385,6 +392,10 @@ impl Peers for Node {
         let task = task_from(&team.config.id, peer, &value)?;
         self.record(&task, None).await;
         Ok(task)
+    }
+
+    async fn report_usage(&self, conversation: &ConversationKey, task: Option<&str>, tokens: u64) {
+        crate::inbound::usage(&self.inner, conversation, task, tokens);
     }
 
     async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str) {

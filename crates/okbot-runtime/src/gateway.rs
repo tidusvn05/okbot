@@ -67,6 +67,8 @@ pub(crate) struct Grant {
     pub(crate) restricted: bool,
     /// The turn has the built-in `team` server (ADR 0014).
     pub(crate) team: bool,
+    /// Tokens used by the tasks this turn delegated and saw end.
+    pub(crate) delegated: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Ends a [`Grant`] when dropped: its token stops working and pending approvals close.

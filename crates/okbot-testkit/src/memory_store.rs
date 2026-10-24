@@ -484,6 +484,7 @@ impl ConversationStore for MemoryStore {
                 old.state = task.state;
                 old.conversation = task.conversation;
                 old.text = task.text;
+                old.tokens = task.tokens;
                 old.updated_at = task.updated_at;
             }
             None => {

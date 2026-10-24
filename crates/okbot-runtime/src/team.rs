@@ -49,6 +49,14 @@ pub(crate) fn is_peer(event: &InboundEvent) -> bool {
     event.conversation.channel.platform() == PEER_PLATFORM
 }
 
+/// For a task from another bot: reports the tokens its turn used (with its own delegations).
+pub(crate) async fn report_usage(shared: &Shared, event: &InboundEvent, tokens: u64) {
+    if let Some(peers) = shared.peers.as_ref().filter(|_| is_peer(event)) {
+        let task = event.message_id.as_ref().map(okbot_core::MessageId::as_str);
+        peers.report_usage(&event.conversation, task, tokens).await;
+    }
+}
+
 /// For a task from another bot: fails it with `reason` (instead of a chat reply) and returns
 /// `true`; `false` for any other event.
 pub(crate) async fn fail(shared: &Shared, event: &InboundEvent, reason: &str) -> bool {
@@ -398,7 +406,28 @@ fn describe(task: &PeerTask) -> String {
 }
 
 /// The delegation context: carried on from the task this turn serves, or started here.
-async fn context(shared: &Shared, grant: &Grant) -> Result<DelegationContext, String> {
+async fn context(
+    shared: &Shared,
+    grant: &Grant,
+    team: &TeamPolicy,
+) -> Result<DelegationContext, String> {
+    let mut context = started_or_carried(shared, grant, team).await?;
+    // Tokens of tasks this turn already saw end count against the chain.
+    let used = grant.delegated.load(std::sync::atomic::Ordering::Relaxed);
+    if let Some(tokens) = &mut context.budget.tokens {
+        *tokens = tokens.saturating_sub(used);
+        if *tokens == 0 {
+            return Err("The chain of delegations has used its token budget.".into());
+        }
+    }
+    Ok(context)
+}
+
+async fn started_or_carried(
+    shared: &Shared,
+    grant: &Grant,
+    team: &TeamPolicy,
+) -> Result<DelegationContext, String> {
     let event = &grant.event;
     if is_peer(event) {
         let Some(caller) = caller(shared, event).await else {
@@ -429,7 +458,10 @@ async fn context(shared: &Shared, grant: &Grant) -> Result<DelegationContext, St
         },
         chain: Vec::new(),
         deadline: shared.clock.now() + jiff::SignedDuration::from_hours(24),
-        budget: Budget { turns: BUDGET },
+        budget: Budget {
+            turns: BUDGET,
+            tokens: team.chain_tokens,
+        },
         trace: hex::encode(rand::random::<[u8; 8]>()),
     })
 }
@@ -457,18 +489,7 @@ async fn delegate(
     if task.is_empty() {
         return ("`task` is required.".into(), true, ToolDecision::Allowed);
     }
-    // The first team of the requester's with a member that matches.
-    let directory = peers.directory().await.unwrap_or_default();
-    let team = teams.iter().find(|t| {
-        directory.iter().any(|m| {
-            m.team == t.id
-                && match &target {
-                    okbot_core::PeerTarget::Member(n) => m.name == *n,
-                    okbot_core::PeerTarget::Role(r) => m.roles.contains(r),
-                    okbot_core::PeerTarget::Skill(s) => m.skills.contains(s),
-                }
-        })
-    });
+    let team = pick_team(peers, teams, &target).await;
     let Some(team) = team else {
         return (
             format!("No bot of your team matches `{target}`; see team_directory."),
@@ -484,23 +505,16 @@ async fn delegate(
             ToolDecision::Declined,
         );
     }
-    let context = match context(shared, grant).await {
+    let context = match context(shared, grant, team).await {
         Ok(c) => c,
-        Err(reason) => return (reason, true, ToolDecision::Allowed),
+        Err(reason) => {
+            shared
+                .metrics
+                .delegation(&team.id, "refused", Duration::ZERO);
+            return (reason, true, ToolDecision::Allowed);
+        }
     };
-    let left = grant
-        .expires
-        .saturating_duration_since(Instant::now())
-        .saturating_sub(MARGIN);
-    // A turn serving another bot answers once: it waits as long as it can.
-    let wait = if is_peer(&grant.event) {
-        left
-    } else {
-        args.get("wait_seconds")
-            .and_then(Value::as_u64)
-            .map_or(team.wait, Duration::from_secs)
-            .min(left)
-    };
+    let wait = wait_for(grant, args, team);
     let delegation = Delegation {
         team: Some(team.id.clone()),
         to: target,
@@ -511,10 +525,16 @@ async fn delegate(
         requester: (!is_peer(&grant.event)).then(|| grant.event.author.clone()),
         direct: grant.event.is_direct,
     };
-    let until = Instant::now() + wait;
+    let started = Instant::now();
+    let until = started + wait;
     let mut outcome = match peers.delegate(delegation).await {
         Ok(task) => task,
-        Err(error) => return (refusal(&error), true, ToolDecision::Allowed),
+        Err(error) => {
+            shared
+                .metrics
+                .delegation(&team.id, error_kind(&error), started.elapsed());
+            return (refusal(&error), true, ToolDecision::Allowed);
+        }
     };
     // Questions go to the requester; their answer goes back; then wait again.
     while outcome.state == PeerTaskState::InputRequired {
@@ -533,6 +553,14 @@ async fn delegate(
         }
         outcome = follow(peers, outcome, until).await;
     }
+    if let Some(tokens) = outcome.tokens {
+        grant
+            .delegated
+            .fetch_add(tokens, std::sync::atomic::Ordering::Relaxed);
+    }
+    shared
+        .metrics
+        .delegation(&team.id, outcome.state.as_str(), started.elapsed());
     if !outcome.state.is_final() && !is_peer(&grant.event) {
         follow_later(shared, peers.clone(), grant.event.clone(), outcome.clone());
     }
@@ -566,6 +594,50 @@ async fn approved(
     )
     .await;
     choice.as_deref() == Some("allow")
+}
+
+/// How long `delegate` waits: the agent's `wait_seconds` or the team's `wait`, within the turn. A
+/// turn serving another bot answers once, so it waits as long as it can.
+fn wait_for(grant: &Grant, args: &Value, team: &TeamPolicy) -> Duration {
+    let left = grant
+        .expires
+        .saturating_duration_since(Instant::now())
+        .saturating_sub(MARGIN);
+    if is_peer(&grant.event) {
+        return left;
+    }
+    args.get("wait_seconds")
+        .and_then(Value::as_u64)
+        .map_or(team.wait, Duration::from_secs)
+        .min(left)
+}
+
+/// The metrics label of a delegation that did not start.
+fn error_kind(error: &PeerError) -> &'static str {
+    match error {
+        PeerError::NoRoute(_) => "no-route",
+        PeerError::Unreachable(_) => "unreachable",
+        _ => "refused",
+    }
+}
+
+/// The first team of the requester's with a member that matches `target`.
+async fn pick_team<'a>(
+    peers: &Arc<dyn okbot_core::Peers>,
+    teams: &[&'a TeamPolicy],
+    target: &okbot_core::PeerTarget,
+) -> Option<&'a TeamPolicy> {
+    let directory = peers.directory().await.unwrap_or_default();
+    teams.iter().copied().find(|t| {
+        directory.iter().any(|m| {
+            m.team == t.id
+                && match target {
+                    okbot_core::PeerTarget::Member(n) => m.name == *n,
+                    okbot_core::PeerTarget::Role(r) => m.roles.contains(r),
+                    okbot_core::PeerTarget::Skill(s) => m.skills.contains(s),
+                }
+        })
+    })
 }
 
 fn refusal(error: &PeerError) -> String {
@@ -746,6 +818,7 @@ pub(crate) async fn resume(shared: &Shared) {
             state: record.state,
             text: record.text,
             prompt: None,
+            tokens: record.tokens,
         };
         follow_later(shared, peers.clone(), event, task);
     }

@@ -775,7 +775,33 @@ pub(crate) async fn init(dir: &Path, args: &InitArgs) -> anyhow::Result<String> 
     let platform = choose_platform(&w, args.platform)?;
     setup_channel(&w, dir, &instance, platform, &mut options).await?;
     write_bot(dir, &options, platform, args.json)?;
+    offer_local_team(&w, dir)?;
     Ok(name)
+}
+
+/// When this machine has a local team (ADR 0014), offers to join it: the bot may then delegate
+/// (administrators only, until `[teams.local]` says otherwise) and others may be linked to it.
+fn offer_local_team(w: &Wizard<'_>, dir: &Path) -> anyhow::Result<()> {
+    if !w.interactive || !crate::team::manifest_path("local")?.exists() {
+        return Ok(());
+    }
+    let join = inquire::Confirm::new("Add this bot to the team of bots on this machine (`local`)?")
+        .with_default(false)
+        .with_help_message(
+            "Teams of bots: docs/peers.md. You can do it later: okbot team join local",
+        )
+        .prompt()
+        .unwrap_or(false);
+    if join {
+        crate::team::join(
+            dir,
+            &crate::team::JoinArgs {
+                team: "local".into(),
+                ..crate::team::JoinArgs::default()
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// Writes the configuration, default knowledge and `.gitignore`, registers the bot and reports.

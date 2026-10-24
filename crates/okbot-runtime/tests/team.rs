@@ -28,6 +28,7 @@ struct FakePeers {
     answers: Mutex<Vec<(String, String)>>,
     cancelled: Mutex<Vec<()>>,
     failed: Mutex<Vec<(ConversationKey, Option<String>, String)>>,
+    usage: Mutex<Vec<(Option<String>, u64)>>,
 }
 
 fn task(state: PeerTaskState, text: &str) -> PeerTask {
@@ -38,6 +39,7 @@ fn task(state: PeerTaskState, text: &str) -> PeerTask {
         state,
         text: Some(text.into()),
         prompt: None,
+        tokens: None,
     }
 }
 
@@ -65,6 +67,13 @@ impl Peers for FakePeers {
     async fn cancel(&self, _: &str, _: &str, _: &str) -> Result<PeerTask, PeerError> {
         self.cancelled.lock().unwrap().push(());
         Ok(task(PeerTaskState::Canceled, "stopped"))
+    }
+
+    async fn report_usage(&self, _: &ConversationKey, task: Option<&str>, tokens: u64) {
+        self.usage
+            .lock()
+            .unwrap()
+            .push((task.map(str::to_string), tokens));
     }
 
     async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str) {
@@ -152,6 +161,7 @@ fn start(channel: &str, steps: Vec<Step>, configure: impl FnOnce(&mut RuntimeCon
         delegate_roles: vec!["everyone".into()],
         confirm: false,
         wait: Duration::from_secs(5),
+        chain_tokens: None,
     }];
     configure(&mut config);
     let channel = Arc::new(FakeChannel::new(channel, ChannelCaps::basic()));
@@ -201,7 +211,10 @@ fn context(person: Option<&str>) -> DelegationContext {
         },
         chain: vec!["assistant".into()],
         deadline: "2099-01-01T00:00:00Z".parse().unwrap(),
-        budget: Budget { turns: 3 },
+        budget: Budget {
+            turns: 3,
+            tokens: None,
+        },
         trace: "tr".into(),
     }
 }
@@ -520,6 +533,7 @@ async fn a_task_still_running_at_a_restart_still_brings_its_result() {
                 is_bot: false,
             }),
             direct: true,
+            tokens: None,
             created_at: now,
             updated_at: now,
         })
@@ -557,4 +571,48 @@ async fn a_task_still_running_at_a_restart_still_brings_its_result() {
     assert!(turns[0].prompt.contains("v2.1 is out"));
     assert!(turns[0].prompt.contains("task handed to `research`"));
     stop.cancel();
+}
+
+#[tokio::test]
+async fn a_chain_stops_at_its_token_budget() {
+    let steps = vec![
+        Step::Call(
+            "team",
+            "delegate",
+            json!({"to": "research", "task": "first"}),
+        ),
+        Step::Call(
+            "team",
+            "delegate",
+            json!({"to": "research", "task": "second"}),
+        ),
+    ];
+    let bot = start("fake:test", steps, |c| c.teams[0].chain_tokens = Some(1000));
+    let mut done = task(PeerTaskState::Completed, "ok");
+    done.tokens = Some(1000);
+    *bot.peers.reply.lock().unwrap() = Some(done);
+    bot.channel
+        .inject(inbound("fake:test", "room", "lan-chat", "go"))
+        .await;
+    bot.idle().await;
+    let delegations = bot.peers.delegations.lock().unwrap().clone();
+    assert_eq!(
+        delegations.len(),
+        1,
+        "the second one is refused before it starts"
+    );
+    assert_eq!(delegations[0].context.budget.tokens, Some(1000));
+    let second = bot.agent.results()[1].as_str().unwrap().to_string();
+    assert!(second.contains("token budget"), "{second}");
+    bot.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_peer_turn_reports_the_tokens_it_used() {
+    let bot = start("peer:local", vec![Step::List("infra")], |_| {});
+    task_from(&bot, "a/1", &["main"], Some("lan"), "count").await;
+    let usage = bot.peers.usage.lock().unwrap().clone();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].1, 110, "input + output of the turn");
+    bot.stop.cancel();
 }
