@@ -209,8 +209,11 @@ pub(crate) async fn send(
     // Sealed for the target: the relay forwards bytes it cannot read.
     let sealed = B64.encode(crate::seal::seal(&box_key, body));
     let params = json!({"to": to, "authorization": authorization, "body": sealed});
-    let value = if relay == team.config.member {
-        // This bot is the relay: queue it here.
+    // This bot is the relay and this process serves its teams: queue it here. Otherwise
+    // (another member relays, or `okbot chat` beside this bot's `okbot run`) the relay's running
+    // process holds the queue the member polls, so the request goes there.
+    let serving = inner.local_server.load(std::sync::atomic::Ordering::SeqCst);
+    let value = if relay == team.config.member && serving {
         forward(inner, team, &team.config.member, params)
             .await
             .map_err(|(_, message)| PeerError::Refused(message))?
