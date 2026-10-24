@@ -45,6 +45,7 @@ okbot-knowledge.workspace = true
 okbot-store.workspace = true
 okbot-channel-console.workspace = true
 okbot-config.workspace = true
+okbot-peer.workspace = true
 okbot-channel-zalo = { workspace = true, optional = true }
 okbot-channel-gchat = { workspace = true, optional = true }
 okbot-channel-discord = { workspace = true, optional = true }

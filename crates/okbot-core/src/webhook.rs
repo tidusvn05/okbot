@@ -37,15 +37,24 @@ pub struct WebhookResponse {
     pub content_type: &'static str,
     /// Body.
     pub body: Vec<u8>,
+    /// Extra headers, with lower-case names.
+    pub headers: Vec<(String, String)>,
 }
 
 impl WebhookResponse {
+    /// Adds a header.
+    pub fn with_header(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.headers.push((name.to_ascii_lowercase(), value.into()));
+        self
+    }
+
     /// `200` with a JSON body.
     pub fn json(body: &serde_json::Value) -> Self {
         Self {
             status: 200,
             content_type: "application/json",
             body: body.to_string().into_bytes(),
+            headers: Vec::new(),
         }
     }
 
@@ -55,6 +64,7 @@ impl WebhookResponse {
             status,
             content_type: "text/plain",
             body: Vec::new(),
+            headers: Vec::new(),
         }
     }
 }

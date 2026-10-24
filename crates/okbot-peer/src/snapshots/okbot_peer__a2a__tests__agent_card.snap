@@ -1,0 +1,51 @@
+---
+source: crates/okbot-peer/src/a2a.rs
+expression: card
+---
+{
+  "capabilities": {
+    "extensions": [
+      {
+        "description": "okbot delegation context (origin, chain, deadline, budget, trace)",
+        "required": true,
+        "uri": "https://github.com/tidusvn05/okbot/blob/main/docs/peers.md#delegation-v1"
+      }
+    ],
+    "pushNotifications": false,
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "description": "Operations",
+  "name": "ops",
+  "preferredTransport": "JSONRPC",
+  "protocolVersion": "0.3.0",
+  "security": [
+    {
+      "okbotPeer": []
+    }
+  ],
+  "securitySchemes": {
+    "okbotPeer": {
+      "description": "okp1 token signed by a team member's Ed25519 key",
+      "scheme": "OkbotPeer",
+      "type": "http"
+    }
+  },
+  "skills": [
+    {
+      "description": "infrastructure",
+      "id": "infrastructure",
+      "name": "infrastructure",
+      "tags": [
+        "infrastructure"
+      ]
+    }
+  ],
+  "url": "https://ops.example.com/a2a/acme",
+  "version": "[version]"
+}

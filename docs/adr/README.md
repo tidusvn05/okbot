@@ -18,3 +18,4 @@ by a new ADR that supersedes the old one; old ADRs are kept.
 | [0011](0011-mcp-gateway-and-roles.md) | An MCP gateway, roles and per-person limits | Accepted |
 | [0012](0012-oauth-for-mcp-servers.md) | OAuth for `[[mcp]]` servers, per person or shared | Accepted |
 | [0013](0013-automations.md) | Automations: triggers, sources and actions | Accepted |
+| [0014](0014-peers-and-teams.md) | Peers and teams: bots that delegate work to each other | Accepted |

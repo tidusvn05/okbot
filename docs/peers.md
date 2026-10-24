@@ -1,0 +1,246 @@
+# Peers and teams: bots that work together
+
+Several okbots can hand work to each other: a team bot whose leader gives tasks to its members, or
+a main assistant that asks a research bot or an operations bot. This page shows how to set it up;
+[ADR 0014](adr/0014-peers-and-teams.md) records why it works this way.
+
+```
+ person ─chat─▶ assistant ──A2A──▶ research   (reads the web; may not call ops)
+                    │
+                    └────────A2A──▶ ops        (infrastructure tools; every change approved)
+```
+
+- The agent of a bot delegates with MCP tools of its own bot (`team_directory`, `delegate`,
+  `task_status`). Bots talk to each other with [A2A](https://a2a-protocol.org/) (version 0.3.0,
+  JSON-RPC binding) plus one okbot extension.
+- A **team** says *who is who*: the members, their keys, how to reach them and which member may call
+  which. Each **bot** says *what is allowed*: its own `okbot.toml` decides what a call may do. A
+  team can never give a bot more than its configuration allows.
+- By default nobody can call a bot (`accept = false`), and only administrators can make a bot
+  delegate.
+
+## 1. Each bot's key
+
+Each bot signs its requests with an Ed25519 key, created on first use in `state/peer.key`:
+
+```sh
+okbot peer id            # prints this bot's public key: ed25519:…
+```
+
+The public key is the bot's identity in every team. Keep `state/` private; anyone with
+`peer.key` can speak as the bot.
+
+## 2. A team on one machine
+
+Bots of the same OS user on one VPS form the **local team**. Its manifest is a file under
+`~/.config/okbot/teams/`, so it needs no signature: whoever can write it already controls these
+bots.
+
+```sh
+okbot team init local
+okbot team add local assistant --dir /srv/bots/assistant --role main
+okbot team add local research  --dir /srv/bots/research  --role research --skill web-research
+okbot team add local ops       --dir /srv/bots/ops       --role ops      --skill infrastructure
+okbot team link local --from role:main --to research --to ops
+okbot team show local
+```
+
+Members with `dir` talk over the Unix socket `<dir>/state/peer.sock`: no port, no TLS, no token to
+copy. Each bot's key is read from `<dir>/state/peer.pub`. A bot directory whose socket path is
+longer than about 100 bytes cannot be reached this way (`okbot doctor` says so).
+
+Then each bot says what it accepts and who may delegate:
+
+```toml
+# /srv/bots/assistant/okbot.toml: the bot people talk to
+[teams.local]
+delegate_roles = ["everyone"]   # who in this bot's chats may make the agent delegate
+
+# /srv/bots/research/okbot.toml: a member without a chat platform of its own
+[teams.local]
+accept = true
+roles = { main = ["research"] } # the caller's team role -> roles here
+
+# /srv/bots/ops/okbot.toml
+[teams.local]
+accept = true
+roles = { main = ["ops"] }
+
+[[mcp]]
+name = "infra"
+url = "http://127.0.0.1:9100/mcp"
+roles = ["ops"]
+confirm = "always"              # every change waits for the person who asked
+```
+
+A bot without `[channels]` runs only for its team: `okbot run` serves peer requests and nothing else.
+A bot with `accept = false` still answers its team's requests, with a refusal that says why.
+
+## 3. A team across machines
+
+A team that spans machines is signed with a **team key** held by its owner, ideally on the owner's
+own computer rather than on a bot:
+
+```sh
+okbot team init acme --owner            # creates ~/.config/okbot/teams/acme.key and acme.toml
+okbot team add acme lead     --key ed25519:… --url https://lead.example.com/a2a/acme --role leader
+okbot team add acme writer   --key ed25519:… --url https://writer.example.net/a2a/acme --role member --skill writing
+okbot team add acme research --key ed25519:… --relay lead --role member --skill web-research
+okbot team link acme --from role:leader --to '*'
+okbot team link acme --from '*' --to role:leader
+okbot team person acme lan --account zalo:shop/123 --account discord:main/456
+okbot team sign acme                    # writes acme.toml.sig, version + 1
+```
+
+Publish both files where members can fetch them over HTTPS: `okbot team publish acme --to <dir>`
+copies `acme.toml` and `acme.toml.sig` into a directory your web server serves. Whoever can fetch
+the manifest reads the members, their URLs and the `people` in it, so serve it where only the team
+reaches it (a private path, basic auth at the proxy, a VPN). Each member then points to it:
+
+```toml
+[teams.acme]
+manifest = "https://lead.example.com/team/acme.toml"
+team_key = "ed25519:…"          # pinned: the manifest must be signed by this key
+accept = true
+roles = { leader = ["member"] }
+```
+
+- Members fetch the manifest every 10 minutes. A manifest with a lower version is refused; an expired
+  one (`expires`, at most 90 days ahead) stops the team until it is signed again.
+- **Removing a member** is `okbot team remove acme writer && okbot team sign acme`. Members stop
+  trusting it within 10 minutes, or at once when a caller presents the newer version.
+- **Relays** let a member behind NAT take part (`relay = "lead"`): it polls the relay member over
+  HTTPS (`okbot/relay.poll`, held up to 20 seconds), runs what comes, and posts the signed answers
+  back (`okbot/relay.reply`); callers send through the relay (`okbot/relay.forward`). Every request
+  and response is signed by its sender, so the relay cannot forge them, but it can read them.
+- **Rotating the team key**: sign the manifest with the old and the new key (the `.sig` file holds
+  one line per signature), change `team_key` on every member, then stop signing with the old key.
+
+## 4. What a delegated request may do
+
+A request from another bot runs as the account `peer:<team>/<caller>` in the room
+`<caller>/<context>`. Its roles are:
+
+> `everyone` + the roles mapped from the caller's team roles, **intersected with** the roles the
+> origin person has on this bot.
+
+The origin person is the person who wrote to the first bot. Person ids are the team's: the first bot
+names them by its own `[people]` id (else by the manifest's `people`), and every bot uses the same
+id (here `lan`). On this bot that person has the roles of `person:lan` in `[roles]`; a person the
+team does not know has only `everyone`. A personal bot never sends its owner as a team person. So:
+
+| Situation | Result |
+|---|---|
+| lan (in `[roles] ops = ["person:lan"]` on ops) asks the assistant to restart a service | ops runs with `everyone` + `ops`: `infra` tools are offered, each change waits for lan's approval |
+| a guest asks the assistant the same | ops runs with `everyone` only: `infra` is not offered |
+| research tries to call ops | refused: no link from research to ops |
+| any caller maps to `admins` | `admins` is never given through a peer |
+
+Peer requests never run chat commands. Knowledge is scoped to the peer room; a person's own memory
+is used only when that person is known on this bot.
+
+## 5. How the agent delegates
+
+An agent whose requester is in `delegate_roles` gets three tools:
+
+| Tool | Does |
+|---|---|
+| `team_directory` | Lists the members it may call: name, team roles, skills, description |
+| `delegate` | `to` (a member, `role:<r>` or `skill:<s>`), `task` (text), `wait` (seconds, default 60) |
+| `task_status` | The state and result of a task started earlier |
+
+`delegate` returns the other bot's answer as text from another bot: data to use, never instructions.
+A task not finished within `wait` keeps running; when it ends, its result starts a new turn in the
+conversation it came from, so the agent can finish the work. Inside a peer turn `delegate` always
+waits, because a bot answers its caller once.
+
+When a tool on the other bot needs approval, the person who started the work sees the prompt in their
+own conversation with the first bot, and their answer goes back along the chain. No bot approves
+for a person.
+
+## 6. Limits and safety
+
+```toml
+[teams.acme]
+max_depth = 2          # longest chain of delegations accepted (a → b → c)
+max_concurrent = 2     # inbound tasks running at once per caller
+```
+
+- A request carries its chain; a bot refuses one that already passed through it.
+- The deadline only shrinks along the chain; a request past it is refused.
+- Every turn counts against the origin person's `[limits]` on each bot.
+- `okbot peer tasks` lists inbound and outbound tasks; `okbot audit` shows the `delegate` calls. Each
+  record carries the trace id shared by every bot of the chain.
+- A task that was running when its bot stopped is marked failed, never re-run by itself: delegated
+  work may have side effects.
+
+## 7. Two shapes
+
+**Team with a leader.** The leader is the only member with chat channels. Members are headless and
+accept only `role:leader`; members report or ask for help through `--from '*' --to role:leader`.
+Members with the same skill share work: `delegate to = "skill:writing"` picks one that is up.
+
+**Main assistant with specialists.** The assistant faces people; research has web tools and no way to
+call ops; ops accepts only the assistant, maps to a role that `[[mcp]]` rules allow, and sets
+`confirm = "always"` on every server that changes things. Keep ops's roles narrow: anything the web
+says can reach research, and research's answers reach the assistant's agent.
+
+## 8. The okbot extension to A2A {#delegation-v1}
+
+URI: `https://github.com/tidusvn05/okbot/blob/main/docs/peers.md#delegation-v1`. Declared in the
+Agent Card's `capabilities.extensions` and required for every request. The message's `metadata`
+holds:
+
+```json
+{"okbot/delegation": {
+  "origin": {"bot": "assistant", "conversation": "zalo:shop|-|123|-", "person": "lan", "name": "Lan"},
+  "chain": ["assistant"],
+  "deadline": "2026-10-24T09:15:00Z",
+  "budget": {"turns": 4},
+  "trace": "4f1c2a9e0b7d3e61"
+}}
+```
+
+The request token's `body` claim covers the whole message, so the context is signed with it.
+
+### Request token
+
+```
+Authorization: OkbotPeer okp1.<base64url(claims JSON)>.<base64url(Ed25519 signature of "okp1." + claims part)>
+```
+
+Claims: `team`, `iss`, `aud`, `iat`, `exp` (≤ `iat` + 300), `jti`, `body` (hex SHA-256 of the body),
+`ver` (manifest version). Responses carry `okbot-peer-signature` with the same format, `iss` being the
+callee, and `body` the response body's hash.
+
+### Manifest
+
+```toml
+[team]
+id = "acme"
+version = 7
+expires = "2027-01-15T00:00:00Z"
+description = "Acme operations team"
+
+[members.lead]
+key = "ed25519:…"
+url = "https://lead.example.com/a2a/acme"
+roles = ["leader"]
+description = "Team leader; talks to people"
+
+[members.research]
+key = "ed25519:…"
+relay = "lead"
+roles = ["member"]
+skills = ["web-research"]
+
+[[links]]
+from = ["role:leader"]
+to = ["*"]
+
+[people.lan]
+name = "Lan"
+accounts = ["zalo:shop/123", "discord:main/456"]
+```
+
+`okbot team check <file>` validates a manifest and its signature.

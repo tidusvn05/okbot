@@ -21,7 +21,7 @@ pub use schema::{
     ChannelsSection, CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery,
     GChatSection, HttpSection, LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection,
     OAuthSection, PersonSection, ProviderSection, ReplyOn, RestrictSection, RoomSection,
-    ScheduleSection, SlackSection, SourceSection, TelegramSection, ZaloSection,
+    ScheduleSection, SlackSection, SourceSection, TeamSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -115,8 +115,9 @@ pub enum ConfigError {
 }
 
 /// Platforms with a native adapter; bridge adapters must use other names.
-pub const BUILT_IN_PLATFORMS: &[&str] =
-    &["console", "zalo", "gchat", "discord", "slack", "telegram"];
+pub const BUILT_IN_PLATFORMS: &[&str] = &[
+    "console", "zalo", "gchat", "discord", "slack", "telegram", "peer",
+];
 
 /// Parses an account written `platform:instance/user-id` (`zalo:shop/6ede9afa…`), as `/whoami`
 /// shows it and `[bot] admins` and `[people]` use it.
@@ -252,6 +253,8 @@ pub struct Config {
     pub limits: LimitsSection,
     /// `[[automation]]`: triggers, sources and actions (ADR 0013).
     pub automations: Vec<AutomationSection>,
+    /// `[teams.<id>]`: teams of okbots this bot belongs to (ADR 0014).
+    pub teams: BTreeMap<String, TeamSection>,
     /// Values from `.env`, wrapped so `Debug` never shows them.
     dotenv: HashMap<String, Secret<String>>,
 }
@@ -308,6 +311,7 @@ impl Config {
             roles: file.roles,
             limits: file.limits,
             automations: file.automation,
+            teams: file.teams,
             dotenv,
         };
         config.validate()?;
@@ -323,6 +327,7 @@ impl Config {
         self.validate_commands()?;
         self.validate_notify()?;
         self.validate_automations()?;
+        self.validate_teams()?;
         self.validate_http()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
@@ -431,6 +436,63 @@ impl Config {
         Ok(())
     }
 
+    fn validate_teams(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        for (id, team) in &self.teams {
+            if !is_slug(id) {
+                return invalid(format!(
+                    "[teams.{id}]: the id may only contain a-z, 0-9, `-` and `_`"
+                ));
+            }
+            if !team.member.is_empty() && !is_slug(&team.member) {
+                return invalid(format!(
+                    "[teams.{id}] member `{}` may only contain a-z, 0-9, `-` and `_`",
+                    team.member
+                ));
+            }
+            if team.manifest.starts_with("http://") {
+                return invalid(format!("[teams.{id}] manifest must be https:// or a file"));
+            }
+            if team.manifest.starts_with("https://") && team.team_key.is_empty() {
+                return invalid(format!(
+                    "[teams.{id}] a manifest fetched over the network needs `team_key`"
+                ));
+            }
+            if !team.team_key.is_empty() && !team.team_key.starts_with("ed25519:") {
+                return invalid(format!(
+                    "[teams.{id}] team_key must be `ed25519:<base64url>`"
+                ));
+            }
+            for (team_role, roles) in &team.roles {
+                if roles.iter().any(|r| r == "admins") {
+                    return invalid(format!(
+                        "[teams.{id}] roles.{team_role}: `admins` is never given to another bot"
+                    ));
+                }
+                self.check_roles(&format!("[teams.{id}] roles.{team_role}"), roles)?;
+            }
+            self.check_roles(
+                &format!("[teams.{id}] delegate_roles"),
+                &team.delegate_roles,
+            )?;
+            if team.confirm == Confirm::Destructive {
+                return invalid(format!("[teams.{id}] confirm is `never` or `always`"));
+            }
+            if team.max_depth == 0 || team.max_depth > 8 {
+                return invalid(format!("[teams.{id}] max_depth must be 1 to 8"));
+            }
+            if team.max_concurrent == 0 {
+                return invalid(format!("[teams.{id}] max_concurrent must be at least 1"));
+            }
+            if team.wait > 600 || team.task_timeout < 30 || team.task_timeout > 86_400 {
+                return invalid(format!(
+                    "[teams.{id}] wait is at most 600 s; task_timeout is 30 s to 1 day"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_people(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
         let mut linked = HashMap::new();
@@ -517,7 +579,7 @@ impl Config {
                     m.name
                 ));
             }
-            if matches!(m.name.as_str(), "kb" | "bot") {
+            if matches!(m.name.as_str(), "kb" | "bot" | "team") {
                 return invalid(format!("[[mcp]] name `{}` is reserved", m.name));
             }
             if !seen.insert(m.name.as_str()) {

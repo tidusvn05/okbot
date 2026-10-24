@@ -52,6 +52,7 @@ exit status. `scripts/verify.sh` runs with `set -euo pipefail`.
 - `crates/okbot-core` — domain model and ports (public SDK).
 - `crates/okbot-{config,render,store,agent,knowledge,runtime}` — application and driven adapters.
 - `crates/okbot-channel-*` — one crate per chat platform.
+- `crates/okbot-peer` — teams of bots that delegate to each other (ADR 0014).
 - `crates/okbot-testkit` — fakes and fixtures (dev-dependency only).
 - `crates/okbot-cli` — crate `okbot`: the binary and composition root.
 - `docs/` — design, plan, ADRs, platform guides.

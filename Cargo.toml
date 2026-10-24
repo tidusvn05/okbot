@@ -50,6 +50,7 @@ okbot-channel-discord = { path = "crates/okbot-channel-discord", version = "0.10
 okbot-channel-slack = { path = "crates/okbot-channel-slack", version = "0.10.0-dev" }
 okbot-channel-telegram = { path = "crates/okbot-channel-telegram", version = "0.10.0-dev" }
 okbot-channel-bridge = { path = "crates/okbot-channel-bridge", version = "0.10.0-dev" }
+okbot-peer = { path = "crates/okbot-peer", version = "0.10.0-dev" }
 okbot-testkit = { path = "crates/okbot-testkit", version = "0.10.0-dev" }
 
 # External crates.

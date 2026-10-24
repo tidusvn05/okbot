@@ -210,6 +210,17 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     }
     rc.automations = automations(config)?;
     rc.roles = roles(config)?;
+    rc.teams = config
+        .teams
+        .iter()
+        .map(|(id, t)| okbot_runtime::TeamPolicy {
+            id: id.clone(),
+            roles: t.roles.clone().into_iter().collect(),
+            delegate_roles: t.delegate_roles.clone(),
+            confirm: t.confirm == okbot_config::Confirm::Always,
+            wait: std::time::Duration::from_secs(t.wait),
+        })
+        .collect();
     rc.limits = okbot_runtime::Limits {
         turns_per_day: config.limits.turns_per_day,
         tokens_per_day: config.limits.tokens_per_day,
@@ -729,7 +740,7 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     channels.extend(slack_channels(config)?);
     channels.extend(telegram_channels(config)?);
     channels.extend(bridge_channels(config)?);
-    if channels.is_empty() {
+    if channels.is_empty() && config.teams.is_empty() {
         bail!(
             "no channel is configured in {}; add one with `okbot init` (or use `okbot chat`)",
             config.dir.join(okbot_config::CONFIG_FILE).display()
@@ -795,6 +806,10 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     }
     if let Some(connector) = connector {
         builder = builder.oauth(connector);
+    }
+    if let Some(node) = crate::team::node(config, store.clone()).await? {
+        channels.extend(node.channels());
+        builder = builder.peers(Arc::new(node));
     }
     for channel in channels {
         builder = builder.channel(channel);

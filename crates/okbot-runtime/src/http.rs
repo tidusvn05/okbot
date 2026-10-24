@@ -69,12 +69,21 @@ async fn webhook(
     };
     let response = handler.handle(request).await;
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (
+    let mut reply = (
         status,
         [(header::CONTENT_TYPE, response.content_type)],
         response.body,
     )
-        .into_response()
+        .into_response();
+    for (name, value) in response.headers {
+        if let (Ok(name), Ok(value)) = (
+            header::HeaderName::from_bytes(name.as_bytes()),
+            header::HeaderValue::from_str(&value),
+        ) {
+            reply.headers_mut().insert(name, value);
+        }
+    }
+    reply
 }
 
 /// The decoded `key=value` pairs of a query string.
@@ -374,6 +383,8 @@ mod tests {
             notified: crate::notify::Recent::default(),
             gateway: Arc::default(),
             oauth: None,
+            peers: None,
+            sink: std::sync::OnceLock::new(),
         })
     }
 

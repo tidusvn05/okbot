@@ -33,6 +33,69 @@ pub(crate) struct File {
     pub(crate) limits: LimitsSection,
     #[serde(default)]
     pub(crate) automation: Vec<AutomationSection>,
+    #[serde(default)]
+    pub(crate) teams: BTreeMap<String, TeamSection>,
+}
+
+/// `[teams.<id>]`: this bot in a team of okbots that delegate work to each other (ADR 0014). The
+/// team's manifest says who the members are; this section says what they may do here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamSection {
+    /// Where the manifest is: an `https://` URL (signed with `team_key`), or a file (default:
+    /// `~/.config/okbot/teams/<id>.toml`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub manifest: String,
+    /// The team's public key (`ed25519:…`): a fetched manifest must be signed with it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub team_key: String,
+    /// This bot's member name; default: the `[bot] name` as a slug.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub member: String,
+    /// Other members may delegate work to this bot.
+    #[serde(default)]
+    pub accept: bool,
+    /// The caller's team roles mapped to roles of this bot (`[roles]` or `everyone`).
+    #[serde(default)]
+    pub roles: BTreeMap<String, Vec<String>>,
+    /// Who in this bot's chats may make the agent delegate (`[roles]`, `admins`, `everyone`).
+    #[serde(default = "admins_only")]
+    pub delegate_roles: Vec<String>,
+    /// `always`: the requester approves each delegation first.
+    #[serde(default)]
+    pub confirm: Confirm,
+    /// The longest chain of delegations accepted (a → b → c is 2).
+    #[serde(default = "default_depth")]
+    pub max_depth: u32,
+    /// Inbound tasks running at once, per calling member.
+    #[serde(default = "default_concurrent")]
+    pub max_concurrent: u32,
+    /// Seconds `delegate` waits before the task continues in the background.
+    #[serde(default = "default_wait")]
+    pub wait: u64,
+    /// Seconds a delegated task may take (its deadline), unless the chain's is sooner.
+    #[serde(default = "default_task_timeout")]
+    pub task_timeout: u64,
+}
+
+fn admins_only() -> Vec<String> {
+    vec!["admins".into()]
+}
+
+fn default_depth() -> u32 {
+    2
+}
+
+fn default_concurrent() -> u32 {
+    2
+}
+
+fn default_wait() -> u64 {
+    60
+}
+
+fn default_task_timeout() -> u64 {
+    600
 }
 
 /// `[limits]`: what one person may use over a rolling 24 hours (ADR 0011). Administrators are

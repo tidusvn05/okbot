@@ -76,7 +76,15 @@ impl Dispatcher {
             // Failing open: answering twice is better than not answering.
             Err(error) => tracing::warn!(%error, "dedupe check failed"),
         }
-        match s.gate.check(&event, s.clock.now()) {
+        // Another bot's task was admitted by the peer adapter (team links, depth, limits); its
+        // roles decide what it may do (ADR 0014).
+        let peer = crate::team::is_peer(&event);
+        let verdict = if peer {
+            crate::policy::Verdict::Answer
+        } else {
+            s.gate.check(&event, s.clock.now())
+        };
+        match verdict {
             Verdict::Ignore => {
                 s.metrics.ignored();
                 return;
@@ -90,6 +98,11 @@ impl Dispatcher {
                 return;
             }
             Verdict::Answer => {}
+        }
+        if peer {
+            // No chat commands through another bot.
+            self.route((event, guard));
+            return;
         }
         if s.config.personal && !self.owner_or_pairing(&event).await {
             return;
@@ -264,13 +277,15 @@ async fn worker(
             }
         };
         let Some(first) = first else { return };
-        // Commands run alone, in order with the messages around them.
-        if let Some(command) = Command::parse(&first.0.text) {
+        // Commands run alone, in order with the messages around them. Another bot's text is
+        // never a command.
+        let peer = crate::team::is_peer(&first.0);
+        if !peer && let Some(command) = Command::parse(&first.0.text) {
             let text = command::execute(&shared, command, &first.0).await;
             turn::reply(&shared, &first.0, &text).await;
             continue;
         }
-        if let Some((command, rest)) = crate::mcp_command::find(&shared, &first.0.text) {
+        if !peer && let Some((command, rest)) = crate::mcp_command::find(&shared, &first.0.text) {
             crate::mcp_command::run(&shared, command, rest, &first.0).await;
             continue;
         }
@@ -280,8 +295,9 @@ async fn worker(
             // person's messages: another author's text must never run as this one.
             // An automation's turn is restricted and isolated: it never batches with a person's
             // messages.
-            if Command::parse(&more.0.text).is_some()
-                || crate::mcp_command::find(&shared, &more.0.text).is_some()
+            if (!peer
+                && (Command::parse(&more.0.text).is_some()
+                    || crate::mcp_command::find(&shared, &more.0.text).is_some()))
                 || more.0.author.id != batch[0].0.author.id
                 || crate::automation::is_automation(&more.0)
                 || crate::automation::is_automation(&batch[0].0)

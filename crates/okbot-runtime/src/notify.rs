@@ -447,6 +447,8 @@ mod tests {
             notified: Recent::default(),
             gateway: Arc::default(),
             oauth: None,
+            peers: None,
+            sink: std::sync::OnceLock::new(),
         };
         Setup {
             shared,

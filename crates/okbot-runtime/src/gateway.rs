@@ -65,6 +65,8 @@ pub(crate) struct Grant {
     /// An automation's turn (ADR 0013): calls of tools not marked read-only wait for the
     /// requester's approval, whatever the server's `confirm` says.
     pub(crate) restricted: bool,
+    /// The turn has the built-in `team` server (ADR 0014).
+    pub(crate) team: bool,
 }
 
 /// Ends a [`Grant`] when dropped: its token stops working and pending approvals close.
@@ -115,7 +117,7 @@ impl Gateway {
         )
     }
 
-    fn find(&self, token: &str) -> Option<Arc<Grant>> {
+    pub(crate) fn find(&self, token: &str) -> Option<Arc<Grant>> {
         let grant = lock(&self.grants).get(&digest(token)).cloned()?;
         (grant.expires > Instant::now() && !grant.done.is_cancelled()).then_some(grant)
     }
@@ -238,6 +240,14 @@ async fn post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if name == crate::team::SERVER {
+        // Built in: delegating to other bots of the team (ADR 0014).
+        return match bearer(&headers).and_then(|t| shared.gateway.find(t)) {
+            Some(grant) if grant.team => crate::team::post(&shared, &grant, &body).await,
+            Some(_) => (StatusCode::NOT_FOUND, "no such server for this turn").into_response(),
+            None => (StatusCode::UNAUTHORIZED, "a valid run token is required").into_response(),
+        };
+    }
     let (grant, index, token) = match admit(&shared, &headers, &name) {
         Ok(found) => found,
         Err(response) => return response,
@@ -299,6 +309,9 @@ async fn delete(
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    if name == crate::team::SERVER {
+        return StatusCode::OK.into_response();
+    }
     let (grant, index, token) = match admit(&shared, &headers, &name) {
         Ok(found) => found,
         Err(response) => return response,

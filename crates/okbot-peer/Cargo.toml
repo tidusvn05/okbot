@@ -1,0 +1,39 @@
+[package]
+name = "okbot-peer"
+description = "okbot peers and teams (ADR 0014): signed A2A delegation between okbots."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+okbot-core.workspace = true
+base64.workspace = true
+hex.workspace = true
+jiff.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+toml.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+okbot-testkit.workspace = true
+insta.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+axum.workspace = true

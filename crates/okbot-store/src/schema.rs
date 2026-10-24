@@ -139,6 +139,26 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX automation_runs_by_name ON automation_runs(automation, at);
     CREATE INDEX automation_runs_by_time ON automation_runs(at);
     ",
+    // 6: tasks delegated between bots of a team (ADR 0014).
+    r"
+    CREATE TABLE peer_tasks (
+        id           TEXT NOT NULL,
+        inbound      INTEGER NOT NULL,
+        team         TEXT NOT NULL,
+        peer         TEXT NOT NULL,
+        context_id   TEXT NOT NULL,
+        message_id   TEXT NOT NULL,
+        state        TEXT NOT NULL,
+        conversation TEXT,
+        trace        TEXT NOT NULL,
+        text         TEXT,
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL,
+        PRIMARY KEY (inbound, id),
+        UNIQUE (inbound, team, peer, message_id)
+    );
+    CREATE INDEX peer_tasks_by_time ON peer_tasks(updated_at);
+    ",
 ];
 
 /// The schema version this build writes.

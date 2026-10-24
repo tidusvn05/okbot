@@ -797,3 +797,39 @@ fn automation_mistakes_are_explained() {
         assert!(error.contains(expected), "{expected}: {error}");
     }
 }
+
+#[test]
+fn teams_load_with_their_defaults_and_refuse_admins() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = "config_version = 1\n[bot]\nname = \"x\"\n[roles]\nops = []\n";
+    let config = Config::from_text(
+        dir.path(),
+        &format!("{base}[teams.local]\naccept = true\nroles = {{ main = [\"ops\"] }}\n"),
+    )
+    .unwrap();
+    let team = &config.teams["local"];
+    assert!(team.accept);
+    assert_eq!(
+        team.delegate_roles,
+        ["admins"],
+        "only admins delegate by default"
+    );
+    assert_eq!((team.max_depth, team.max_concurrent, team.wait), (2, 2, 60));
+    for (team, expected) in [
+        (
+            "roles = { main = [\"admins\"] }",
+            "never given to another bot",
+        ),
+        ("roles = { main = [\"nobody\"] }", "not in [roles]"),
+        ("manifest = \"https://x/acme.toml\"", "needs `team_key`"),
+        ("manifest = \"http://x/acme.toml\"", "must be https://"),
+        ("confirm = \"destructive\"", "`never` or `always`"),
+        ("max_depth = 0", "max_depth"),
+        ("member = \"Lead\"", "may only contain"),
+    ] {
+        let error = Config::from_text(dir.path(), &format!("{base}[teams.acme]\n{team}\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{team}: {error}");
+    }
+}

@@ -15,8 +15,9 @@ use std::time::Duration;
 use jiff::Timestamp;
 use okbot_core::{
     AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore, Fire,
-    FireState, MessageRole, NewMessage, RoleGrant, SealedEntry, StoreError, StoredMessage,
-    SystemClock, ToolCallRecord, ToolDecision, Usage, UserId, async_trait,
+    FireState, MessageRole, NewMessage, PeerTaskRecord, PeerTaskState, RoleGrant, SealedEntry,
+    StoreError, StoredMessage, SystemClock, ToolCallRecord, ToolDecision, Usage, UserId,
+    async_trait,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -697,6 +698,10 @@ impl ConversationStore for SqliteStore {
                 params![cutoff],
             )?;
             removed += tx.execute(
+                "DELETE FROM peer_tasks WHERE updated_at < ?1",
+                params![cutoff],
+            )?;
+            removed += tx.execute(
                 "DELETE FROM conversations WHERE updated_at < ?1
                  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)",
                 params![cutoff],
@@ -872,6 +877,130 @@ impl ConversationStore for SqliteStore {
         })
         .await
     }
+
+    async fn put_peer_task(&self, task: PeerTaskRecord) -> Result<(), StoreError> {
+        self.with(move |conn, _| {
+            conn.execute(
+                "INSERT INTO peer_tasks (id, inbound, team, peer, context_id, message_id, state,
+                                         conversation, trace, text, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 ON CONFLICT (inbound, id) DO UPDATE SET state = excluded.state,
+                     conversation = excluded.conversation, text = excluded.text,
+                     updated_at = excluded.updated_at",
+                params![
+                    task.id,
+                    task.inbound,
+                    task.team,
+                    task.peer,
+                    task.context_id,
+                    task.message_id,
+                    task.state.as_str(),
+                    task.conversation.map(|c| c.to_string()),
+                    task.trace,
+                    task.text,
+                    millis(task.created_at),
+                    millis(task.updated_at),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn peer_task(
+        &self,
+        inbound: bool,
+        id: &str,
+    ) -> Result<Option<PeerTaskRecord>, StoreError> {
+        let id = id.to_string();
+        self.with(move |conn, _| {
+            conn.query_row(
+                &format!("SELECT {PEER_COLUMNS} FROM peer_tasks WHERE inbound = ?1 AND id = ?2"),
+                params![inbound, id],
+                peer_task_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    async fn peer_task_by_message(
+        &self,
+        inbound: bool,
+        team: &str,
+        peer: &str,
+        message_id: &str,
+    ) -> Result<Option<PeerTaskRecord>, StoreError> {
+        let (team, peer, message_id) = (team.to_string(), peer.to_string(), message_id.to_string());
+        self.with(move |conn, _| {
+            conn.query_row(
+                &format!(
+                    "SELECT {PEER_COLUMNS} FROM peer_tasks
+                     WHERE inbound = ?1 AND team = ?2 AND peer = ?3 AND message_id = ?4"
+                ),
+                params![inbound, team, peer, message_id],
+                peer_task_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    async fn peer_tasks(&self, limit: usize) -> Result<Vec<PeerTaskRecord>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.with(move |conn, _| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {PEER_COLUMNS} FROM peer_tasks ORDER BY updated_at DESC, created_at DESC
+                 LIMIT ?1"
+            ))?;
+            let rows = stmt.query_map(params![limit], peer_task_row)?;
+            rows.collect()
+        })
+        .await
+    }
+
+    async fn interrupt_peer_tasks(&self, now: Timestamp) -> Result<u64, StoreError> {
+        self.with(move |conn, _| {
+            let changed = conn.execute(
+                "UPDATE peer_tasks SET state = 'failed', text = 'interrupted: the bot stopped',
+                     updated_at = ?1
+                 WHERE inbound = 1 AND state IN ('submitted', 'working', 'input-required')",
+                params![millis(now)],
+            )?;
+            Ok(changed as u64)
+        })
+        .await
+    }
+}
+
+const PEER_COLUMNS: &str = "id, inbound, team, peer, context_id, message_id, state, conversation, \
+                            trace, text, created_at, updated_at";
+
+fn peer_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeerTaskRecord> {
+    let bad = |i: usize, e: String| {
+        rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Text, e.into())
+    };
+    let state: String = row.get(6)?;
+    let conversation: Option<String> = row.get(7)?;
+    Ok(PeerTaskRecord {
+        id: row.get(0)?,
+        inbound: row.get(1)?,
+        team: row.get(2)?,
+        peer: row.get(3)?,
+        context_id: row.get(4)?,
+        message_id: row.get(5)?,
+        state: state
+            .parse::<PeerTaskState>()
+            .map_err(|e| bad(6, e.to_string()))?,
+        conversation: conversation
+            .map(|c| c.parse::<ConversationKey>())
+            .transpose()
+            .map_err(|e| bad(7, e.to_string()))?,
+        trace: row.get(8)?,
+        text: row.get(9)?,
+        created_at: from_millis(row.get(10)?),
+        updated_at: from_millis(row.get(11)?),
+    })
 }
 
 #[cfg(test)]

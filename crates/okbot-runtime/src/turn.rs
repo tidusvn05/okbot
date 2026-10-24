@@ -170,7 +170,9 @@ async fn with_extra_mcp(
             Upstream::NotHere | Upstream::Unavailable => {}
         }
     }
-    if servers.is_empty() {
+    // An automation's turn never delegates: its data is untrusted (ADR 0013).
+    let team = !restricted && crate::team::offered(shared, &who).await;
+    if servers.is_empty() && !team {
         return out;
     }
     let (token, guard) = shared.gateway.issue(crate::gateway::Grant {
@@ -183,7 +185,16 @@ async fn with_extra_mcp(
         done: CancellationToken::new(),
         local: std::sync::Mutex::default(),
         restricted,
+        team,
     });
+    if team {
+        out.servers.push(okbot_core::McpServer {
+            name: crate::team::SERVER.into(),
+            url: format!("{base}/mcp/{}", crate::team::SERVER),
+            bearer_token_env: crate::team::TOKEN_ENV.into(),
+        });
+        out.env.push((crate::team::TOKEN_ENV.into(), token.clone()));
+    }
     for m in servers {
         out.servers.push(okbot_core::McpServer {
             name: m.server.name.clone(),
@@ -285,6 +296,7 @@ async fn answer_batch(
     .await;
 
     let history = history_for(shared, event, restricted).await;
+    let peer_note = crate::team::prompt_note(shared, event).await;
     let now = shared.clock.now();
     let new_count = batch.len().min(history.len());
     let input = PromptInput {
@@ -301,6 +313,7 @@ async fn answer_batch(
         history_tokens: shared.config.history_tokens,
         personal: requester.personal,
         not_connected: &mcp.not_connected,
+        peer: peer_note.as_deref(),
     };
     let prompt = context::build(&input);
     // An automation turn starts afresh and leaves no session behind, so its data never reaches

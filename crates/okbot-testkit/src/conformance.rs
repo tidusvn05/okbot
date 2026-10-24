@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use okbot_core::{
     AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore,
-    MessageRole, RoleGrant, RunId, TokenUsage, ToolCallRecord, ToolDecision, ToolPolicy, Usage,
-    UserId,
+    MessageRole, PeerTaskRecord, PeerTaskState, RoleGrant, RunId, TokenUsage, ToolCallRecord,
+    ToolDecision, ToolPolicy, Usage, UserId,
 };
 
 use crate::{ManualClock, bot_message, conversation, user_message};
@@ -33,6 +33,7 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     role_grants(store, clock).await;
     sealed_secrets(store).await;
     automations(store, clock).await;
+    peer_tasks(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -339,6 +340,93 @@ async fn automations(store: &dyn ConversationStore, clock: &ManualClock) {
         .await
         .expect("runs");
     assert_eq!(recent.len(), 2, "only runs since the given time");
+}
+
+async fn peer_tasks(store: &dyn ConversationStore, clock: &ManualClock) {
+    let task = |id: &str, inbound: bool, message: &str| PeerTaskRecord {
+        id: id.into(),
+        inbound,
+        team: "acme".into(),
+        peer: "lead".into(),
+        context_id: "ctx".into(),
+        message_id: message.into(),
+        state: PeerTaskState::Working,
+        conversation: Some(conversation("peer:acme", "lead/ctx")),
+        trace: "t1".into(),
+        text: None,
+        created_at: clock.now(),
+        updated_at: clock.now(),
+    };
+    store
+        .put_peer_task(task("t-1", true, "m-1"))
+        .await
+        .expect("put");
+    store
+        .put_peer_task(task("t-1", false, "m-1"))
+        .await
+        .expect("each direction has its own ids");
+    let found = store
+        .peer_task_by_message(true, "acme", "lead", "m-1")
+        .await
+        .expect("by message")
+        .expect("found");
+    assert_eq!(found.id, "t-1");
+    assert_eq!(
+        found.conversation,
+        Some(conversation("peer:acme", "lead/ctx"))
+    );
+    assert!(
+        store.put_peer_task(task("t-2", true, "m-1")).await.is_err(),
+        "one task per message"
+    );
+    clock.advance(Duration::from_secs(5));
+    store
+        .put_peer_task(PeerTaskRecord {
+            state: PeerTaskState::Completed,
+            text: Some("done".into()),
+            updated_at: clock.now(),
+            ..task("t-1", false, "m-1")
+        })
+        .await
+        .expect("update");
+    let out = store
+        .peer_task(false, "t-1")
+        .await
+        .expect("get")
+        .expect("found");
+    assert_eq!(
+        (out.state, out.text.as_deref()),
+        (PeerTaskState::Completed, Some("done"))
+    );
+    assert_eq!(store.peer_tasks(10).await.expect("list")[0].id, "t-1");
+    assert!(
+        !store.peer_tasks(10).await.expect("list")[0].inbound,
+        "newest first"
+    );
+    assert_eq!(
+        store
+            .interrupt_peer_tasks(clock.now())
+            .await
+            .expect("interrupt"),
+        1
+    );
+    let failed = store
+        .peer_task(true, "t-1")
+        .await
+        .expect("get")
+        .expect("found");
+    assert_eq!(failed.state, PeerTaskState::Failed);
+    assert_eq!(
+        store
+            .peer_task(false, "t-1")
+            .await
+            .expect("get")
+            .expect("found")
+            .state,
+        PeerTaskState::Completed,
+        "outbound tasks are not interrupted"
+    );
+    assert!(store.peer_task(true, "nope").await.expect("get").is_none());
 }
 
 async fn role_grants(store: &dyn ConversationStore, clock: &ManualClock) {

@@ -1,0 +1,611 @@
+//! `okbot peer` and `okbot team` (ADR 0014): a bot's peer key and the team manifests kept in
+//! `~/.config/okbot/teams/`.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, bail};
+use okbot_peer::manifest::{self, Link, Manifest, Member, TeamPerson};
+use okbot_peer::{PublicKey, SigningKey};
+
+use crate::registry;
+
+/// `okbot peer` subcommands.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum PeerCommand {
+    /// Print this bot's public key (created on first use), to add it to a team.
+    Id {
+        /// Bot name; default: the bot in the current directory.
+        #[arg(long)]
+        bot: Option<String>,
+    },
+    /// List tasks delegated to or by this bot, newest first.
+    Tasks {
+        /// Bot name; default: the bot in the current directory.
+        #[arg(long)]
+        bot: Option<String>,
+        /// How many.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+}
+
+/// `okbot team` subcommands. They edit the manifest in `~/.config/okbot/teams/<team>.toml`.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum TeamCommand {
+    /// Start a team. `local` is the team of this machine's bots; other teams are signed with a
+    /// team key (`--owner` creates it).
+    Init {
+        /// Team id: lowercase letters, digits, `-`, `_`.
+        team: String,
+        /// Create the team key here (keep this machine safe; bots do not need it).
+        #[arg(long)]
+        owner: bool,
+        /// What the team is for.
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Add or update a member.
+    Add(AddArgs),
+    /// Remove a member.
+    Remove {
+        /// Team id.
+        team: String,
+        /// Member name.
+        member: String,
+    },
+    /// Let members matching `--from` call members matching `--to` (a name, `role:<r>` or `*`).
+    Link {
+        /// Team id.
+        team: String,
+        /// Callers (repeatable).
+        #[arg(long, required = true)]
+        from: Vec<String>,
+        /// Callees (repeatable).
+        #[arg(long, required = true)]
+        to: Vec<String>,
+    },
+    /// Remove a link by its number in `okbot team show`.
+    Unlink {
+        /// Team id.
+        team: String,
+        /// Link number (from 1).
+        number: usize,
+    },
+    /// Name a person for the team, with their chat accounts, so other bots know who asked.
+    Person {
+        /// Team id.
+        team: String,
+        /// Person id (the same id as in each bot's `[people]` and `[roles]`).
+        person: String,
+        /// Accounts as `platform:instance/user-id` (repeatable).
+        #[arg(long = "account")]
+        accounts: Vec<String>,
+        /// Display name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Remove the person instead.
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Sign the manifest with the team key: a new version, valid for `--days`.
+    Sign {
+        /// Team id.
+        team: String,
+        /// Days until it expires (at most 90).
+        #[arg(long, default_value_t = 30)]
+        days: i64,
+    },
+    /// Show the manifest: members, links and people.
+    Show {
+        /// Team id.
+        team: String,
+    },
+    /// Check a manifest file, and its signature with `--key`.
+    Check {
+        /// The manifest.
+        file: PathBuf,
+        /// The team's public key; the signature is read from `<file>.sig`.
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Copy the signed manifest and its signature into a directory your HTTPS server serves.
+    Publish {
+        /// Team id.
+        team: String,
+        /// The directory (default: the current one).
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
+}
+
+/// The bot's peer node for its `[teams]`, or `None` without teams. Problems that do not stop the
+/// bot (a manifest not fetched yet, this bot missing from a team) are logged.
+pub(crate) async fn node(
+    config: &okbot_config::Config,
+    store: std::sync::Arc<okbot_store::SqliteStore>,
+) -> anyhow::Result<Option<okbot_peer::Node>> {
+    if config.teams.is_empty() {
+        return Ok(None);
+    }
+    let node = node_unstarted(config, store)?;
+    for problem in node.start().await {
+        tracing::warn!("{problem}");
+    }
+    Ok(Some(node))
+}
+
+/// The peer node, before [`okbot_peer::Node::start`] (which changes stored tasks).
+pub(crate) fn node_unstarted(
+    config: &okbot_config::Config,
+    store: std::sync::Arc<okbot_store::SqliteStore>,
+) -> anyhow::Result<okbot_peer::Node> {
+    let state = config.state_dir();
+    let key = SigningKey::for_bot(&state)?;
+    let default_member = slug(&config.bot.name);
+    let mut teams = Vec::new();
+    for (id, t) in &config.teams {
+        let source = if t.manifest.starts_with("https://") {
+            okbot_peer::ManifestSource::Url {
+                url: t.manifest.clone(),
+                team_key: t
+                    .team_key
+                    .parse()
+                    .with_context(|| format!("[teams.{id}] team_key"))?,
+            }
+        } else if t.manifest.is_empty() {
+            okbot_peer::ManifestSource::File(manifest_path(id)?)
+        } else {
+            okbot_peer::ManifestSource::File(config.dir.join(&t.manifest))
+        };
+        teams.push(okbot_peer::TeamConfig {
+            id: id.clone(),
+            member: if t.member.is_empty() {
+                default_member.clone()
+            } else {
+                t.member.clone()
+            },
+            source,
+            accept: t.accept,
+            max_depth: t.max_depth,
+            max_concurrent: t.max_concurrent,
+            task_timeout: std::time::Duration::from_secs(t.task_timeout),
+        });
+    }
+    okbot_peer::Node::new(
+        okbot_peer::NodeConfig {
+            key,
+            state_dir: state,
+            teams,
+        },
+        store,
+        std::sync::Arc::new(okbot_core::SystemClock),
+    )
+    .context("cannot start the bot's teams")
+}
+
+/// A bot name as a member name: lowercase, other characters as `-`.
+pub(crate) fn slug(name: &str) -> String {
+    let slug: String = name
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    slug.trim_matches('-').to_string()
+}
+
+/// `okbot team add`.
+#[derive(Debug, clap::Args)]
+pub(crate) struct AddArgs {
+    /// Team id.
+    team: String,
+    /// Member name: lowercase letters, digits, `-`, `_`.
+    member: String,
+    /// Its public key (`okbot peer id` on its machine).
+    #[arg(long)]
+    key: Option<String>,
+    /// Its A2A endpoint: `https://<its public_url>/a2a/<team>`.
+    #[arg(long)]
+    url: Option<String>,
+    /// The member that relays requests to it (for a bot behind NAT).
+    #[arg(long)]
+    relay: Option<String>,
+    /// Its bot directory on this machine; default for a registered bot of the same name.
+    #[arg(long)]
+    dir: Option<PathBuf>,
+    /// Team roles (repeatable).
+    #[arg(long = "role")]
+    roles: Vec<String>,
+    /// Skills (repeatable).
+    #[arg(long = "skill")]
+    skills: Vec<String>,
+    /// What it does, for the agents that delegate to it.
+    #[arg(long)]
+    description: Option<String>,
+}
+
+/// Where team manifests and keys live: `~/.config/okbot/teams/`.
+pub(crate) fn teams_dir() -> anyhow::Result<PathBuf> {
+    Ok(registry::home()?.join("teams"))
+}
+
+/// The manifest file of `team` in [`teams_dir`].
+pub(crate) fn manifest_path(team: &str) -> anyhow::Result<PathBuf> {
+    Ok(teams_dir()?.join(format!("{team}.toml")))
+}
+
+fn key_path(team: &str) -> anyhow::Result<PathBuf> {
+    Ok(teams_dir()?.join(format!("{team}.key")))
+}
+
+fn sig_path(manifest: &Path) -> PathBuf {
+    let mut name = manifest.as_os_str().to_owned();
+    name.push(".sig");
+    PathBuf::from(name)
+}
+
+fn load(team: &str) -> anyhow::Result<Manifest> {
+    let path = manifest_path(team)?;
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("no team `{team}` here: `okbot team init {team}` starts one"))?;
+    Manifest::parse(&text).with_context(|| format!("{} is invalid", path.display()))
+}
+
+/// Writes an edited manifest as a new version. An edit invalidates the old signature, so it is
+/// removed: `okbot team sign` signs again.
+fn save(mut manifest: Manifest, what: &str) -> anyhow::Result<()> {
+    manifest.team.version += 1;
+    manifest.check()?;
+    let path = manifest_path(&manifest.team.id)?;
+    std::fs::create_dir_all(teams_dir()?)?;
+    std::fs::write(&path, manifest.to_toml())
+        .with_context(|| format!("cannot write {}", path.display()))?;
+    let sig = sig_path(&path);
+    let signed = sig.exists();
+    if signed {
+        std::fs::remove_file(&sig)?;
+    }
+    println!(
+        "{what} (team `{}`, version {})",
+        manifest.team.id, manifest.team.version
+    );
+    if signed || key_path(&manifest.team.id)?.exists() {
+        println!(
+            "sign it for the other machines: okbot team sign {}",
+            manifest.team.id
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn peer(command: PeerCommand) -> anyhow::Result<()> {
+    match command {
+        PeerCommand::Id { bot } => {
+            let dir = registry::resolve(bot.as_deref())?;
+            let key = SigningKey::for_bot(&dir.join("state"))?;
+            println!("{}", key.public());
+            eprintln!("fingerprint {}", key.public().fingerprint());
+            Ok(())
+        }
+        PeerCommand::Tasks { bot, limit } => tasks(bot.as_deref(), limit).await,
+    }
+}
+
+async fn tasks(bot: Option<&str>, limit: usize) -> anyhow::Result<()> {
+    use okbot_core::ConversationStore as _;
+    let dir = registry::resolve(bot)?;
+    let store = okbot_store::SqliteStore::open(&dir.join("state").join("okbot.db"))?;
+    let tasks = store.peer_tasks(limit).await?;
+    if tasks.is_empty() {
+        println!("no peer tasks");
+    }
+    for t in tasks {
+        println!(
+            "{} {:<3} {}/{:<12} {:<14} {}  trace {}{}",
+            t.updated_at.strftime("%Y-%m-%d %H:%M"),
+            if t.inbound { "in" } else { "out" },
+            t.team,
+            t.peer,
+            t.state.as_str(),
+            t.id,
+            t.trace,
+            t.text
+                .filter(|_| t.state != okbot_core::PeerTaskState::Completed)
+                .map(|e| format!("  ({})", first_line(&e)))
+                .unwrap_or_default(),
+        );
+    }
+    Ok(())
+}
+
+fn first_line(text: &str) -> String {
+    let line = text.lines().next().unwrap_or_default();
+    line.chars().take(80).collect()
+}
+
+pub(crate) fn team(command: TeamCommand) -> anyhow::Result<()> {
+    match command {
+        TeamCommand::Init {
+            team,
+            owner,
+            description,
+        } => init(&team, owner, description),
+        TeamCommand::Add(args) => add(args),
+        TeamCommand::Remove { team, member } => {
+            let mut manifest = load(&team)?;
+            if manifest.members.remove(&member).is_none() {
+                bail!("no member `{member}` in team `{team}`");
+            }
+            manifest.links.retain_mut(|l| {
+                l.from.retain(|s| *s != member);
+                l.to.retain(|s| *s != member);
+                !l.from.is_empty() && !l.to.is_empty()
+            });
+            save(manifest, &format!("member `{member}` removed"))
+        }
+        TeamCommand::Link { team, from, to } => {
+            let mut manifest = load(&team)?;
+            let link = Link { from, to };
+            if manifest.links.contains(&link) {
+                println!("that link exists");
+                return Ok(());
+            }
+            manifest.links.push(link);
+            save(manifest, "link added")
+        }
+        TeamCommand::Unlink { team, number } => {
+            let mut manifest = load(&team)?;
+            if number == 0 || number > manifest.links.len() {
+                bail!("no link {number}; `okbot team show {team}` numbers them");
+            }
+            manifest.links.remove(number - 1);
+            save(manifest, "link removed")
+        }
+        TeamCommand::Person {
+            team,
+            person,
+            accounts,
+            name,
+            remove,
+        } => {
+            let mut manifest = load(&team)?;
+            if remove {
+                if manifest.people.remove(&person).is_none() {
+                    bail!("no person `{person}` in team `{team}`");
+                }
+                return save(manifest, &format!("person `{person}` removed"));
+            }
+            let entry = manifest
+                .people
+                .entry(person.clone())
+                .or_insert_with(TeamPerson::default);
+            for account in accounts {
+                if !entry.accounts.contains(&account) {
+                    entry.accounts.push(account);
+                }
+            }
+            if let Some(name) = name {
+                entry.name = name;
+            }
+            save(manifest, &format!("person `{person}` saved"))
+        }
+        TeamCommand::Sign { team, days } => sign(&team, days),
+        TeamCommand::Show { team } => {
+            show(&load(&team)?);
+            Ok(())
+        }
+        TeamCommand::Check { file, key } => check(&file, key.as_deref()),
+        TeamCommand::Publish { team, to } => publish(&team, to.as_deref()),
+    }
+}
+
+fn add(args: AddArgs) -> anyhow::Result<()> {
+    let AddArgs {
+        team,
+        member,
+        key,
+        url,
+        relay,
+        dir,
+        roles,
+        skills,
+        description,
+    } = args;
+    let mut manifest = load(&team)?;
+    let mut entry = manifest.members.get(&member).cloned().unwrap_or_default();
+    let reach_given = url.is_some() || relay.is_some() || dir.is_some();
+    let dir = match dir {
+        Some(dir) => Some(std::fs::canonicalize(&dir).unwrap_or(dir)),
+        None if !reach_given && entry == Member::default() => registry::resolve(Some(&member)).ok(),
+        None => None,
+    };
+    if reach_given || dir.is_some() {
+        entry.url = url;
+        entry.relay = relay;
+        entry.dir = dir;
+    }
+    if let Some(key) = key {
+        entry.key = Some(key.parse::<PublicKey>()?);
+    }
+    if !roles.is_empty() {
+        entry.roles = roles;
+    }
+    if !skills.is_empty() {
+        entry.skills = skills;
+    }
+    if let Some(description) = description {
+        entry.description = description;
+    }
+    if entry.url.is_none() && entry.relay.is_none() && entry.dir.is_none() {
+        bail!(
+            "say how to reach `{member}`: --url, --relay, or --dir (a bot directory on \
+             this machine)"
+        );
+    }
+    manifest.members.insert(member.clone(), entry);
+    save(manifest, &format!("member `{member}` saved"))
+}
+
+fn init(team: &str, owner: bool, description: Option<String>) -> anyhow::Result<()> {
+    let path = manifest_path(team)?;
+    if path.exists() {
+        bail!("team `{team}` exists: {}", path.display());
+    }
+    if owner && team == "local" {
+        bail!("the local team is a file on this machine and is not signed");
+    }
+    let mut manifest = Manifest::new(team);
+    manifest.team.description = description.unwrap_or_default();
+    manifest.check()?;
+    if owner {
+        let (key, bytes) = SigningKey::generate()?;
+        okbot_peer::key::write_new_private(&key_path(team)?, &bytes)?;
+        println!("team key: {}", key.public());
+        println!("members pin it as `team_key` in [teams.{team}]");
+    }
+    save(manifest, "team created")?;
+    println!("manifest: {}", path.display());
+    Ok(())
+}
+
+fn sign(team: &str, days: i64) -> anyhow::Result<()> {
+    if !(1..=manifest::MAX_VALIDITY_DAYS).contains(&days) {
+        bail!("--days must be 1 to {}", manifest::MAX_VALIDITY_DAYS);
+    }
+    let key_file = key_path(team)?;
+    let bytes = std::fs::read(&key_file).with_context(|| {
+        format!(
+            "no team key at {}: only the owner's machine signs (`okbot team init {team} --owner`)",
+            key_file.display()
+        )
+    })?;
+    let key = SigningKey::from_pkcs8(&bytes)?;
+    let mut manifest = load(team)?;
+    manifest.team.version += 1;
+    manifest.team.expires = Some(
+        jiff::Timestamp::now()
+            .checked_add(jiff::SignedDuration::from_hours(days * 24))
+            .and_then(|t| t.round(jiff::Unit::Second))
+            .context("date out of range")?,
+    );
+    manifest.check()?;
+    let text = manifest.to_toml();
+    let path = manifest_path(team)?;
+    std::fs::write(&path, &text)?;
+    std::fs::write(sig_path(&path), manifest::sign(&text, &key))?;
+    println!(
+        "signed team `{team}` version {}, valid until {}",
+        manifest.team.version,
+        manifest
+            .team
+            .expires
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+    );
+    println!(
+        "publish {} and its .sig where members fetch them",
+        path.display()
+    );
+    Ok(())
+}
+
+fn show(manifest: &Manifest) {
+    println!(
+        "team {} version {}{}",
+        manifest.team.id,
+        manifest.team.version,
+        manifest
+            .team
+            .expires
+            .map(|e| format!(", expires {e}"))
+            .unwrap_or_default()
+    );
+    if !manifest.team.description.is_empty() {
+        println!("{}", manifest.team.description);
+    }
+    println!("\nmembers:");
+    for (name, m) in &manifest.members {
+        let reach = match (&m.url, &m.relay, &m.dir) {
+            (Some(url), _, _) => url.clone(),
+            (_, Some(relay), _) => format!("through {relay}"),
+            (_, _, Some(dir)) => dir.display().to_string(),
+            _ => String::new(),
+        };
+        let key = match (&m.key, &m.dir) {
+            (Some(k), _) => k.fingerprint(),
+            (None, Some(dir)) => okbot_peer::key::bot_public_key(dir)
+                .map_or_else(|_| "no key yet".into(), |k| k.fingerprint()),
+            _ => String::new(),
+        };
+        println!(
+            "  {name:<12} roles [{}] skills [{}]  {reach}  key {key}",
+            m.roles.join(", "),
+            m.skills.join(", ")
+        );
+        for to in manifest.callees(name) {
+            println!("    may call {to}");
+        }
+    }
+    println!("\nlinks:");
+    for (i, l) in manifest.links.iter().enumerate() {
+        println!("  {}. {} -> {}", i + 1, l.from.join(", "), l.to.join(", "));
+    }
+    if !manifest.people.is_empty() {
+        println!("\npeople:");
+        for (id, p) in &manifest.people {
+            println!("  {id:<12} {}  {}", p.name, p.accounts.join(", "));
+        }
+    }
+}
+
+fn check(file: &Path, key: Option<&str>) -> anyhow::Result<()> {
+    let text =
+        std::fs::read_to_string(file).with_context(|| format!("cannot read {}", file.display()))?;
+    let manifest = match key {
+        Some(key) => {
+            let sig = sig_path(file);
+            let signatures = std::fs::read_to_string(&sig)
+                .with_context(|| format!("cannot read {}", sig.display()))?;
+            let manifest = manifest::verify(&text, &signatures, &key.parse()?)?;
+            manifest.check_fresh(jiff::Timestamp::now(), true)?;
+            println!("signature: ok");
+            manifest
+        }
+        None => Manifest::parse(&text)?,
+    };
+    println!(
+        "team {} version {}: {} members, {} links",
+        manifest.team.id,
+        manifest.team.version,
+        manifest.members.len(),
+        manifest.links.len()
+    );
+    Ok(())
+}
+
+fn publish(team: &str, to: Option<&Path>) -> anyhow::Result<()> {
+    let path = manifest_path(team)?;
+    let sig = sig_path(&path);
+    if !sig.exists() {
+        bail!("team `{team}` is not signed: okbot team sign {team}");
+    }
+    let dir = match to {
+        Some(dir) => dir.to_path_buf(),
+        None => std::env::current_dir()?,
+    };
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(&path, dir.join(format!("{team}.toml")))?;
+    std::fs::copy(&sig, dir.join(format!("{team}.toml.sig")))?;
+    println!(
+        "copied {team}.toml and {team}.toml.sig to {}; members fetch `https://<host>/<path>/{team}.toml`",
+        dir.display()
+    );
+    println!("anyone who can fetch it reads the members, their URLs and the people listed");
+    Ok(())
+}
