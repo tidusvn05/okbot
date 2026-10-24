@@ -96,6 +96,8 @@ base64 = "0.23"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # Already linked through rustls; used directly for Google service-account and ID-token JWTs.
 ring = "0.17"
+# X25519 for sealing peer requests that pass through a relay (ADR 0014); ring has no static X25519 keys.
+x25519-dalek = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
 tempfile = "3"
 insta = { version = "1", features = ["json", "yaml"] }
 proptest = "1"

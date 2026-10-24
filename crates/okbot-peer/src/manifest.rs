@@ -59,6 +59,9 @@ pub struct Member {
     /// Its public key (read from `dir` when that is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<PublicKey>,
+    /// Its X25519 key, for what passes through a relay (read from `dir` when that is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_key: Option<crate::seal::BoxPublic>,
     /// Its A2A endpoint (`https://…/a2a/<team>`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -171,6 +174,12 @@ impl Manifest {
                 )));
             }
             if let Some(relay) = &member.relay {
+                if member.box_key.is_none() {
+                    return Err(Error::Manifest(format!(
+                        "member `{name}` is reached through a relay and needs a `box_key` \
+                         (`okbot peer id` prints it), so the relay cannot read its messages"
+                    )));
+                }
                 let via = self.members.get(relay);
                 if relay == name || via.is_none_or(|m| m.url.is_none()) {
                     return Err(Error::Manifest(format!(
@@ -354,6 +363,7 @@ roles = ["leader"]
 
 [members.research]
 key = "ed25519:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+box_key = "x25519:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 relay = "lead"
 roles = ["member"]
 skills = ["web-research"]
@@ -419,6 +429,10 @@ accounts = ["zalo:shop/123"]
             broken("id = \"acme\"", "id = \"Acme\""),
             broken("zalo:shop/123", "zalo"),
             broken("version = 3", "version = 3\nowner = \"x\""),
+            broken(
+                "box_key = \"x25519:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n",
+                "",
+            ),
             broken(
                 "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",

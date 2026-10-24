@@ -12,6 +12,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use okbot_core::{CancellationToken, PeerError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -197,8 +199,16 @@ pub(crate) async fn send(
     authorization: &str,
     body: &[u8],
 ) -> Result<(u16, Option<String>, Vec<u8>), PeerError> {
-    let params =
-        json!({"to": to, "authorization": authorization, "body": String::from_utf8_lossy(body)});
+    let manifest = team.manifest();
+    let target = manifest
+        .members
+        .get(to)
+        .ok_or_else(|| PeerError::NoRoute(to.to_string()))?;
+    let box_key = crate::node::member_box_key(target)
+        .map_err(|e| PeerError::Unreachable(format!("`{to}`: {e}")))?;
+    // Sealed for the target: the relay forwards bytes it cannot read.
+    let sealed = B64.encode(crate::seal::seal(&box_key, body));
+    let params = json!({"to": to, "authorization": authorization, "body": sealed});
     let value = if relay == team.config.member {
         // This bot is the relay: queue it here.
         forward(inner, team, &team.config.member, params)
@@ -210,7 +220,54 @@ pub(crate) async fn send(
     };
     let answer: Answer = serde_json::from_value(value)
         .map_err(|_| PeerError::Refused(format!("`{relay}` sent an invalid relay answer")))?;
-    Ok((answer.status, answer.signature, answer.body.into_bytes()))
+    let body = B64
+        .decode(&answer.body)
+        .ok()
+        .and_then(|sealed| crate::seal::open(&inner.box_key, &sealed).ok())
+        .ok_or_else(|| {
+            PeerError::Refused(format!(
+                "`{to}`'s answer through the relay is not sealed for this bot"
+            ))
+        })?;
+    Ok((answer.status, answer.signature, body))
+}
+
+/// Runs a sealed request that came through the relay and seals the answer for its sender.
+async fn run_sealed(
+    inner: &Arc<Inner>,
+    team_id: &str,
+    item: &Item,
+) -> (u16, Option<String>, String) {
+    let refused = |status: u16, text: &str| (status, None, text.to_string());
+    let Some(plain) = B64
+        .decode(&item.body)
+        .ok()
+        .and_then(|sealed| crate::seal::open(&inner.box_key, &sealed).ok())
+    else {
+        return refused(400, "requests through a relay must be sealed for this bot");
+    };
+    let Some(caller_key) = item
+        .authorization
+        .strip_prefix(crate::node::SCHEME)
+        .and_then(|t| crate::token::peek(t).ok())
+        .and_then(|claims| {
+            let manifest = inner.teams.get(team_id)?.manifest();
+            crate::node::member_box_key(manifest.members.get(&claims.iss)?).ok()
+        })
+    else {
+        return refused(401, "the caller has no box_key to answer to");
+    };
+    let reply = crate::inbound::handle(
+        inner,
+        team_id,
+        "POST",
+        Some(&item.authorization),
+        None,
+        &plain,
+    )
+    .await;
+    let sealed = B64.encode(crate::seal::seal(&caller_key, &reply.body));
+    (reply.status, reply.signature, sealed)
 }
 
 /// For each team where this bot is reached through a relay: polls it and answers what comes.
@@ -268,18 +325,10 @@ async fn poll_loop(inner: Arc<Inner>, team_id: String, stop: CancellationToken) 
             let team_id = team_id.clone();
             let relay = relay.clone();
             tokio::spawn(async move {
-                let reply = crate::inbound::handle(
-                    &inner,
-                    &team_id,
-                    "POST",
-                    Some(&item.authorization),
-                    item.body.as_bytes(),
-                )
-                .await;
+                let (status, signature, body) = run_sealed(&inner, &team_id, &item).await;
                 let request = a2a::Request::new(
                     "okbot/relay.reply",
-                    json!({"id": item.id, "status": reply.status, "signature": reply.signature,
-                           "body": String::from_utf8_lossy(&reply.body)}),
+                    json!({"id": item.id, "status": status, "signature": signature, "body": body}),
                 );
                 let team = &inner.teams[&team_id];
                 if let Err(error) = inner.call(team, &relay, &request).await {

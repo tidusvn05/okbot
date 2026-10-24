@@ -6,7 +6,7 @@ expression: card
   "capabilities": {
     "extensions": [
       {
-        "description": "okbot delegation context (origin, chain, deadline, budget, trace)",
+        "description": "okbot delegation context (origin, chain, deadline, budget, trace); requests are signed with OkbotPeer tokens",
         "required": true,
         "uri": "https://github.com/tidusvn05/okbot/blob/main/docs/peers.md#delegation-v1"
       }
@@ -22,20 +22,6 @@ expression: card
   ],
   "description": "Operations",
   "name": "ops",
-  "preferredTransport": "JSONRPC",
-  "protocolVersion": "0.3.0",
-  "security": [
-    {
-      "okbotPeer": []
-    }
-  ],
-  "securitySchemes": {
-    "okbotPeer": {
-      "description": "okp1 token signed by a team member's Ed25519 key",
-      "scheme": "OkbotPeer",
-      "type": "http"
-    }
-  },
   "skills": [
     {
       "description": "infrastructure",
@@ -46,6 +32,17 @@ expression: card
       ]
     }
   ],
-  "url": "https://ops.example.com/a2a/acme",
+  "supportedInterfaces": [
+    {
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0",
+      "url": "https://ops.example.com/a2a/acme"
+    },
+    {
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "0.3",
+      "url": "https://ops.example.com/a2a/acme"
+    }
+  ],
   "version": "[version]"
 }

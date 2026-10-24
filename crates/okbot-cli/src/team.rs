@@ -174,9 +174,11 @@ pub(crate) fn node_unstarted(
             task_timeout: std::time::Duration::from_secs(t.task_timeout),
         });
     }
+    let box_key = okbot_peer::BoxKey::for_bot(&state)?;
     okbot_peer::Node::new(
         okbot_peer::NodeConfig {
             key,
+            box_key,
             state_dir: state,
             teams,
         },
@@ -250,9 +252,13 @@ pub(crate) struct AddArgs {
     team: String,
     /// Member name: lowercase letters, digits, `-`, `_`.
     member: String,
-    /// Its public key (`okbot peer id` on its machine).
+    /// Its public key (`okbot peer id` on its machine, first line).
     #[arg(long)]
     key: Option<String>,
+    /// Its box key (`okbot peer id`, second line): needed when it is reached through a relay or
+    /// calls a member that is.
+    #[arg(long)]
+    box_key: Option<String>,
     /// Its A2A endpoint: `https://<its public_url>/a2a/<team>`.
     #[arg(long)]
     url: Option<String>,
@@ -332,8 +338,13 @@ pub(crate) async fn peer(command: PeerCommand) -> anyhow::Result<()> {
         PeerCommand::Id { bot } => {
             let dir = registry::resolve(bot.as_deref())?;
             let key = SigningKey::for_bot(&dir.join("state"))?;
+            let box_key = okbot_peer::BoxKey::for_bot(&dir.join("state"))?;
             println!("{}", key.public());
-            eprintln!("fingerprint {}", key.public().fingerprint());
+            println!("{}", box_key.public());
+            eprintln!(
+                "fingerprint {}; the second line is the box key (--box-key), for relays",
+                key.public().fingerprint()
+            );
             Ok(())
         }
         PeerCommand::Tasks { bot, limit } => tasks(bot.as_deref(), limit).await,
@@ -535,9 +546,10 @@ pub(crate) fn join(dir: &Path, args: &JoinArgs) -> anyhow::Result<()> {
     if args.manifest.is_some() {
         println!("ask the team's owner to add this bot:");
         println!(
-            "  okbot team add {} {member} --key {} --url <public_url>/a2a/{}  (or --relay <member>)",
+            "  okbot team add {} {member} --key {} --box-key {} --url <public_url>/a2a/{}  (or --relay <member>)",
             args.team,
             key.public(),
+            okbot_peer::BoxKey::for_bot(&dir.join("state"))?.public(),
             args.team
         );
         return Ok(());
@@ -589,6 +601,7 @@ fn add(args: AddArgs) -> anyhow::Result<()> {
         team,
         member,
         key,
+        box_key,
         url,
         relay,
         dir,
@@ -611,6 +624,9 @@ fn add(args: AddArgs) -> anyhow::Result<()> {
     }
     if let Some(key) = key {
         entry.key = Some(key.parse::<PublicKey>()?);
+    }
+    if let Some(key) = box_key {
+        entry.box_key = Some(key.parse::<okbot_peer::BoxPublic>()?);
     }
     if !roles.is_empty() {
         entry.roles = roles;

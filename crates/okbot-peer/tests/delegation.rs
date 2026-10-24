@@ -112,6 +112,7 @@ struct Bot {
 fn bot_dir(root: &Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     SigningKey::for_bot(&dir.join("state")).unwrap();
+    okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap();
     dir
 }
 
@@ -155,6 +156,7 @@ async fn start(
     let node = Node::new(
         NodeConfig {
             key: SigningKey::for_bot(&dir.join("state")).unwrap(),
+            box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
             state_dir: dir.join("state"),
             teams: vec![TeamConfig {
                 id: "local".into(),
@@ -574,12 +576,15 @@ async fn a_member_behind_nat_is_reached_through_its_relay() {
     let url = serve_http(lead.runtime.channel.get().unwrap().clone()).await;
     let mut m = Manifest::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
     let key = |name: &str| okbot_peer::key::bot_public_key(&root.path().join(name)).unwrap();
+    let box_key = |name: &str| okbot_peer::seal::bot_box_key(&root.path().join(name)).unwrap();
     let lead_entry = m.members.get_mut("lead").unwrap();
     lead_entry.key = Some(key("lead"));
+    lead_entry.box_key = Some(box_key("lead"));
     lead_entry.dir = None;
     lead_entry.url = Some(url);
     let research_entry = m.members.get_mut("research").unwrap();
     research_entry.key = Some(key("research"));
+    research_entry.box_key = Some(box_key("research"));
     research_entry.dir = None;
     research_entry.relay = Some("lead".into());
     m.team.version = 2;
@@ -650,4 +655,81 @@ async fn the_caller_cancels_a_task_and_the_other_turn_is_told_to_stop() {
         .await
         .unwrap();
     assert_eq!(after.state, PeerTaskState::Canceled);
+}
+
+#[tokio::test]
+async fn a_0_3_client_gets_0_3_answers_and_a_1_0_client_gets_1_0() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["assistant", "writer"] {
+        bot_dir(root.path(), name);
+    }
+    let file = manifest(
+        root.path(),
+        &["assistant", "writer"],
+        links("role:main", "*"),
+    );
+    let writer = start(root.path(), "writer", &file, true, Behaviour::Echo).await;
+    let url = serve_http(writer.runtime.channel.get().unwrap().clone()).await;
+    let key = SigningKey::for_bot(&root.path().join("assistant").join("state")).unwrap();
+    let context = delegation("writer", "x", vec!["assistant".into()]).context;
+    let post = |method: &str, message: serde_json::Value, version: Option<&str>| {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 7, "method": method, "params": {"message": message}
+        }))
+        .unwrap();
+        let claims = okbot_peer::token::Claims::new(
+            "local",
+            "assistant",
+            "writer",
+            1,
+            &body,
+            SystemClock.now(),
+        );
+        let mut request = reqwest::Client::new()
+            .post(&url)
+            .header(
+                "authorization",
+                format!("OkbotPeer {}", okbot_peer::token::sign(&key, &claims)),
+            )
+            .body(body);
+        if let Some(v) = version {
+            request = request.header("a2a-version", v);
+        }
+        request.send()
+    };
+    let ctx = serde_json::to_value(&context).unwrap();
+    let old = serde_json::json!({"kind": "message", "role": "user", "messageId": "m-03",
+        "contextId": "c", "parts": [{"kind": "text", "text": "hello"}],
+        "metadata": {"okbot/delegation": ctx}});
+    let reply: serde_json::Value = post("message/send", old, None)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reply["result"]["kind"], "task", "{reply}");
+    assert_eq!(reply["result"]["status"]["state"], "working");
+
+    let new = serde_json::json!({"role": "ROLE_USER", "messageId": "m-10", "contextId": "c",
+        "parts": [{"text": "hello"}], "metadata": {"okbot/delegation": ctx}});
+    let reply: serde_json::Value = post("SendMessage", new.clone(), Some("1.0"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        reply["result"]["task"]["status"]["state"]
+            .as_str()
+            .unwrap()
+            .starts_with("TASK_STATE_"),
+        "{reply}"
+    );
+    let reply: serde_json::Value = post("SendMessage", new, Some("9.9"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reply["error"]["code"], -32009, "{reply}");
 }

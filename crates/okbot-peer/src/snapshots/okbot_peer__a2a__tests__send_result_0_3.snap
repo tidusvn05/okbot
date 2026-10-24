@@ -1,16 +1,14 @@
 ---
 source: crates/okbot-peer/src/a2a.rs
-expression: task
+expression: result
 ---
 {
-  "kind": "task",
-  "id": "t-1",
   "contextId": "c-1",
+  "id": "t-1",
+  "kind": "task",
   "status": {
-    "state": "input-required",
     "message": {
       "kind": "message",
-      "role": "agent",
       "messageId": "a-1",
       "parts": [
         {
@@ -18,7 +16,6 @@ expression: task
           "text": "Restart nginx?"
         },
         {
-          "kind": "data",
           "data": {
             "buttons": [
               {
@@ -27,10 +24,13 @@ expression: task
               }
             ],
             "prompt": "p-1"
-          }
+          },
+          "kind": "data"
         }
-      ]
+      ],
+      "role": "agent"
     },
+    "state": "input-required",
     "timestamp": "2026-10-24T09:00:00Z"
   }
 }

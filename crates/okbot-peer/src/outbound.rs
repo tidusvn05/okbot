@@ -172,11 +172,12 @@ impl Node {
     }
 }
 
-fn task_from(team: &str, peer: &str, value: &Value) -> Result<PeerTask, PeerError> {
-    let task: a2a::Task = serde_json::from_value(value.clone())
-        .map_err(|_| PeerError::Refused(format!("`{peer}` sent an invalid task")))?;
-    let state = task.state();
-    let message = task.status.message.as_ref();
+/// A task from a `GetTask`/`CancelTask` result or a send result, in either version.
+pub(crate) fn task_from(team: &str, peer: &str, value: &Value) -> Result<PeerTask, PeerError> {
+    let task = a2a::Task::from_wire(a2a::unwrap_send_result(value))
+        .ok_or_else(|| PeerError::Refused(format!("`{peer}` sent an invalid task")))?;
+    let state = task.state;
+    let message = task.message.as_ref();
     let text = message.map(a2a::Message::text).filter(|t| !t.is_empty());
     let prompt = message
         .and_then(a2a::Message::data)
@@ -266,7 +267,10 @@ impl Node {
     }
 
     async fn get(&self, team: &Team, peer: &str, id: &str) -> Result<PeerTask, PeerError> {
-        let request = a2a::Request::new("tasks/get", json!({"id": id}));
+        let request = a2a::Request::new(
+            a2a::method(a2a::Op::Get, a2a::Version::V10),
+            json!({"id": id}),
+        );
         let value = self.inner.call(team, peer, &request).await?;
         task_from(&team.config.id, peer, &value)
     }
@@ -354,12 +358,13 @@ impl Peers for Node {
             let message = a2a::Message::user(
                 &delegation.message_id,
                 &context_id,
-                vec![Part::Text {
-                    text: delegation.task.clone(),
-                }],
+                vec![Part::Text(delegation.task.clone())],
             )
             .with_context(&context);
-            let request = a2a::Request::new("message/send", json!({"message": message}));
+            let request = a2a::Request::new(
+                a2a::method(a2a::Op::Send, a2a::Version::V10),
+                json!({"message": message.to_wire(a2a::Version::V10)}),
+            );
             match self.inner.call(team, &member, &request).await {
                 Ok(value) => {
                     let task = task_from(&team.config.id, &member, &value)?;
@@ -387,7 +392,10 @@ impl Peers for Node {
 
     async fn cancel(&self, team: &str, peer: &str, task: &str) -> Result<PeerTask, PeerError> {
         let team = self.team(team)?;
-        let request = a2a::Request::new("tasks/cancel", json!({"id": task}));
+        let request = a2a::Request::new(
+            a2a::method(a2a::Op::Cancel, a2a::Version::V10),
+            json!({"id": task}),
+        );
         let value = self.inner.call(team, peer, &request).await?;
         let task = task_from(&team.config.id, peer, &value)?;
         self.record(&task, None).await;
@@ -412,13 +420,14 @@ impl Peers for Node {
         let mut message = a2a::Message::user(
             &hex::encode(rand::random::<[u8; 8]>()),
             "",
-            vec![Part::Data {
-                data: json!({"prompt": prompt, "button": button}),
-            }],
+            vec![Part::Data(json!({"prompt": prompt, "button": button}))],
         );
         message.context_id = None;
         message.task_id = Some(task.id.clone());
-        let request = a2a::Request::new("message/send", json!({"message": message}));
+        let request = a2a::Request::new(
+            a2a::method(a2a::Op::Send, a2a::Version::V10),
+            json!({"message": message.to_wire(a2a::Version::V10)}),
+        );
         let value = self.inner.call(team, &task.peer, &request).await?;
         let next = task_from(&team.config.id, &task.peer, &value)?;
         self.record(&next, None).await;

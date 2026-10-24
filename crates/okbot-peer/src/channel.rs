@@ -148,6 +148,7 @@ impl WebhookHandler for Endpoint {
             &self.team,
             &request.method,
             request.header("authorization"),
+            request.header(crate::a2a::VERSION_HEADER),
             &request.body,
         )
         .await;
@@ -205,6 +206,7 @@ async fn serve_local(inner: Arc<Inner>, stop: CancellationToken) {
                         &request.team,
                         "POST",
                         Some(&request.authorization),
+                        None,
                         request.body.as_bytes(),
                     )
                     .await;

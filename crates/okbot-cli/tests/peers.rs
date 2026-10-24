@@ -115,6 +115,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
     let node = Node::new(
         NodeConfig {
             key: SigningKey::for_bot(&dir.join("state")).unwrap(),
+            box_key: okbot_peer::BoxKey::for_bot(&dir.join("state")).unwrap(),
             state_dir: dir.join("state"),
             teams: vec![TeamConfig {
                 id: "local".into(),

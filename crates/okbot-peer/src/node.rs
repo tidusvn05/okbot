@@ -71,6 +71,8 @@ pub struct TeamConfig {
 pub struct NodeConfig {
     /// This bot's key.
     pub key: SigningKey,
+    /// This bot's X25519 key, for sealed messages through relays.
+    pub box_key: crate::seal::BoxKey,
     /// This bot's `state/` directory (its socket lives there).
     pub state_dir: PathBuf,
     /// Teams.
@@ -131,6 +133,7 @@ pub(crate) struct OpenPrompt {
 /// Shared state of a node.
 pub(crate) struct Inner {
     pub(crate) key: SigningKey,
+    pub(crate) box_key: crate::seal::BoxKey,
     pub(crate) state_dir: PathBuf,
     pub(crate) teams: BTreeMap<String, Team>,
     pub(crate) store: Arc<dyn ConversationStore>,
@@ -181,6 +184,7 @@ impl Inner {
         let _ = rustls::crypto::ring::default_provider().install_default();
         Ok(Self {
             key: config.key,
+            box_key: config.box_key,
             state_dir: config.state_dir,
             teams,
             store,
@@ -404,6 +408,11 @@ impl Inner {
             .post(url)
             .header("authorization", authorization)
             .header("content-type", "application/json")
+            .header(
+                crate::a2a::VERSION_HEADER,
+                crate::a2a::Version::V10.header(),
+            )
+            .header(crate::a2a::EXTENSIONS_HEADER, crate::a2a::EXTENSION)
             .body(body)
             .send()
             .await
@@ -443,6 +452,17 @@ fn without_url(error: reqwest::Error) -> String {
         return "timed out".into();
     }
     error.without_url().to_string()
+}
+
+/// A member's X25519 key: from the manifest, or from its bot directory.
+pub(crate) fn member_box_key(member: &Member) -> Result<crate::seal::BoxPublic, Error> {
+    match (&member.box_key, &member.dir) {
+        (Some(key), _) => Ok(*key),
+        (None, Some(dir)) => crate::seal::bot_box_key(dir),
+        (None, None) => Err(Error::Key(
+            "the member has no `box_key` (`okbot peer id` prints it)".into(),
+        )),
+    }
 }
 
 /// A member's key: from the manifest, or from its bot directory.

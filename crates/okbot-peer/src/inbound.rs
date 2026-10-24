@@ -41,6 +41,7 @@ pub(crate) async fn handle(
     team: &str,
     method: &str,
     authorization: Option<&str>,
+    version: Option<&str>,
     body: &[u8],
 ) -> Reply {
     let Some(team) = inner.teams.get(team) else {
@@ -54,6 +55,11 @@ pub(crate) async fn handle(
         }
     };
     let response = match method {
+        _ if version.is_some() && a2a::Version::parse(version).is_none() => a2a::error(
+            &Value::Null,
+            code::VERSION_NOT_SUPPORTED,
+            "okbot speaks A2A 1.0 and 0.3",
+        ),
         "GET" => card(team, &caller),
         "POST" => rpc(inner, team, &caller, body).await,
         _ => return Reply::plain(405, "GET or POST"),
@@ -119,48 +125,52 @@ async fn rpc(inner: &Arc<Inner>, team: &Team, caller: &str, body: &[u8]) -> Valu
         return a2a::error(&Value::Null, code::PARSE, "not a JSON-RPC request");
     };
     let id = request.id.clone();
-    match request.method.as_str() {
-        "message/send" => {
-            let Ok(params) = serde_json::from_value::<a2a::SendParams>(request.params) else {
-                return a2a::error(&id, code::INVALID_PARAMS, "invalid message/send parameters");
-            };
-            let outcome = match &params.message.task_id {
-                Some(task) => answer(inner, team, caller, task, &params.message).await,
-                None => submit(inner, team, caller, params.message).await,
-            };
-            match outcome {
-                Ok(task) => a2a::result(&id, &task),
-                Err((code, message)) => a2a::error(&id, code, &message),
-            }
-        }
-        "tasks/get" | "tasks/cancel" => {
-            let Ok(params) = serde_json::from_value::<a2a::TaskIdParams>(request.params) else {
-                return a2a::error(&id, code::INVALID_PARAMS, "a task id is required");
-            };
-            let record = match inner.store.peer_task(true, &params.id).await {
-                Ok(Some(r)) if r.team == team.config.id && r.peer == caller => r,
-                Ok(_) => return a2a::error(&id, code::TASK_NOT_FOUND, "no such task"),
-                Err(error) => {
-                    tracing::error!(%error, "cannot read a peer task");
-                    return a2a::error(&id, code::TASK_NOT_FOUND, "the task is unavailable");
-                }
-            };
-            if request.method == "tasks/cancel" {
-                if record.state.is_final() {
-                    return a2a::error(&id, code::NOT_CANCELABLE, "the task has ended");
-                }
-                let record = finish(inner, &record, PeerTaskState::Canceled, None).await;
-                stop_turn(inner, &record, caller).await;
-                return a2a::result(&id, &task_json(inner, &record));
-            }
-            a2a::result(&id, &task_json(inner, &record))
-        }
-        method => match crate::relay::handle(inner, team, caller, method, request.params).await {
+    let Some((op, version)) = a2a::op_of(&request.method) else {
+        return match crate::relay::handle(inner, team, caller, &request.method, request.params)
+            .await
+        {
             Some(Ok(result)) => a2a::result(&id, &result),
             Some(Err((code, message))) => a2a::error(&id, code, &message),
             None => a2a::error(&id, code::METHOD_NOT_FOUND, "not offered by okbot"),
-        },
+        };
+    };
+    if op == a2a::Op::Send {
+        let Some(message) = request
+            .params
+            .get("message")
+            .and_then(a2a::Message::from_wire)
+        else {
+            return a2a::error(&id, code::INVALID_PARAMS, "invalid message parameters");
+        };
+        let outcome = match message.task_id.clone() {
+            Some(task) => answer(inner, team, caller, &task, &message).await,
+            None => submit(inner, team, caller, message).await,
+        };
+        return match outcome {
+            Ok(task) => a2a::result(&id, &a2a::send_result(&task, version)),
+            Err((code, message)) => a2a::error(&id, code, &message),
+        };
     }
+    let Some(task_id) = request.params.get("id").and_then(Value::as_str) else {
+        return a2a::error(&id, code::INVALID_PARAMS, "a task id is required");
+    };
+    let record = match inner.store.peer_task(true, task_id).await {
+        Ok(Some(r)) if r.team == team.config.id && r.peer == caller => r,
+        Ok(_) => return a2a::error(&id, code::TASK_NOT_FOUND, "no such task"),
+        Err(error) => {
+            tracing::error!(%error, "cannot read a peer task");
+            return a2a::error(&id, code::TASK_NOT_FOUND, "the task is unavailable");
+        }
+    };
+    if op == a2a::Op::Cancel {
+        if record.state.is_final() {
+            return a2a::error(&id, code::NOT_CANCELABLE, "the task has ended");
+        }
+        let record = finish(inner, &record, PeerTaskState::Canceled, None).await;
+        stop_turn(inner, &record, caller).await;
+        return a2a::result(&id, &task_model(inner, &record).to_wire(version));
+    }
+    a2a::result(&id, &task_model(inner, &record).to_wire(version))
 }
 
 type Refusal = (i64, String);
@@ -237,7 +247,7 @@ async fn submit(
     team: &Team,
     caller: &str,
     message: a2a::Message,
-) -> Result<Value, Refusal> {
+) -> Result<a2a::Task, Refusal> {
     let context = admit(inner, team, caller, &message)?;
     let text = message.text();
     if text.trim().is_empty() || text.chars().count() > MAX_TASK_CHARS {
@@ -247,7 +257,7 @@ async fn submit(
         ));
     }
     if let Some(existing) = known(inner, team, caller, &message.message_id).await? {
-        return Ok(task_json(inner, &existing));
+        return Ok(task_model(inner, &existing));
     }
     let Some(sink) = inner.sink.get().cloned() else {
         return Err(refused("this bot is starting; try again in a moment"));
@@ -291,7 +301,7 @@ async fn submit(
         release(inner, &conversation, &record.id);
         // The same message raced in: its task is the answer.
         if let Some(existing) = known(inner, team, caller, &message.message_id).await? {
-            return Ok(task_json(inner, &existing));
+            return Ok(task_model(inner, &existing));
         }
         tracing::error!(%error, "cannot store a peer task");
         return Err(refused("this bot cannot take tasks right now"));
@@ -328,9 +338,9 @@ async fn submit(
             Some("the bot is stopping".into()),
         )
         .await;
-        return Ok(task_json(inner, &record));
+        return Ok(task_model(inner, &record));
     }
-    Ok(task_json(inner, &record))
+    Ok(task_model(inner, &record))
 }
 
 /// The task an earlier copy of this message created.
@@ -434,7 +444,7 @@ async fn answer(
     caller: &str,
     task: &str,
     message: &a2a::Message,
-) -> Result<Value, Refusal> {
+) -> Result<a2a::Task, Refusal> {
     let record = match inner.store.peer_task(true, task).await {
         Ok(Some(r)) if r.team == team.config.id && r.peer == caller => r,
         _ => return Err((code::TASK_NOT_FOUND, "no such task".into())),
@@ -476,7 +486,7 @@ async fn answer(
     if sink.answer(answer).await.is_err() {
         return Err(refused("this bot is stopping"));
     }
-    Ok(task_json(inner, &record))
+    Ok(task_model(inner, &record))
 }
 
 /// Asks the runtime to stop the turn working on a cancelled task.
@@ -563,11 +573,11 @@ pub(crate) async fn finish(
     record
 }
 
-/// A task as A2A JSON.
-pub(crate) fn task_json(inner: &Inner, record: &PeerTaskRecord) -> Value {
+/// A task as A2A sees it.
+pub(crate) fn task_model(inner: &Inner, record: &PeerTaskRecord) -> a2a::Task {
     let mut parts = Vec::new();
     if let Some(text) = &record.text {
-        parts.push(Part::Text { text: text.clone() });
+        parts.push(Part::Text(text.clone()));
     }
     if record.state == PeerTaskState::InputRequired
         && let Some(open) = lock(&inner.prompts).get(&record.id)
@@ -579,9 +589,9 @@ pub(crate) fn task_json(inner: &Inner, record: &PeerTaskRecord) -> Value {
             .filter(|b| b.form.is_none())
             .map(|b| json!({"id": b.id, "label": b.label}))
             .collect();
-        parts.push(Part::Data {
-            data: json!({"prompt": open.prompt.id, "buttons": buttons}),
-        });
+        parts.push(Part::Data(
+            json!({"prompt": open.prompt.id, "buttons": buttons}),
+        ));
     }
     let message = (!parts.is_empty() || record.tokens.is_some()).then(|| {
         let mut message = a2a::Message::agent(parts);
@@ -590,17 +600,13 @@ pub(crate) fn task_json(inner: &Inner, record: &PeerTaskRecord) -> Value {
         }
         message
     });
-    let task = a2a::Task {
-        kind: "task".into(),
+    a2a::Task {
         id: record.id.clone(),
         context_id: record.context_id.clone(),
-        status: a2a::Status {
-            state: record.state.as_str().into(),
-            message,
-            timestamp: Some(record.updated_at.to_string()),
-        },
-    };
-    serde_json::to_value(task).expect("tasks serialize")
+        state: record.state,
+        message,
+        timestamp: Some(record.updated_at.to_string()),
+    }
 }
 
 /// Records a prompt the runtime showed for the task `task` (or the oldest of `conversation`).

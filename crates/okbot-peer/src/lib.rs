@@ -15,12 +15,14 @@ pub mod manifest;
 mod node;
 mod outbound;
 mod relay;
+pub mod seal;
 pub mod token;
 
 pub use key::{PublicKey, SigningKey};
 pub use manifest::Manifest;
 pub use node::{ManifestSource, NodeConfig, SIGNATURE_HEADER, SOCKET_FILE, TeamConfig};
 pub use outbound::Node;
+pub use seal::{BoxKey, BoxPublic};
 
 /// A peer failure.
 #[derive(Debug, thiserror::Error)]
