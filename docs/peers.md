@@ -157,8 +157,21 @@ team does not know has only `everyone`. A personal bot never sends its owner as 
 | research tries to call ops | refused: no link from research to ops |
 | any caller maps to `admins` | `admins` is never given through a peer |
 
-Peer requests never run chat commands. Knowledge is scoped to the peer room; a person's own memory
-is used only when that person is known on this bot.
+Peer requests never run chat commands. Knowledge is scoped to the peer room.
+
+**Acting as the person.** The calling bot names the person; this bot cannot check that claim. So by
+default a request from another bot never uses the person's own accounts (`credentials = "person"`
+servers), their private memory or their daily limits: it counts for `peer:<team>/<caller>`. Turn it
+on only when you trust the operators of every member that may call this bot:
+
+```toml
+[teams.acme]
+act_as_person = true   # the person must be in this bot's [people]; never on a personal bot
+```
+
+Approvals this bot asks for during a delegated task are answered through the calling bot, which
+relays the person's choice: an honest caller shows them to the person; a dishonest one could answer
+itself. Keep `confirm` servers and `act_as_person` for teams whose members you trust.
 
 ## 5. How the agent delegates
 

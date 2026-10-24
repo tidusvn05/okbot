@@ -230,6 +230,7 @@ pub(crate) fn team_policies(config: &Config) -> Vec<okbot_runtime::TeamPolicy> {
             confirm: t.confirm == okbot_config::Confirm::Always,
             wait: std::time::Duration::from_secs(t.wait),
             chain_tokens: (t.chain_tokens > 0).then_some(t.chain_tokens),
+            act_as_person: t.act_as_person,
         })
         .collect();
     let a = &config.a2a;
@@ -245,6 +246,8 @@ pub(crate) fn team_policies(config: &Config) -> Vec<okbot_runtime::TeamPolicy> {
             confirm: a.confirm == okbot_config::Confirm::Always,
             wait: std::time::Duration::from_secs(a.wait),
             chain_tokens: None,
+            // A client's person comes from this bot's own [[a2a.client]] person, not the wire.
+            act_as_person: true,
         });
     }
     teams

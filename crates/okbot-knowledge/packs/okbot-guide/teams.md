@@ -109,6 +109,10 @@ are shared by the team: the same `[people]` id on every bot (or the manifest's `
 
 - The person could not do it by asking this bot directly? Then the delegated request cannot either.
 - `admins` is never given through another bot, and chat commands never run from one.
+- The calling bot names the person, and this bot cannot check it. So a request from another bot
+  uses the person's own accounts and private memory only with `[teams.<id>] act_as_person = true`
+  (and the person in `[people]`; never on a personal bot). Turn it on only for teams whose members'
+  operators you trust.
 - A tool that needs approval asks the person who started the work, in their own chat with the first
   bot; their answer goes back along the chain. No bot approves for a person.
 

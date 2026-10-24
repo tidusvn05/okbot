@@ -160,3 +160,13 @@ fail in one of them (ADR 0011).
 - **Setup and metrics.** `okbot team join` writes `[teams.<team>]` (and adds a local bot to the
   local manifest); `okbot init` offers it. Prometheus gains `okbot_delegations_total`,
   `okbot_delegation_seconds_sum` and `okbot_peer_tasks_total`.
+- **The origin person is a claim (security review, 2026-10-24).** The caller names the person in the
+  delegation context and the callee cannot check it. So a task from another bot acts as that person
+  (their own `credentials = "person"` accounts, private memory, daily limits) only when the callee
+  sets `[teams.<id>] act_as_person = true` and the person is in its own `[people]`; never on a
+  personal bot, whose owner is never lent. Otherwise usage counts for `peer:<team>/<caller>` and the
+  task is not personal. The role intersection still uses the claim, which can only lower the mapped
+  roles; the mapping in `okbot.toml` stays the ceiling. Approvals a callee asks for are answered by
+  its caller: "no bot answers for a person" holds when every member's operator is trusted, which is
+  what `act_as_person` asserts. `[[a2a.client]] person` is set by the callee's own operator and is
+  trusted as such.

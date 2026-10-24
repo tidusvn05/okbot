@@ -94,7 +94,9 @@ Bots can hand work to each other (ADR 0014, `docs/peers.md`). On one machine: `o
 `okbot team link local --from role:<r> --to <member>`. A bot takes work only with `accept = true`;
 `roles = { <team role> = ["<role here>"] }` maps the caller's team role to roles here, intersected
 with the roles the person who asked has here (never `admins`). `delegate_roles` (default admins)
-says who may make the agent delegate. Across machines the team's owner keeps the team key
+says who may make the agent delegate. A delegated task never uses the person's own accounts or
+private memory unless `act_as_person = true` (only for teams whose operators the user trusts).
+Across machines the team's owner keeps the team key
 (`okbot team init <team> --owner`, `add --key --box-key --url|--relay`, `sign`, `publish --to`);
 members set `manifest` (https URL) and `team_key`. Agents and programs outside okbot: `[a2a]` with
 `[[a2a.agent]]` and `[[a2a.client]]`. `okbot peer id` prints a bot's keys, `okbot peer tasks` the

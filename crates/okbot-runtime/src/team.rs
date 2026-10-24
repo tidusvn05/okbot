@@ -101,28 +101,34 @@ async fn caller(shared: &Shared, event: &InboundEvent) -> Option<PeerCaller> {
     shared.peers.as_ref()?.caller(&event.conversation).await
 }
 
-/// The person a peer task is for, when this bot knows them under the team's person id. A
-/// personal bot never lends its owner's identity to another bot.
+/// The person a peer task acts as: its origin person, only when the team's `act_as_person`
+/// allows it, the bot is not personal (an owner's identity is never lent) and the person is in
+/// this bot's `[people]`. The caller names the person, so without that opt-in a task from another
+/// bot never uses anyone's own accounts or private memory.
 pub(crate) async fn person(shared: &Shared, event: &InboundEvent) -> Option<okbot_core::Person> {
     if shared.config.personal {
         return None;
     }
-    let id = caller(shared, event).await?.context.origin.person?;
+    let caller = caller(shared, event).await?;
+    let policy = shared.config.teams.iter().find(|t| t.id == caller.team)?;
+    if !policy.act_as_person {
+        return None;
+    }
+    let id = caller.context.origin.person?;
     shared.config.people.values().find(|p| p.id == id).cloned()
 }
 
-/// The key usage of a peer task counts under: the origin person, else the calling bot.
+/// The key usage of a peer task counts under (and, for `credentials = "person"` servers, whose
+/// account it uses): the person it acts as, else the calling bot.
 pub(crate) async fn person_key(shared: &Shared, event: &InboundEvent) -> Option<String> {
     if !is_peer(event) {
         return None;
     }
-    let person = caller(shared, event)
-        .await
-        .and_then(|c| c.context.origin.person);
+    let person = person(shared, event).await;
     Some(okbot_core::person_key(
         &event.conversation.channel,
         &event.author.id,
-        person.as_deref(),
+        person.as_ref().map(|p| p.id.as_str()),
     ))
 }
 

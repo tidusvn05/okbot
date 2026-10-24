@@ -142,6 +142,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
         confirm: false,
         wait: Duration::from_secs(20),
         chain_tokens: None,
+        act_as_person: false,
     }];
     let channel = Arc::new(FakeChannel::new("fake:test", ChannelCaps::basic()));
     let agent = Arc::new(Agent::default());

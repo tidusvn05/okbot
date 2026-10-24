@@ -165,6 +165,12 @@ pub struct TeamSection {
     /// Tokens a chain of delegations started here may spend (finished tasks); 0: no limit.
     #[serde(default)]
     pub chain_tokens: u64,
+    /// Tasks from this team may act as the person who asked: use their own connected accounts
+    /// (`credentials = "person"`), their private memory and their daily limits, when that person
+    /// is in this bot's `[people]`. The caller names the person and this bot cannot check it, so
+    /// trust every member's operator before turning it on. Never on a personal bot.
+    #[serde(default)]
+    pub act_as_person: bool,
 }
 
 fn admins_only() -> Vec<String> {

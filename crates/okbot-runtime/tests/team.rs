@@ -167,6 +167,7 @@ fn start(channel: &str, steps: Vec<Step>, configure: impl FnOnce(&mut RuntimeCon
         confirm: false,
         wait: Duration::from_secs(5),
         chain_tokens: None,
+        act_as_person: false,
     }];
     configure(&mut config);
     let channel = Arc::new(FakeChannel::new(channel, ChannelCaps::basic()));
@@ -242,7 +243,9 @@ async fn task_from(bot: &Bot, room: &str, roles: &[&str], person: Option<&str>, 
 
 #[tokio::test]
 async fn a_task_from_another_bot_gets_the_intersected_roles() {
-    let bot = start("peer:local", vec![Step::List("infra")], |_| {});
+    let bot = start("peer:local", vec![Step::List("infra")], |c| {
+        c.teams[0].act_as_person = true;
+    });
     // The caller's role maps to `ops`, and lan has `ops` here: offered.
     task_from(&bot, "a/1", &["main"], Some("lan"), "restart nginx").await;
     // A guest: `ops` from the mapping, but not from the person: not offered.
@@ -661,4 +664,56 @@ async fn a_peer_turn_passes_its_progress_to_the_caller() {
         peers.progress.lock().unwrap().clone(),
         ["Searching the web…", "Found two ", "Found two releases"]
     );
+}
+
+async fn usage_keys(bot: &Bot) -> (u64, u64, u64) {
+    let since = "2000-01-01T00:00:00Z".parse().unwrap();
+    let turns = |key: &'static str| {
+        let store = bot.store.clone();
+        async move { store.usage_since(key, since).await.unwrap().turns }
+    };
+    (
+        turns("person:lan").await,
+        turns("person:owner").await,
+        turns("peer:local/assistant").await,
+    )
+}
+
+#[tokio::test]
+async fn without_act_as_person_a_task_never_acts_as_the_person_it_names() {
+    let bot = start("peer:local", vec![Step::List("infra")], |_| {});
+    task_from(&bot, "a/1", &["main"], Some("lan"), "read lan's mail").await;
+    // Not lan's limits (nor lan's accounts or memory): the calling bot's.
+    assert_eq!(usage_keys(&bot).await, (0, 0, 1));
+    bot.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_personal_bot_never_lends_its_owner_even_with_act_as_person() {
+    let bot = start("peer:local", vec![Step::List("infra")], |c| {
+        c.personal = true;
+        c.teams[0].act_as_person = true;
+    });
+    task_from(
+        &bot,
+        "a/1",
+        &["main"],
+        Some(okbot_runtime::OWNER),
+        "read the owner's mail",
+    )
+    .await;
+    task_from(&bot, "a/2", &["main"], Some("lan"), "read lan's mail").await;
+    assert_eq!(usage_keys(&bot).await, (0, 0, 2));
+    bot.stop.cancel();
+}
+
+#[tokio::test]
+async fn act_as_person_needs_the_person_in_people() {
+    let bot = start("peer:local", vec![Step::List("infra")], |c| {
+        c.teams[0].act_as_person = true;
+    });
+    task_from(&bot, "a/1", &["main"], Some("mallory"), "who am I").await;
+    task_from(&bot, "a/2", &["main"], Some("lan"), "who am I").await;
+    assert_eq!(usage_keys(&bot).await, (1, 0, 1));
+    bot.stop.cancel();
 }

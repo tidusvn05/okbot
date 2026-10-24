@@ -201,13 +201,20 @@ pub(crate) async fn requester(s: &Shared, event: &InboundEvent) -> okbot_core::R
     let room = s
         .config
         .room(&event.conversation.channel, &event.conversation.room);
+    let person = s.person_of(event).await;
+    // Everyone in a group reads the answers: personal data only in direct or personal rooms. A
+    // task from another bot is personal only when it may act as its person (ADR 0014).
+    let personal = if crate::team::is_peer(event) {
+        person.is_some()
+    } else {
+        event.is_direct || room.personal
+    };
     okbot_core::Requester {
         conversation: event.conversation.clone(),
         user: event.author.clone(),
         internal: room.internal,
-        person: s.person_of(event).await,
-        // Everyone in a group reads the answers: personal data only in direct or personal rooms.
-        personal: event.is_direct || room.personal,
+        person,
+        personal,
     }
 }
 

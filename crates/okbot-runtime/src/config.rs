@@ -199,6 +199,9 @@ pub struct TeamPolicy {
     pub wait: Duration,
     /// Tokens a chain started here may spend; `None`: no limit.
     pub chain_tokens: Option<u64>,
+    /// Tasks from this team may act as their origin person (own accounts, private memory),
+    /// when that person is in `[people]`. The person is named by the caller.
+    pub act_as_person: bool,
 }
 
 /// A `[[notify]]` destination: the token callers present and where its messages go.
