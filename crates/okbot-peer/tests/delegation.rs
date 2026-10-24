@@ -208,6 +208,8 @@ fn delegation(to: &str, message: &str, chain: Vec<String>) -> Delegation {
         },
         wait: Duration::from_secs(5),
         message_id: message.into(),
+        requester: None,
+        direct: true,
     }
 }
 
@@ -576,4 +578,50 @@ async fn a_member_behind_nat_is_reached_through_its_relay() {
         .await
         .unwrap();
     assert_eq!(from_lead.state, PeerTaskState::Completed, "{from_lead:?}");
+}
+
+#[tokio::test]
+async fn the_caller_cancels_a_task_and_the_other_turn_is_told_to_stop() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["assistant", "slow"] {
+        bot_dir(root.path(), name);
+    }
+    let file = manifest(root.path(), &["assistant", "slow"], links("role:main", "*"));
+    let assistant = start(root.path(), "assistant", &file, false, Behaviour::Echo).await;
+    let slow = start(root.path(), "slow", &file, true, Behaviour::Silent).await;
+    let mut quick = delegation("slow", "m-1", Vec::new());
+    quick.wait = Duration::from_millis(100);
+    let task = assistant.node.delegate(quick).await.unwrap();
+    assert_eq!(task.state, PeerTaskState::Working);
+    let cancelled = assistant
+        .node
+        .cancel("local", "slow", &task.id)
+        .await
+        .unwrap();
+    assert_eq!(cancelled.state, PeerTaskState::Canceled);
+    let events = slow.runtime.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 2);
+    assert!(
+        events[1]
+            .event_id
+            .starts_with(okbot_core::PEER_CANCEL_PREFIX)
+    );
+    assert_eq!(events[1].conversation, events[0].conversation);
+    // A late reply of the stopped turn is dropped.
+    let channel = slow.runtime.channel.get().unwrap().clone();
+    channel
+        .send(
+            &ReplyTarget::to_event(&events[0]),
+            &RenderedMessage {
+                text: "late".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let after = assistant
+        .node
+        .status("local", "slow", &task.id)
+        .await
+        .unwrap();
+    assert_eq!(after.state, PeerTaskState::Canceled);
 }

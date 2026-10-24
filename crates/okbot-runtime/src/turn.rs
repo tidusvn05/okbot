@@ -253,7 +253,9 @@ pub(crate) async fn answer(shared: &Shared, batch: &[Tracked], cancel: &Cancella
         let admin = shared.is_admin(event).await;
         let person = shared.person_key(event).await;
         if over_limit(shared, &person, admin).await {
-            reply(shared, event, &shared.config.replies.limit_reached).await;
+            if !crate::team::fail(shared, event, "the daily limit of this bot is reached").await {
+                reply(shared, event, &shared.config.replies.limit_reached).await;
+            }
             return;
         }
         answer_batch(shared, batch, event, cancel, admin, person).await;
@@ -579,7 +581,9 @@ async fn finish(
         None => {
             tracing::info!(run = %record.run_id, "turn cancelled");
             record.error = Some("cancelled".into());
-            reply_over(shared, event, &shared.config.replies.stopped, placeholder).await;
+            if !crate::team::fail(shared, event, "stopped").await {
+                reply_over(shared, event, &shared.config.replies.stopped, placeholder).await;
+            }
         }
         Some(Ok(answer)) => {
             tracing::info!(run = %record.run_id, backend = %answer.backend, ms = record.duration.as_millis(), "answered");
@@ -604,7 +608,10 @@ async fn finish(
         Some(Err(error)) => {
             tracing::error!(run = %record.run_id, %error, "agent turn failed");
             record.error = Some(error.to_string());
-            reply_over(shared, event, &shared.config.replies.error, placeholder).await;
+            // Another bot learns that the task failed, not a chat apology.
+            if !crate::team::fail(shared, event, "the agent of this bot failed").await {
+                reply_over(shared, event, &shared.config.replies.error, placeholder).await;
+            }
         }
     }
     if let Err(error) = shared.store.record_run(record).await {

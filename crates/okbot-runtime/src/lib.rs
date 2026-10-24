@@ -509,6 +509,14 @@ impl Runtime {
             });
         }
         let _ = shared.sink.set(Arc::downgrade(&sink));
+        if shared.peers.is_some() {
+            let shared = shared.clone();
+            let sink = sink.clone();
+            tasks.spawn(async move {
+                team::resume(&shared).await;
+                drop(sink); // the sink stays up while resuming
+            });
+        }
         if !shared.config.mcp.is_empty() || shared.peers.is_some() {
             let gateway = gateway::serve(shared.clone(), channel_stop.clone())
                 .await

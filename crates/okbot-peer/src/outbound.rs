@@ -246,6 +246,8 @@ impl Node {
                     .ok(),
                 trace: d.context.trace.clone(),
                 text: task.text.clone(),
+                requester: d.requester.clone(),
+                direct: d.direct,
                 created_at: now,
                 updated_at: now,
             },
@@ -374,6 +376,19 @@ impl Peers for Node {
         let task = self.get(team, peer, task).await?;
         self.record(&task, None).await;
         Ok(task)
+    }
+
+    async fn cancel(&self, team: &str, peer: &str, task: &str) -> Result<PeerTask, PeerError> {
+        let team = self.team(team)?;
+        let request = a2a::Request::new("tasks/cancel", json!({"id": task}));
+        let value = self.inner.call(team, peer, &request).await?;
+        let task = task_from(&team.config.id, peer, &value)?;
+        self.record(&task, None).await;
+        Ok(task)
+    }
+
+    async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str) {
+        crate::inbound::fail(&self.inner, conversation, task, reason).await;
     }
 
     async fn answer(

@@ -150,6 +150,7 @@ async fn rpc(inner: &Arc<Inner>, team: &Team, caller: &str, body: &[u8]) -> Valu
                     return a2a::error(&id, code::NOT_CANCELABLE, "the task has ended");
                 }
                 let record = finish(inner, &record, PeerTaskState::Canceled, None).await;
+                stop_turn(inner, &record, caller).await;
                 return a2a::result(&id, &task_json(inner, &record));
             }
             a2a::result(&id, &task_json(inner, &record))
@@ -269,6 +270,8 @@ async fn submit(
         conversation: Some(conversation.clone()),
         trace: context.trace.clone(),
         text: None,
+        requester: None,
+        direct: false,
         created_at: now,
         updated_at: now,
     };
@@ -472,6 +475,42 @@ async fn answer(
     Ok(task_json(inner, &record))
 }
 
+/// Asks the runtime to stop the turn working on a cancelled task.
+async fn stop_turn(inner: &Inner, record: &PeerTaskRecord, caller: &str) {
+    let (Some(sink), Some(conversation)) = (inner.sink.get(), record.conversation.clone()) else {
+        return;
+    };
+    let event = InboundEvent {
+        event_id: format!("{}{}", okbot_core::PEER_CANCEL_PREFIX, record.id),
+        conversation,
+        author: UserRef {
+            id: caller.into(),
+            display_name: caller.to_string(),
+            is_bot: false,
+        },
+        text: String::new(),
+        attachments: Vec::new(),
+        mentions_bot: true,
+        is_direct: true,
+        restricted: false,
+        message_id: Some(record.id.as_str().into()),
+        sent_at: inner.now(),
+        locale: None,
+    };
+    let _ = sink.deliver(event).await;
+}
+
+/// The runtime could not answer: the task (or the oldest of the conversation) fails, with the
+/// older tasks the same turn was answering.
+pub(crate) async fn fail(
+    inner: &Arc<Inner>,
+    conversation: &ConversationKey,
+    task: Option<&str>,
+    reason: &str,
+) {
+    end(inner, conversation, task, PeerTaskState::Failed, reason).await;
+}
+
 /// Ends an inbound task and frees its place.
 pub(crate) async fn finish(
     inner: &Arc<Inner>,
@@ -602,7 +641,18 @@ pub(crate) async fn replied(
     task: Option<&str>,
     text: &str,
 ) -> bool {
-    let answered: Vec<String> = {
+    end(inner, conversation, task, PeerTaskState::Completed, text).await
+}
+
+/// Ends task `task` (or the oldest of `conversation`) and the older ones of the conversation.
+async fn end(
+    inner: &Arc<Inner>,
+    conversation: &ConversationKey,
+    task: Option<&str>,
+    state: PeerTaskState,
+    text: &str,
+) -> bool {
+    let ended: Vec<String> = {
         let inbound = lock(&inner.inbound);
         let Some(queue) = inbound.get(conversation) else {
             return false;
@@ -616,17 +666,11 @@ pub(crate) async fn replied(
         }
     };
     let mut any = false;
-    for id in answered {
+    for id in ended {
         if let Ok(Some(record)) = inner.store.peer_task(true, &id).await
             && !record.state.is_final()
         {
-            finish(
-                inner,
-                &record,
-                PeerTaskState::Completed,
-                Some(text.to_string()),
-            )
-            .await;
+            finish(inner, &record, state, Some(text.to_string())).await;
             any = true;
         }
     }

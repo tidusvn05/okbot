@@ -49,6 +49,17 @@ pub(crate) fn is_peer(event: &InboundEvent) -> bool {
     event.conversation.channel.platform() == PEER_PLATFORM
 }
 
+/// For a task from another bot: fails it with `reason` (instead of a chat reply) and returns
+/// `true`; `false` for any other event.
+pub(crate) async fn fail(shared: &Shared, event: &InboundEvent, reason: &str) -> bool {
+    let Some(peers) = shared.peers.as_ref().filter(|_| is_peer(event)) else {
+        return false;
+    };
+    let task = event.message_id.as_ref().map(okbot_core::MessageId::as_str);
+    peers.fail(&event.conversation, task, reason).await;
+    true
+}
+
 async fn caller(shared: &Shared, event: &InboundEvent) -> Option<PeerCaller> {
     shared.peers.as_ref()?.caller(&event.conversation).await
 }
@@ -207,6 +218,16 @@ fn tools() -> Value {
             "annotations": {"readOnlyHint": false, "destructiveHint": false},
         },
         {
+            "name": "task_cancel",
+            "description": "Ask the other bot to stop a task delegated earlier, by its id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"task": {"type": "string"}},
+                "required": ["task"],
+            },
+            "annotations": {"readOnlyHint": false, "destructiveHint": false},
+        },
+        {
             "name": "task_status",
             "description": "The state and answer of a task delegated earlier, by its id.",
             "inputSchema": {
@@ -326,7 +347,7 @@ async fn call(
             Err(error) => (error.to_string(), true, ToolDecision::Allowed),
         },
         "delegate" => delegate(shared, grant, &peers, &teams, args).await,
-        "task_status" => {
+        "task_status" | "task_cancel" => {
             let Some(id) = args.get("task").and_then(Value::as_str) else {
                 return ("`task` is required.".into(), true, ToolDecision::Allowed);
             };
@@ -334,7 +355,12 @@ async fn call(
             let Some(record) = record.filter(|r| allowed.contains(&r.team)) else {
                 return ("No such task.".into(), true, ToolDecision::Allowed);
             };
-            match peers.status(&record.team, &record.peer, &record.id).await {
+            let task = if tool == "task_cancel" {
+                peers.cancel(&record.team, &record.peer, &record.id).await
+            } else {
+                peers.status(&record.team, &record.peer, &record.id).await
+            };
+            match task {
                 Ok(task) => (describe(&task), false, ToolDecision::Allowed),
                 Err(error) => (error.to_string(), true, ToolDecision::Allowed),
             }
@@ -482,6 +508,8 @@ async fn delegate(
         context,
         wait,
         message_id: hex::encode(rand::random::<[u8; 12]>()),
+        requester: (!is_peer(&grant.event)).then(|| grant.event.author.clone()),
+        direct: grant.event.is_direct,
     };
     let until = Instant::now() + wait;
     let mut outcome = match peers.delegate(delegation).await {
@@ -670,6 +698,57 @@ async fn ask(
         .await;
     }
     answer
+}
+
+/// After a start: follows again the delegated tasks that were still running, so their results
+/// still reach the people who asked.
+pub(crate) async fn resume(shared: &Shared) {
+    let Some(peers) = shared.peers.clone() else {
+        return;
+    };
+    let tasks = match shared.store.peer_tasks(500).await {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read delegated tasks");
+            return;
+        }
+    };
+    for record in tasks
+        .into_iter()
+        .filter(|t| !t.inbound && !t.state.is_final())
+    {
+        let (Some(conversation), Some(requester)) =
+            (record.conversation.clone(), record.requester.clone())
+        else {
+            continue;
+        };
+        if !shared.channels.contains_key(&conversation.channel) {
+            continue;
+        }
+        tracing::info!(task = %record.id, peer = %record.peer, "following a delegated task again");
+        let event = InboundEvent {
+            event_id: format!("{RESULT_PREFIX}resume:{}", record.id),
+            conversation,
+            author: requester,
+            text: String::new(),
+            attachments: Vec::new(),
+            mentions_bot: true,
+            is_direct: record.direct,
+            restricted: false,
+            message_id: None,
+            sent_at: shared.clock.now(),
+            locale: None,
+        };
+        let task = PeerTask {
+            team: record.team,
+            peer: record.peer,
+            id: record.id,
+            state: record.state,
+            text: record.text,
+            prompt: None,
+        };
+        follow_later(shared, peers.clone(), event, task);
+    }
 }
 
 /// Follows a task that outlived its turn; its result starts a new turn in the conversation.

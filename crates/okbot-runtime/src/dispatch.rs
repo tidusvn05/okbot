@@ -100,6 +100,16 @@ impl Dispatcher {
             Verdict::Answer => {}
         }
         if peer {
+            if event.event_id.starts_with(okbot_core::PEER_CANCEL_PREFIX) {
+                // The caller cancelled the task: stop its turn, say nothing.
+                let running = lock(&self.workers)
+                    .get(&event.conversation)
+                    .and_then(|w| lock(&w.current).clone());
+                if let Some(token) = running {
+                    token.cancel();
+                }
+                return;
+            }
             // No chat commands through another bot.
             self.route((event, guard));
             return;

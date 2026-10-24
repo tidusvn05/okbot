@@ -88,8 +88,8 @@ pub use message::{
 };
 pub use notify::NotifyTo;
 pub use peer::{
-    Budget, Delegation, DelegationContext, Origin, PEER_PLATFORM, PeerCaller, PeerError, PeerInfo,
-    PeerPrompt, PeerTarget, PeerTask, PeerTaskRecord, PeerTaskState, Peers,
+    Budget, Delegation, DelegationContext, Origin, PEER_CANCEL_PREFIX, PEER_PLATFORM, PeerCaller,
+    PeerError, PeerInfo, PeerPrompt, PeerTarget, PeerTask, PeerTaskRecord, PeerTaskState, Peers,
 };
 pub use prompt::{
     ButtonStyle, FieldStyle, Form, FormField, MAX_BUTTONS, MAX_FIELDS, Prompt, PromptAnswer,

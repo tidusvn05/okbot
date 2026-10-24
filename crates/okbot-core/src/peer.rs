@@ -11,11 +11,15 @@ use std::time::Duration;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::id::ConversationKey;
+use crate::id::{ConversationKey, UserRef};
 use crate::{BoxError, async_trait};
 
 /// The platform name of peer channels (`peer:<team>`).
 pub const PEER_PLATFORM: &str = "peer";
+
+/// Event ids starting with this, on a peer channel, stop the conversation's running turn: the task
+/// was cancelled by its caller. (Another bot's text never runs as a command, so `/stop` cannot.)
+pub const PEER_CANCEL_PREFIX: &str = "peer-cancel:";
 
 /// A peer operation failed.
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +136,10 @@ pub struct Delegation {
     pub wait: Duration,
     /// Identifies this request: sending it again returns the same task.
     pub message_id: String,
+    /// Who asked, so a result that comes after a restart still reaches them.
+    pub requester: Option<UserRef>,
+    /// The origin conversation is a one-to-one chat.
+    pub direct: bool,
 }
 
 /// Where a task stands (A2A task states).
@@ -271,6 +279,10 @@ pub struct PeerTaskRecord {
     pub trace: String,
     /// The answer or the reason for a failure.
     pub text: Option<String>,
+    /// Outbound: who asked, to bring a late result to them.
+    pub requester: Option<UserRef>,
+    /// Outbound: the conversation is a one-to-one chat.
+    pub direct: bool,
     /// When it was created.
     pub created_at: Timestamp,
     /// When it last changed.
@@ -288,6 +300,13 @@ pub trait Peers: Send + Sync {
 
     /// The current state of a task this bot delegated.
     async fn status(&self, team: &str, peer: &str, task: &str) -> Result<PeerTask, PeerError>;
+
+    /// Asks the other bot to stop a task this bot delegated.
+    async fn cancel(&self, team: &str, peer: &str, task: &str) -> Result<PeerTask, PeerError>;
+
+    /// The runtime could not answer the task of `conversation` (`task`, or the oldest): it fails
+    /// with `reason` instead of completing with a fixed reply.
+    async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str);
 
     /// Answers the question of a task waiting for input (the origin person pressed `button`).
     async fn answer(

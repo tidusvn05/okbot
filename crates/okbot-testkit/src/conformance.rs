@@ -354,6 +354,12 @@ async fn peer_tasks(store: &dyn ConversationStore, clock: &ManualClock) {
         conversation: Some(conversation("peer:acme", "lead/ctx")),
         trace: "t1".into(),
         text: None,
+        requester: (!inbound).then(|| okbot_core::UserRef {
+            id: "lan".into(),
+            display_name: "Lan".into(),
+            is_bot: false,
+        }),
+        direct: !inbound,
         created_at: clock.now(),
         updated_at: clock.now(),
     };
@@ -398,6 +404,8 @@ async fn peer_tasks(store: &dyn ConversationStore, clock: &ManualClock) {
         (out.state, out.text.as_deref()),
         (PeerTaskState::Completed, Some("done"))
     );
+    assert_eq!(out.requester.as_ref().map(|r| r.id.as_str()), Some("lan"));
+    assert!(out.direct);
     assert_eq!(store.peer_tasks(10).await.expect("list")[0].id, "t-1");
     assert!(
         !store.peer_tasks(10).await.expect("list")[0].inbound,

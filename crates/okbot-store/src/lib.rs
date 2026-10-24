@@ -882,8 +882,9 @@ impl ConversationStore for SqliteStore {
         self.with(move |conn, _| {
             conn.execute(
                 "INSERT INTO peer_tasks (id, inbound, team, peer, context_id, message_id, state,
-                                         conversation, trace, text, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                                         conversation, trace, text, created_at, updated_at,
+                                         requester, direct)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT (inbound, id) DO UPDATE SET state = excluded.state,
                      conversation = excluded.conversation, text = excluded.text,
                      updated_at = excluded.updated_at",
@@ -900,6 +901,10 @@ impl ConversationStore for SqliteStore {
                     task.text,
                     millis(task.created_at),
                     millis(task.updated_at),
+                    task.requester
+                        .as_ref()
+                        .map(|r| serde_json::to_string(r).expect("a user serializes")),
+                    task.direct,
                 ],
             )?;
             Ok(())
@@ -974,7 +979,7 @@ impl ConversationStore for SqliteStore {
 }
 
 const PEER_COLUMNS: &str = "id, inbound, team, peer, context_id, message_id, state, conversation, \
-                            trace, text, created_at, updated_at";
+                            trace, text, created_at, updated_at, requester, direct";
 
 fn peer_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeerTaskRecord> {
     let bad = |i: usize, e: String| {
@@ -1000,6 +1005,10 @@ fn peer_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeerTaskRecord> {
         text: row.get(9)?,
         created_at: from_millis(row.get(10)?),
         updated_at: from_millis(row.get(11)?),
+        requester: row
+            .get::<_, Option<String>>(12)?
+            .and_then(|r| serde_json::from_str(&r).ok()),
+        direct: row.get(13)?,
     })
 }
 

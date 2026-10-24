@@ -26,6 +26,8 @@ struct FakePeers {
     /// What `delegate` returns.
     reply: Mutex<Option<PeerTask>>,
     answers: Mutex<Vec<(String, String)>>,
+    cancelled: Mutex<Vec<()>>,
+    failed: Mutex<Vec<(ConversationKey, Option<String>, String)>>,
 }
 
 fn task(state: PeerTaskState, text: &str) -> PeerTask {
@@ -58,6 +60,19 @@ impl Peers for FakePeers {
 
     async fn status(&self, _: &str, _: &str, _: &str) -> Result<PeerTask, PeerError> {
         Ok(self.reply.lock().unwrap().clone().unwrap())
+    }
+
+    async fn cancel(&self, _: &str, _: &str, _: &str) -> Result<PeerTask, PeerError> {
+        self.cancelled.lock().unwrap().push(());
+        Ok(task(PeerTaskState::Canceled, "stopped"))
+    }
+
+    async fn fail(&self, conversation: &ConversationKey, task: Option<&str>, reason: &str) {
+        self.failed.lock().unwrap().push((
+            conversation.clone(),
+            task.map(str::to_string),
+            reason.to_string(),
+        ));
     }
 
     async fn answer(
@@ -274,7 +289,7 @@ async fn the_agent_delegates_through_the_team_server_and_the_call_is_audited() {
     let results = bot.agent.results();
     assert_eq!(
         results[0],
-        json!(["team_directory", "delegate", "task_status"])
+        json!(["team_directory", "delegate", "task_cancel", "task_status"])
     );
     let answer = results[1].as_str().unwrap();
     assert!(answer.contains("Answer from `research`"), "{answer}");
@@ -376,4 +391,170 @@ async fn the_other_bots_question_goes_to_the_requester() {
     let answer = bot.agent.results()[1].as_str().unwrap().to_string();
     assert!(answer.contains("restarted after allow"), "{answer}");
     bot.stop.cancel();
+}
+
+/// An agent that always fails.
+struct FailingAgent;
+
+#[async_trait]
+impl okbot_core::AgentBackend for FailingAgent {
+    fn name(&self) -> &'static str {
+        "failing"
+    }
+
+    fn caps(&self) -> okbot_core::AgentCaps {
+        okbot_core::AgentCaps::default()
+    }
+
+    async fn run(
+        &self,
+        _: okbot_core::AgentTurn,
+    ) -> Result<okbot_core::AgentReply, okbot_core::AgentError> {
+        Err(okbot_core::AgentError::Unavailable("down".into()))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_turn_fails_the_task_instead_of_apologising() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let config = RuntimeConfig::new("okbot", std::env::temp_dir().join("okbot-team-tests"));
+    let channel = Arc::new(FakeChannel::new("peer:local", ChannelCaps::basic()));
+    let peers = Arc::new(FakePeers::default());
+    let runtime = Runtime::builder(config)
+        .store(Arc::new(MemoryStore::new(Arc::new(
+            okbot_core::SystemClock,
+        ))))
+        .agent(Arc::new(FailingAgent))
+        .renderer(Arc::new(PlainRenderer))
+        .channel(channel.clone())
+        .peers(peers.clone())
+        .build()
+        .unwrap();
+    let handle = runtime.handle();
+    let stop = CancellationToken::new();
+    tokio::spawn({
+        let stop = stop.clone();
+        async move { runtime.run(stop).await.unwrap() }
+    });
+    let event = inbound("peer:local", "a/1", "assistant", "do it");
+    let task = event.message_id.clone().unwrap();
+    channel.inject(event).await;
+    tokio::time::timeout(Duration::from_secs(20), handle.wait_idle())
+        .await
+        .unwrap();
+    assert!(
+        channel.sent_texts().is_empty(),
+        "{:?}",
+        channel.sent_texts()
+    );
+    let failed = peers.failed.lock().unwrap().clone();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].1.as_deref(), Some(task.as_str()));
+    assert!(failed[0].2.contains("failed"));
+    stop.cancel();
+}
+
+#[tokio::test]
+async fn a_cancelled_task_stops_its_turn_silently() {
+    let channel = Arc::new(FakeChannel::new("peer:local", ChannelCaps::basic()));
+    let peers = Arc::new(FakePeers::default());
+    let runtime = Runtime::builder(RuntimeConfig::new(
+        "okbot",
+        std::env::temp_dir().join("okbot-team-tests"),
+    ))
+    .store(Arc::new(MemoryStore::new(Arc::new(
+        okbot_core::SystemClock,
+    ))))
+    .agent(Arc::new(okbot_testkit::FakeAgent::sleeping(
+        "slow",
+        Duration::from_secs(30),
+    )))
+    .renderer(Arc::new(PlainRenderer))
+    .channel(channel.clone())
+    .peers(peers.clone())
+    .build()
+    .unwrap();
+    let handle = runtime.handle();
+    let stop = CancellationToken::new();
+    tokio::spawn({
+        let stop = stop.clone();
+        async move { runtime.run(stop).await.unwrap() }
+    });
+    channel
+        .inject(inbound("peer:local", "a/1", "assistant", "long job"))
+        .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut cancel = inbound("peer:local", "a/1", "assistant", "");
+    cancel.event_id = format!("{}x", okbot_core::PEER_CANCEL_PREFIX);
+    channel.inject(cancel).await;
+    tokio::time::timeout(Duration::from_secs(10), handle.wait_idle())
+        .await
+        .unwrap();
+    // The turn stopped: the task fails as "stopped", nothing is sent as chat.
+    let failed = peers.failed.lock().unwrap().clone();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].2, "stopped");
+    assert_eq!(channel.sent_texts(), Vec::<String>::new());
+    stop.cancel();
+}
+
+#[tokio::test]
+async fn a_task_still_running_at_a_restart_still_brings_its_result() {
+    let store = Arc::new(MemoryStore::new(Arc::new(okbot_core::SystemClock)));
+    let now = okbot_core::Clock::now(&okbot_core::SystemClock);
+    store
+        .put_peer_task(okbot_core::PeerTaskRecord {
+            id: "t-1".into(),
+            inbound: false,
+            team: "local".into(),
+            peer: "research".into(),
+            context_id: "c".into(),
+            message_id: "m".into(),
+            state: PeerTaskState::Working,
+            conversation: Some(ConversationKey::room("fake:test".parse().unwrap(), "room")),
+            trace: "tr".into(),
+            text: None,
+            requester: Some(UserRef {
+                id: "lan-chat".into(),
+                display_name: "Lan".into(),
+                is_bot: false,
+            }),
+            direct: true,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let channel = Arc::new(FakeChannel::new("fake:test", ChannelCaps::basic()));
+    let peers = Arc::new(FakePeers::default());
+    *peers.reply.lock().unwrap() = Some(task(PeerTaskState::Completed, "v2.1 is out"));
+    let agent = Arc::new(okbot_testkit::FakeAgent::echo("echo"));
+    let runtime = Runtime::builder(RuntimeConfig::new(
+        "okbot",
+        std::env::temp_dir().join("okbot-team-tests"),
+    ))
+    .store(store)
+    .agent(agent.clone())
+    .renderer(Arc::new(PlainRenderer))
+    .channel(channel.clone())
+    .peers(peers)
+    .build()
+    .unwrap();
+    let stop = CancellationToken::new();
+    tokio::spawn({
+        let stop = stop.clone();
+        async move { runtime.run(stop).await.unwrap() }
+    });
+    for _ in 0..300 {
+        if agent.calls() > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let turns = agent.turns();
+    assert_eq!(turns.len(), 1, "the result starts a turn");
+    assert!(turns[0].prompt.contains("v2.1 is out"));
+    assert!(turns[0].prompt.contains("task handed to `research`"));
+    stop.cancel();
 }
