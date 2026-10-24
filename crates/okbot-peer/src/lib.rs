@@ -22,7 +22,7 @@ pub mod token;
 pub use external::{ExternalAgent, ExternalClient, ExternalConfig};
 pub use key::{PublicKey, SigningKey};
 pub use manifest::Manifest;
-pub use node::{ManifestSource, NodeConfig, SIGNATURE_HEADER, SOCKET_FILE, TeamConfig};
+pub use node::{ManifestSource, NodeConfig, SIGNATURE_HEADER, TeamConfig, socket_dir, socket_path};
 pub use outbound::Node;
 pub use seal::{BoxKey, BoxPublic};
 

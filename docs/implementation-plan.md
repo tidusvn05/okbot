@@ -624,7 +624,7 @@ commands).
    `tasks/cancel`, the Agent Card (authenticated), the delegation extension; snapshot tests of the
    wire format.
 2. Server: `POST /a2a/<team>` through the runtime's HTTP listener (a `WebhookHandler`, which now
-   may return headers for the response signature) and `state/peer.sock` for bots of the machine;
+   may return headers for the response signature) and a Unix socket for bots of the machine;
    client: reqwest (rustls) and Unix sockets.
 3. `okbot-store`: `peer_tasks` (schema 6): direction, team, peer, context, message id (unique per
    peer: idempotency), state, origin, trace, result, timestamps; removed with the history
@@ -717,7 +717,10 @@ A2A agent answers a delegation and an external client's task runs with its mappe
 Status (2026-10-24): done in code and tests (resume after restart, failed and cancelled turns,
 `team join`, metrics, the token budget, sealing through a relay, 0.3 and 1.0 clients against one
 endpoint, agents speaking 1.0 and 0.3, a client's task with its person and roles, progress through
-`GetTask`).
+`GetTask`). Run with Claude Code on two bots of this VPS (2026-10-24): a delegation answered in
+16 s, and with `wait = 1` the result came back later as a new turn. That run moved the sockets to
+`$XDG_RUNTIME_DIR/okbot/` (bot directories with long paths exceeded the socket path limit) and let
+`okbot chat` delegate. A run across two real machines is pending (release checklist).
 
 ---
 

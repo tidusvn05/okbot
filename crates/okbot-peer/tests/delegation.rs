@@ -186,7 +186,7 @@ async fn start(
         runtime.channel.set(channel.clone()).ok().unwrap();
         let sink: Arc<dyn InboundSink> = runtime.clone();
         tokio::spawn(async move { channel.run(sink, CancellationToken::new()).await });
-        let socket = dir.join("state").join(okbot_peer::SOCKET_FILE);
+        let socket = okbot_peer::socket_path(&dir);
         for _ in 0..100 {
             if socket.exists() {
                 break;

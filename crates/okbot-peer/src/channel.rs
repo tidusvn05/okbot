@@ -12,12 +12,7 @@ use okbot_core::{
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::inbound;
-use crate::node::{
-    Inner, LocalRequest, LocalResponse, MAX_BODY, OpenPrompt, SIGNATURE_HEADER, SOCKET_FILE,
-};
-
-/// The longest Unix socket path (the platform limit, with room to spare).
-const MAX_SOCKET_PATH: usize = 100;
+use crate::node::{Inner, LocalRequest, LocalResponse, MAX_BODY, OpenPrompt, SIGNATURE_HEADER};
 
 /// One team's channel.
 pub(crate) struct PeerChannel {
@@ -166,10 +161,15 @@ impl WebhookHandler for Endpoint {
 
 /// Serves members on this machine over `state/peer.sock` until `stop`.
 async fn serve_local(inner: Arc<Inner>, stop: CancellationToken) {
-    let path = inner.state_dir.join(SOCKET_FILE);
-    if path.as_os_str().len() > MAX_SOCKET_PATH {
-        tracing::warn!(path = %path.display(), "the bot directory's path is too long for a socket; bots on this machine cannot reach it");
+    let Some(bot_dir) = inner.state_dir.parent() else {
         return;
+    };
+    let path = crate::node::socket_path(bot_dir);
+    if let Some(parent) = path.parent() {
+        use std::os::unix::fs::PermissionsExt as _;
+        if std::fs::create_dir_all(parent).is_ok() && std::env::var_os("OKBOT_PEER_DIR").is_none() {
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
     }
     let _ = std::fs::remove_file(&path);
     let listener = match tokio::net::UnixListener::bind(&path) {

@@ -59,8 +59,9 @@ fail in one of them (ADR 0011).
 - A member is reached directly (`url`, HTTPS through rustls), through a **relay** (another member
   with a public URL that the NAT-ed member polls over HTTPS: `okbot/relay.poll` held up to 20 s,
   `okbot/relay.reply`, and `okbot/relay.forward` for callers), or locally (`dir`: a bot directory on
-  this machine, reached over the Unix socket `<dir>/state/peer.sock`, its key read from
-  `<dir>/state/peer.pub`). Polling fits the runtime's request/response HTTP server and keeps every
+  this machine, reached over a Unix socket in `$XDG_RUNTIME_DIR/okbot/` named after the bot
+  directory's path (short whatever the path; `OKBOT_PEER_DIR` for bots of several OS users), its key
+  read from `<dir>/state/peer.pub`). Polling fits the runtime's request/response HTTP server and keeps every
   request and answer signed end to end.
 
 ### Permissions: what is allowed (the callee decides)

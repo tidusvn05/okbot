@@ -158,7 +158,7 @@ async fn start(root: &Path, name: &str, manifest: &Path, accept: bool) -> Bot {
     let handle = runtime.handle();
     tokio::spawn(async move { runtime.run(CancellationToken::new()).await.unwrap() });
     if accept {
-        let socket = dir.join("state").join(okbot_peer::SOCKET_FILE);
+        let socket = okbot_peer::socket_path(&dir);
         for _ in 0..200 {
             if socket.exists() {
                 break;

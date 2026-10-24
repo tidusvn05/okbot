@@ -219,7 +219,7 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
 }
 
 /// `[teams.<id>]` and the `[a2a]` team `external` as the runtime's team policies (ADR 0014).
-fn team_policies(config: &Config) -> Vec<okbot_runtime::TeamPolicy> {
+pub(crate) fn team_policies(config: &Config) -> Vec<okbot_runtime::TeamPolicy> {
     let mut teams: Vec<okbot_runtime::TeamPolicy> = config
         .teams
         .iter()

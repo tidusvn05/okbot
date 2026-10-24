@@ -11,6 +11,7 @@ use okbot_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Digest as _;
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::key::{PublicKey, SigningKey, bot_public_key};
@@ -18,8 +19,27 @@ use crate::manifest::{self, Manifest, Member};
 use crate::token::{self, Claims, Replays};
 use crate::{Error, a2a};
 
-/// The bot's socket for members on the same machine, in its `state/`.
-pub const SOCKET_FILE: &str = "peer.sock";
+/// Where the sockets of the bots of this machine live: `$OKBOT_PEER_DIR`, else
+/// `$XDG_RUNTIME_DIR/okbot`, else `<temp>/okbot-<user>`. Bots under different OS users share one
+/// directory by setting `OKBOT_PEER_DIR` alike.
+pub fn socket_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("OKBOT_PEER_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        return PathBuf::from(dir).join("okbot");
+    }
+    let user = std::env::var("USER").unwrap_or_else(|_| "user".into());
+    std::env::temp_dir().join(format!("okbot-{user}"))
+}
+
+/// The socket of the bot in `bot_dir`, named after its canonical path (short whatever the path's
+/// length, and the same for the bot and for the members that call it).
+pub fn socket_path(bot_dir: &Path) -> PathBuf {
+    let dir = std::fs::canonicalize(bot_dir).unwrap_or_else(|_| bot_dir.to_path_buf());
+    let digest = sha2::Sha256::digest(dir.as_os_str().as_encoded_bytes());
+    socket_dir().join(format!("{}.sock", &hex::encode(digest)[..20]))
+}
 /// Header carrying the response's signature.
 pub const SIGNATURE_HEADER: &str = "okbot-peer-signature";
 /// The authorization scheme.
@@ -415,7 +435,7 @@ impl Inner {
         let authorization = format!("{SCHEME}{}", token::sign(&self.key, &claims));
         let (status, signature, reply) = match (&target.dir, &target.url, &target.relay) {
             (Some(dir), _, _) => {
-                let socket = dir.join("state").join(SOCKET_FILE);
+                let socket = socket_path(dir);
                 local_request(&socket, &team.config.id, &authorization, &body).await?
             }
             (_, Some(url), _) => self.http_request(url, &authorization, body).await?,

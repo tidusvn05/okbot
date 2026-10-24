@@ -37,8 +37,9 @@ okbot team link local --from role:main --to research --to ops
 okbot team show local
 ```
 
-The manifest is `~/.config/okbot/teams/local.toml`. Bots of one machine talk over a socket in each
-bot's `state/`; nothing to copy, no port.
+The manifest is `~/.config/okbot/teams/local.toml`. Bots of one machine talk over sockets in
+`$XDG_RUNTIME_DIR/okbot/`; nothing to copy, no port. `okbot chat` in a bot's directory can try
+delegating.
 
 The bot people talk to:
 

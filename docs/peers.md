@@ -58,9 +58,13 @@ okbot team link local --from role:main --to research --to ops
 okbot team show local
 ```
 
-Members with `dir` talk over the Unix socket `<dir>/state/peer.sock`: no port, no TLS, no token to
-copy. Each bot's key is read from `<dir>/state/peer.pub`. A bot directory whose socket path is
-longer than about 100 bytes cannot be reached this way (`okbot doctor` says so).
+Members with `dir` talk over a Unix socket in `$XDG_RUNTIME_DIR/okbot/`, named after the bot
+directory: no port, no TLS, no token to copy. Each bot's keys are read from `<dir>/state/peer.pub`
+and `<dir>/state/peer.box.pub`. Bots running as different OS users share sockets by setting
+`OKBOT_PEER_DIR` to the same directory for all of them.
+
+`okbot chat` in a bot directory can delegate to the bot's teams too (it does not take tasks: the bot
+itself does, with `okbot run`).
 
 Then each bot says what it accepts and who may delegate:
 
