@@ -262,6 +262,20 @@ impl Inner {
         self.clock.now()
     }
 
+    /// A warning when a signed team's manifest expires within
+    /// [`manifest::EXPIRY_WARNING_DAYS`].
+    pub(crate) fn expiry_warning(&self, team: &Team) -> Option<String> {
+        let days = team
+            .manifest()
+            .days_left(self.now())
+            .filter(|d| *d < manifest::EXPIRY_WARNING_DAYS)?;
+        Some(format!(
+            "team `{}`: the manifest expires in {days} days; its owner signs it again \
+             (`okbot team renew {}`)",
+            team.config.id, team.config.id
+        ))
+    }
+
     /// Checks that this bot is a member of each file-based team under its own key.
     pub(crate) fn check_membership(&self) -> Vec<String> {
         let mut problems = Vec::new();

@@ -94,9 +94,24 @@ pub(crate) enum TeamCommand {
     Sign {
         /// Team id.
         team: String,
-        /// Days until it expires (at most 90).
-        #[arg(long, default_value_t = 30)]
+        /// Days until it expires (at most 3650; over 90 prints a warning).
+        #[arg(long, default_value_t = manifest::DEFAULT_VALIDITY_DAYS)]
         days: i64,
+    },
+    /// Sign and publish the manifest again when it expires within `--within` days; otherwise do
+    /// nothing. Meant for a timer on the owner's machine.
+    Renew {
+        /// Team id.
+        team: String,
+        /// Renew when it expires within this many days (or has no expiry yet).
+        #[arg(long, default_value_t = 30)]
+        within: i64,
+        /// Days the renewed manifest stays valid.
+        #[arg(long, default_value_t = manifest::DEFAULT_VALIDITY_DAYS)]
+        days: i64,
+        /// Also copy it into this directory (as `okbot team publish --to`).
+        #[arg(long)]
+        to: Option<PathBuf>,
     },
     /// Show the manifest: members, links and people.
     Show {
@@ -503,6 +518,12 @@ pub(crate) fn team(command: TeamCommand) -> anyhow::Result<()> {
             save(manifest, &format!("person `{person}` saved"))
         }
         TeamCommand::Sign { team, days } => sign(&team, days),
+        TeamCommand::Renew {
+            team,
+            within,
+            days,
+            to,
+        } => renew(&team, within, days, to.as_deref()),
         TeamCommand::Show { team } => {
             show(&load(&team)?);
             Ok(())
@@ -722,6 +743,13 @@ fn sign(team: &str, days: i64) -> anyhow::Result<()> {
     if !(1..=manifest::MAX_VALIDITY_DAYS).contains(&days) {
         bail!("--days must be 1 to {}", manifest::MAX_VALIDITY_DAYS);
     }
+    if days > manifest::SHORT_VALIDITY_DAYS {
+        eprintln!(
+            "note: valid for {days} days. A member kept on this version (the next one blocked on \
+             its way) trusts it that long, members you remove later included; for a shorter \
+             validity renewed automatically, see `okbot team renew`"
+        );
+    }
     let key_file = key_path(team)?;
     let bytes = std::fs::read(&key_file).with_context(|| {
         format!(
@@ -756,6 +784,30 @@ fn sign(team: &str, days: i64) -> anyhow::Result<()> {
         "publish {} and its .sig where members fetch them",
         path.display()
     );
+    Ok(())
+}
+
+/// `okbot team renew`: signs and publishes again only when the manifest is due.
+fn renew(team: &str, within: i64, days: i64, to: Option<&Path>) -> anyhow::Result<()> {
+    if within < 0 || within >= days {
+        bail!("--within must be 0 or more and less than --days");
+    }
+    let manifest = load(team)?;
+    if let Some(left) = manifest.days_left(jiff::Timestamp::now())
+        && left >= within
+        && sig_path(&manifest_path(team)?).exists()
+    {
+        println!(
+            "team `{team}` version {} is valid for {left} more days: nothing to do (renews within \
+             {within} days of expiry)",
+            manifest.team.version
+        );
+        return Ok(());
+    }
+    sign(team, days)?;
+    if let Some(dir) = to {
+        publish(team, Some(dir))?;
+    }
     Ok(())
 }
 

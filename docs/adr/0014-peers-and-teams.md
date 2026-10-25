@@ -46,7 +46,7 @@ fail in one of them (ADR 0011).
 ### Teams: who is who
 - A **team manifest** (`team.toml`) lists the members (name, public key, how to reach them, team
   roles, skills), the people known to the team, and the **links**: which members may call which.
-  It has an `id`, a `version` that only grows, and `expires` (at most 90 days ahead).
+  It has an `id`, a `version` that only grows, and `expires` (see the amendment of 2026-10-25).
 - A manifest fetched over the network must be **signed by the team key**
   (`team.toml.sig`, Ed25519 over the exact bytes). The team key belongs to the team's owner and
   never needs to be on a bot. A manifest read from a local file needs no signature: whoever can
@@ -170,3 +170,15 @@ fail in one of them (ADR 0011).
   its caller: "no bot answers for a person" holds when every member's operator is trusted, which is
   what `act_as_person` asserts. `[[a2a.client]] person` is set by the callee's own operator and is
   trusted as such.
+
+## Amendment (2026-10-25): longer validity, renewed by a timer
+- `okbot team sign` makes a manifest valid for 365 days by default and accepts up to 3650; past 90
+  it notes the cost. Expiry bounds how long a member kept on an old version (the newer one blocked on
+  its way, e.g. by whoever controls the server that publishes it) trusts it, revoked members
+  included. Hand renewal every 90 days was a chore that would end in an expired team, so the owner
+  picks the trade-off.
+- `okbot team renew <team> [--within 30] [--days 365] [--to <dir>]` signs and publishes again only
+  when the manifest is due, so a timer on the owner's machine keeps a short validity without manual
+  work. The team key stays with that timer; no bot holds it.
+- Members warn when their manifest expires within 14 days: `okbot doctor`, `okbot start`, and a
+  daily log line while the bot runs.

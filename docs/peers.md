@@ -106,7 +106,7 @@ okbot team add acme research --key ed25519:… --box-key x25519:… --relay lead
 okbot team link acme --from role:leader --to '*'
 okbot team link acme --from '*' --to role:leader
 okbot team person acme lan --account zalo:shop/123 --account discord:main/456
-okbot team sign acme                    # writes acme.toml.sig, version + 1
+okbot team sign acme                    # writes acme.toml.sig, version + 1, valid 365 days
 ```
 
 Publish both files where members can fetch them over HTTPS: `okbot team publish acme --to <dir>`
@@ -125,7 +125,30 @@ roles = { leader = ["member"] }
 - To try a team that spans machines on one machine, members may fetch the manifest from
   `http://127.0.0.1:<port>/…` (loopback only), and members' `url`s may be `http://127.0.0.1:<port>/a2a/<team>`.
 - Members fetch the manifest every 10 minutes. A manifest with a lower version is refused; an expired
-  one (`expires`, at most 90 days ahead) stops the team until it is signed again.
+  one (`expires`) stops the team until it is signed again. Members warn (`okbot doctor`, the log)
+  from 14 days before.
+- **Validity.** `okbot team sign` makes it valid for 365 days (`--days`, up to 3650). A member kept
+  on an old version, because someone who controls the web server or the path to it blocks the newer
+  one, trusts it until it expires, removed members included. For a shorter validity without manual
+  work, let a timer on the owner's machine run `okbot team renew`: it signs and publishes only when
+  the manifest expires within `--within` days (default 30).
+
+  ```ini
+  # ~/.config/systemd/user/okbot-team-acme.service
+  [Service]
+  Type=oneshot
+  ExecStart=%h/.local/bin/okbot team renew acme --days 90 --to /srv/team
+
+  # ~/.config/systemd/user/okbot-team-acme.timer
+  [Timer]
+  OnCalendar=daily
+  Persistent=true
+  [Install]
+  WantedBy=timers.target
+  ```
+
+  `systemctl --user enable --now okbot-team-acme.timer`; on a server, also
+  `loginctl enable-linger $USER`.
 - **Removing a member** is `okbot team remove acme writer && okbot team sign acme`. Members stop
   trusting it within 10 minutes, or at once when a caller presents the newer version.
 - **Relays** let a member behind NAT take part (`relay = "lead"`): it polls the relay member over
