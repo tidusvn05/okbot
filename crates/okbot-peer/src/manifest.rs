@@ -16,8 +16,18 @@ use serde::{Deserialize, Serialize};
 use crate::Error;
 use crate::key::{PublicKey, SigningKey};
 
+/// How long `okbot team sign` makes a manifest valid by default.
+pub const DEFAULT_VALIDITY_DAYS: i64 = 365;
+
 /// The longest a signed manifest may stay valid.
-pub const MAX_VALIDITY_DAYS: i64 = 90;
+pub const MAX_VALIDITY_DAYS: i64 = 3650;
+
+/// Longer than this, `okbot team sign` warns: a member kept on an old manifest (a newer one blocked
+/// on its way) trusts it until it expires, revoked members included.
+pub const SHORT_VALIDITY_DAYS: i64 = 90;
+
+/// Members warn when their manifest expires within this many days.
+pub const EXPIRY_WARNING_DAYS: i64 = 14;
 
 /// A team manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +314,13 @@ impl Manifest {
         Ok(())
     }
 
+    /// Whole days from `now` until the manifest expires, if it expires.
+    pub fn days_left(&self, now: Timestamp) -> Option<i64> {
+        self.team
+            .expires
+            .map(|e| e.duration_since(now).as_secs().div_euclid(86_400))
+    }
+
     /// The manifest is not expired at `now`. Signed manifests must say when they expire.
     pub fn check_fresh(&self, now: Timestamp, signed: bool) -> Result<(), Error> {
         match self.team.expires {
@@ -477,6 +494,8 @@ accounts = ["zalo:shop/123"]
         let at = |s: &str| s.parse::<Timestamp>().unwrap();
         assert!(m.check_fresh(at("2029-12-31T00:00:00Z"), true).is_ok());
         assert!(m.check_fresh(at("2030-01-01T00:00:00Z"), true).is_err());
+        assert_eq!(m.days_left(at("2029-12-17T12:00:00Z")), Some(14));
+        assert_eq!(m.days_left(at("2029-12-31T23:00:00Z")), Some(0));
         let mut forever = m;
         forever.team.expires = None;
         assert!(

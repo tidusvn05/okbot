@@ -73,7 +73,7 @@ okbot team add acme lead   --key ed25519:… --url https://lead.example.com/a2a/
 okbot team add acme writer --key ed25519:… --url https://writer.example.net/a2a/acme --skill writing
 okbot team add acme laptop --key ed25519:… --box-key x25519:… --relay lead --skill research
 okbot team link acme --from role:leader --to '*'
-okbot team sign acme --days 30
+okbot team sign acme                 # valid 365 days (--days, up to 3650)
 okbot team publish acme --to /var/www/team
 ```
 
@@ -93,7 +93,11 @@ roles = { leader = ["everyone"] }
 
 - The bot's A2A endpoint is `<public_url>/a2a/<team>`, behind your HTTPS reverse proxy.
 - Members re-read the manifest every 10 minutes and refuse an older version or an expired one: sign
-  again before `expires`. Removing a member (`okbot team remove`, then `okbot team sign`) takes
+  again before `expires`; `okbot doctor` warns from 14 days before. `okbot team renew acme --days 90
+  --to /var/www/team` signs and publishes only when it expires within 30 days (`--within`): run it
+  daily from a timer on the owner's machine to keep a short validity without manual work. A long
+  validity is simpler, but a member kept on an old version trusts it, removed members included,
+  until it expires. Removing a member (`okbot team remove`, then `okbot team sign`) takes
   effect within 10 minutes.
 - A bot behind NAT (a laptop) uses `--relay <member>`: it polls that member, which passes requests
   on. Requests and answers are signed and sealed with the recipient's box key (`okbot peer id`, second

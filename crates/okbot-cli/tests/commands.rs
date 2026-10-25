@@ -725,3 +725,62 @@ fn roles_and_audit_from_the_terminal() {
     assert_ne!(code, 0);
     assert!(err.contains("not a duration"), "{err}");
 }
+
+#[test]
+fn team_renew_signs_only_when_due() {
+    let env = Env::new();
+    let run = |args: &[&str]| {
+        let out = env.okbot().args(args).write_stdin("").output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let (code, _, err) = run(&["team", "init", "ops", "--owner"]);
+    assert_eq!(code, 0, "{err}");
+    // Not signed yet: renew signs.
+    let (code, out, err) = run(&["team", "renew", "ops"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("version 2"), "{out}");
+    assert!(err.contains("valid for 365 days"), "{err}");
+    // Valid for a year: nothing to do.
+    let (code, out, err) = run(&["team", "renew", "ops"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("nothing to do"), "{out}");
+    // Not due within 60 days; due within 366, so signed again and published.
+    let site = env.root().join("site");
+    let (code, out, err) = run(&[
+        "team",
+        "renew",
+        "ops",
+        "--within",
+        "60",
+        "--days",
+        "90",
+        "--to",
+        site.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("nothing to do"), "{out}");
+    let (code, out, err) = run(&[
+        "team",
+        "renew",
+        "ops",
+        "--within",
+        "366",
+        "--days",
+        "400",
+        "--to",
+        site.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("version 3"), "{out}");
+    assert!(site.join("ops.toml.sig").exists());
+    let (code, _, err) = run(&["team", "sign", "ops", "--days", "90"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("note:"), "{err}");
+    let (code, _, err) = run(&["team", "renew", "ops", "--within", "90", "--days", "90"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("--within"), "{err}");
+}

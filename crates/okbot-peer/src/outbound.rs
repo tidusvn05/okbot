@@ -56,6 +56,12 @@ impl Node {
             }
         }
         problems.extend(self.inner.check_membership());
+        problems.extend(
+            self.inner
+                .teams
+                .values()
+                .filter_map(|t| self.inner.expiry_warning(t)),
+        );
         match self
             .inner
             .store
@@ -108,6 +114,9 @@ impl Node {
             if !problems.is_empty() {
                 out.push((label, false, problems.join("; ")));
                 continue;
+            }
+            if let Some(warning) = self.inner.expiry_warning(team) {
+                out.push((label.clone(), false, warning));
             }
             let callees = manifest.callees(&team.config.member);
             out.push((

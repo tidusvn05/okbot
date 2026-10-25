@@ -230,11 +230,13 @@ async fn serve_local(inner: Arc<Inner>, stop: CancellationToken) {
     let _ = std::fs::remove_file(&path);
 }
 
-/// Deadlines of inbound tasks, and manifest refreshes.
+/// Deadlines of inbound tasks, manifest refreshes, and a daily warning for manifests about to expire.
 async fn background(inner: Arc<Inner>, stop: CancellationToken) {
     let mut sweep = tokio::time::interval(Duration::from_secs(15));
     let mut refresh = tokio::time::interval(crate::node::REFRESH);
     refresh.tick().await; // `Node::start` just read them
+    let mut expiry = tokio::time::interval(Duration::from_secs(24 * 3600));
+    expiry.tick().await; // `Node::start` just warned
     loop {
         tokio::select! {
             _ = sweep.tick() => inbound::expire(&inner).await,
@@ -242,6 +244,13 @@ async fn background(inner: Arc<Inner>, stop: CancellationToken) {
                 for team in inner.teams.values() {
                     if let Err(error) = inner.refresh(team).await {
                         tracing::warn!(team = %team.config.id, %error, "cannot refresh the team manifest");
+                    }
+                }
+            }
+            _ = expiry.tick() => {
+                for team in inner.teams.values() {
+                    if let Some(warning) = inner.expiry_warning(team) {
+                        tracing::warn!("{warning}");
                     }
                 }
             }
