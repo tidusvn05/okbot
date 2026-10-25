@@ -93,13 +93,8 @@ fn new_list_doctor_kb_remove() {
     }
     let toml = std::fs::read_to_string(dir.join("okbot.toml")).unwrap();
     assert!(toml.contains("chain = [\"claude\"]"));
-    assert!(
-        toml.contains(&format!(
-            "cli = \"{}",
-            env.root().join("bin").canonicalize().unwrap().display()
-        )),
-        "{toml}"
-    );
+    // Found at each start, not written: the CLI may move (an update, another machine).
+    assert!(!toml.contains("\ncli = "), "{toml}");
 
     let (code, _) = env.json(&[
         "new",
@@ -125,6 +120,34 @@ fn new_list_doctor_kb_remove() {
         .collect();
     assert!(checks.contains(&("agent claude", "ok")), "{checks:?}");
     assert!(checks.contains(&("knowledge MCP", "ok")), "{checks:?}");
+
+    // A configured CLI that is gone: the bot falls back to the one it finds, and doctor says so.
+    std::fs::write(
+        dir.join("okbot.toml"),
+        toml.replace(
+            "[agent.providers.claude]\n",
+            "[agent.providers.claude]\ncli = \"/gone/claude\"\n",
+        ),
+    )
+    .unwrap();
+    let (code, report) = env.json(&["doctor", "shop", "--json"]);
+    assert_eq!(code, 0, "{report:#}");
+    let checks: Vec<(&str, &str)> = report["bots"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["check"].as_str().unwrap(), c["status"].as_str().unwrap()))
+        .collect();
+    assert!(checks.contains(&("agent claude", "ok")), "{checks:?}");
+    assert!(checks.contains(&("agent claude cli", "warn")), "{checks:?}");
+    // The chain is built (CliBackend::new) from the CLI found instead.
+    assert!(checks.contains(&("tool policy", "ok")), "{checks:?}");
+    env.okbot()
+        .args(["agent", "set", "claude", "--default-cli", "--bot", "shop"])
+        .assert()
+        .success();
+    let toml = std::fs::read_to_string(dir.join("okbot.toml")).unwrap();
+    assert!(!toml.contains("/gone/claude"), "{toml}");
 
     env.okbot().args(["kb", "lint", "shop"]).assert().success();
     std::fs::remove_file(dir.join("kb/persona/assistant.md")).unwrap();

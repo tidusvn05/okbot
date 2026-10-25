@@ -300,7 +300,9 @@ async fn settings(
         binary = None;
     }
     if let Some(path) = &args.cli {
-        let path = std::fs::canonicalize(path)
+        // Absolute but not symlink-resolved: `~/.local/bin/codex` stays valid when the CLI
+        // updates itself into a new versioned directory.
+        let path = std::path::absolute(path)
             .with_context(|| format!("cannot resolve {}", path.display()))?;
         if detect::detect_path(kind, &path, &crate::bot::agent_env(config))
             .await
@@ -310,14 +312,10 @@ async fn settings(
         }
         binary = Some(path);
     } else if promote && binary.is_none() && !args.default_cli {
-        binary = Some(
-            inspect(Some(config), name)
-                .await
-                .with_context(|| {
-                    format!("{name} not found; run `okbot agent detect` or pass --cli PATH")
-                })?
-                .path,
-        );
+        // Checked, not written: the bot finds it at each start.
+        inspect(Some(config), name).await.with_context(|| {
+            format!("{name} not found; run `okbot agent detect` or pass --cli PATH")
+        })?;
     }
     if old.cli != binary {
         let text = binary.as_ref().map(|p| p.to_string_lossy());

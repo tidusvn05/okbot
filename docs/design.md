@@ -799,7 +799,9 @@ detects them instead of asking the operator to type paths:
 
 1. **Find** each known CLI (`claude`, `codex`, `opencode`, `devin`) on `PATH`, then in common install
    locations that a service's `PATH` often misses (`~/.local/bin`, `~/.npm-global/bin`, `~/.bun/bin`,
-   `/usr/local/bin`, `~/.claude/local`). Resolve symlinks and record the absolute path.
+   `/usr/local/bin`, `~/.claude/local`). The path is not recorded: the bot searches the same way at
+   each start, so CLIs that update themselves into versioned directories and bots moved to another
+   machine keep working (amended 2026-10-25; an explicit `--cli` is still stored).
 2. **Check the version** with `<cli> --version` (agent-core rejects OpenCode < 2).
 3. **Check login** without spending quota:
 

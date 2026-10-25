@@ -17,7 +17,8 @@ use crate::provider_name;
 pub struct CliBackendConfig {
     /// Which CLI.
     pub provider: Provider,
-    /// Executable path; `None` looks it up on `PATH`.
+    /// Executable path; `None` looks it up on `PATH` and in the usual install directories
+    /// ([`crate::detect::SearchPaths::from_env`]), as does a path that no longer exists.
     pub binary: Option<PathBuf>,
     /// Model id in the CLI's format (`sonnet@high`); `None` uses the CLI's default.
     pub model: Option<String>,
@@ -45,7 +46,25 @@ impl CliBackend {
         if let Some(model) = &config.model {
             crate::validate_model(provider, model)?;
         }
-        let cli = match &config.binary {
+        // Found at each start, so a CLI that updates itself (a new versioned directory) or a bot
+        // moved to another machine keeps working.
+        let binary = match config.binary {
+            Some(path) if path.exists() => Some(path),
+            configured => {
+                let found = crate::detect::SearchPaths::from_env().find(provider.executable());
+                if let (Some(old), Some(new)) = (&configured, &found) {
+                    tracing::warn!(
+                        configured = %old.display(),
+                        found = %new.display(),
+                        "the configured agent CLI is missing; using the one found instead \
+                         (`okbot agent set {} --default-cli` drops the setting)",
+                        provider_name(provider)
+                    );
+                }
+                found.or(configured)
+            }
+        };
+        let cli = match &binary {
             Some(path) => AgentCli::with_binary(provider, path.clone()),
             None => AgentCli::discover(provider),
         }

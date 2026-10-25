@@ -113,17 +113,24 @@ async fn maps_failures() {
     assert!(matches!(slow.run(t).await, Err(AgentError::Timeout(_))));
 }
 
+/// A configured CLI that is gone falls back to the one found on this machine, if any.
 #[test]
-fn missing_cli_is_unavailable() {
-    let err = CliBackend::new(CliBackendConfig {
+fn missing_cli_falls_back_or_is_unavailable() {
+    let result = CliBackend::new(CliBackendConfig {
         provider: Provider::Codex,
         binary: Some("/nonexistent/codex".into()),
         model: None,
         scrub: EnvScrub::default(),
         env: Vec::new(),
-    })
-    .unwrap_err();
-    assert!(matches!(err, AgentError::Unavailable(_)), "{err}");
+    });
+    match okbot_agent::detect::SearchPaths::from_env().find("codex") {
+        Some(_) => assert!(result.is_ok(), "{:?}", result.err()),
+        None => assert!(
+            matches!(result, Err(AgentError::Unavailable(_))),
+            "{:?}",
+            result.err()
+        ),
+    }
 }
 
 /// Real CLI smoke test: `OKBOT_SMOKE_PROVIDER=claude cargo test -p okbot-agent --test cli_backend -- --ignored`
