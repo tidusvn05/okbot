@@ -168,22 +168,17 @@ fn describe(cli: &DetectedCli) -> String {
     )
 }
 
-/// Step 2: agent CLIs.
+/// Step 2: agent CLIs. Their paths are not written: the bot finds them at each start, so a CLI
+/// that updates itself into a new directory, or a move to another machine, needs no edit.
 async fn choose_agents(w: &Wizard<'_>) -> anyhow::Result<Vec<(String, Option<PathBuf>)>> {
     let found = detect::detect(&detect::SearchPaths::from_env()).await;
-    let path_of = |name: &str| {
-        found
-            .iter()
-            .find(|c| okbot_agent::provider_name(c.provider) == name)
-            .map(|c| c.path.clone())
-    };
     if !w.agents.is_empty() {
         for name in w.agents {
             if okbot_agent::parse_provider(name).is_none() {
                 bail!("unknown agent `{name}` (use claude, codex, opencode or devin)");
             }
         }
-        return Ok(w.agents.iter().map(|n| (n.clone(), path_of(n))).collect());
+        return Ok(w.agents.iter().map(|n| (n.clone(), None)).collect());
     }
     // Only CLIs that can restrict their tools are offered; Devin/OpenCode need --agent.
     let usable: Vec<&DetectedCli> = found
@@ -200,7 +195,7 @@ async fn choose_agents(w: &Wizard<'_>) -> anyhow::Result<Vec<(String, Option<Pat
         .into()),
         [only] => Ok(vec![(
             okbot_agent::provider_name(only.provider).to_string(),
-            Some(only.path.clone()),
+            None,
         )]),
         several => {
             let labels: Vec<String> = several.iter().map(|c| describe(c)).collect();
@@ -208,10 +203,7 @@ async fn choose_agents(w: &Wizard<'_>) -> anyhow::Result<Vec<(String, Option<Pat
                 inquire::Select::new("Which agent CLI should answer?", labels.clone()).raw_prompt()
             })?;
             let first = several[primary.index];
-            let mut chain = vec![(
-                okbot_agent::provider_name(first.provider).to_string(),
-                Some(first.path.clone()),
-            )];
+            let mut chain = vec![(okbot_agent::provider_name(first.provider).to_string(), None)];
             let rest: Vec<&&DetectedCli> = several
                 .iter()
                 .filter(|c| c.provider != first.provider)
@@ -227,7 +219,7 @@ async fn choose_agents(w: &Wizard<'_>) -> anyhow::Result<Vec<(String, Option<Pat
             if fallback {
                 chain.push((
                     okbot_agent::provider_name(rest[0].provider).to_string(),
-                    Some(rest[0].path.clone()),
+                    None,
                 ));
             }
             Ok(chain)

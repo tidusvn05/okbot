@@ -43,7 +43,7 @@ okbase knowledge bundle. One bot = one directory with `okbot.toml`, `.env` (secr
   Effort requires a configured or explicit model and is supported for Claude/Codex. `--effort`
   overrides a model suffix; changing model without an effort keeps the previous effort.
 - Clear overrides with `--default-model` (also clears effort), `--default-effort` or `--default-cli`.
-  `--cli PATH` records an absolute executable path. Every edit supports `--print` and `--json`.
+  `--cli PATH` records an absolute executable path; without it the bot finds the CLI at each start. Every edit supports `--print` and `--json`.
 - Edits save configuration; apply with `okbot restart` or the edit's `--restart`. A failed restart
   leaves the saved configuration in place and returns `saved: true`, `pending_restart: true` and
   `error.code: restart_failed`. Foreground bots need their supervisor restarted manually.

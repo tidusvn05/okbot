@@ -36,10 +36,15 @@ unrestricted agents automatically.
 |---|---|
 | `--model MODEL` | Set the model; keep the previous effort unless overridden |
 | `--effort LEVEL` | Set effort for Claude/Codex; requires an explicit or previously configured model |
-| `--cli PATH` | Check and store the exact executable as an absolute path |
+| `--cli PATH` | Check and store the exact executable as an absolute path (symlinks kept, so `~/.local/bin/codex` survives updates) |
 | `--default-model` | Remove both model and effort overrides |
 | `--default-effort` | Keep the model and remove its effort suffix |
-| `--default-cli` | Remove the path override and use runtime PATH discovery |
+| `--default-cli` | Remove the path override; the bot finds the CLI at each start |
+
+Without `--cli`, nothing is stored: the bot finds the CLI at each start (`PATH`, then the usual
+install directories), so a CLI that updates itself into a new versioned directory, or a bot moved to
+another machine, keeps working. A pinned path that no longer exists falls back to the same search,
+with a warning in the log and in `okbot doctor`.
 
 Models keep the existing `model@effort` representation. A new suffix overrides the previous effort;
 an explicit `--effort` overrides that suffix. Effort syntax is validated against the pinned

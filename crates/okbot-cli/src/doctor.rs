@@ -62,11 +62,25 @@ async fn check_agents(config: &Config, r: &mut Report) {
         };
         let configured = config.agent.providers.get(name).and_then(|p| p.cli.clone());
         let found = match &configured {
-            Some(path) => {
+            Some(path) if config.path(path).exists() => {
                 okbot_agent::detect::detect_path(provider, &config.path(path), &env).await
             }
-            None => okbot_agent::detect::detect_one_with_env(provider, &paths, &env).await,
+            _ => okbot_agent::detect::detect_one_with_env(provider, &paths, &env).await,
         };
+        if let (Some(path), Some(cli)) = (&configured, &found)
+            && !config.path(path).exists()
+        {
+            r.add(
+                format!("agent {name} cli"),
+                Status::Warn,
+                format!(
+                    "{} no longer exists; the bot uses {} instead. `okbot agent set {name} \
+                     --default-cli` drops the setting so it is found at each start",
+                    path.display(),
+                    cli.path.display()
+                ),
+            );
+        }
         match found {
             None => r.add(
                 format!("agent {name}"),

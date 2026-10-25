@@ -38,6 +38,12 @@ okbot restart                       # apply
 
 When the first CLI fails (quota, login, outage), the next one in the chain answers.
 
+The bot finds each CLI when it starts (`PATH`, then `~/.local/bin`, `~/.npm-global/bin`, `~/.bun/bin`,
+`~/.cargo/bin`, `/usr/local/bin`), so nothing needs editing when a CLI updates itself into a new
+directory or the bot moves to another machine. `okbot agent set codex --cli PATH` pins one
+executable; if that path disappears, the bot uses the one it finds and `okbot doctor` warns.
+`okbot agent set codex --default-cli` removes the pin.
+
 ```toml
 [agent]
 chain = ["claude", "codex"]
