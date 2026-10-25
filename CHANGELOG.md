@@ -4,6 +4,22 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.10.1] - 2026-10-25
+
+### Features
+
+- **teams:** manifests valid 365 days by default; okbot team renew (#49) (5d49c14)
+
+### Bug fixes
+
+- **install:** say why a download failed (#47) (c716d8b)
+- **peers:** relay from okbot chat; okbot start for team-only bots (#48) (a8c7ff4)
+- **agent:** find agent CLIs at each start instead of pinning their path (#50) (f4f0d48)
+
+### Other
+
+- reopen development as 0.11.0-dev; publish up to a new crate (#46) (8bf832a)
+
 ## [0.10.0] - 2026-10-24
 
 ### Features
