@@ -162,6 +162,15 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX peer_tasks_by_time ON peer_tasks(updated_at);
     ",
+    // 7: interactive replies waiting for an answer (ADR 0015).
+    r"
+    CREATE TABLE views (
+        id         TEXT PRIMARY KEY,
+        data       TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX views_by_expiry ON views(expires_at);
+    ",
 ];
 
 /// The schema version this build writes.

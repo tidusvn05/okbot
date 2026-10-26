@@ -125,6 +125,7 @@ cargo +1.89 check --workspace                      # MSRV
 | `okbot-core` | Domain model (`InboundEvent`, `ConversationKey`, `UserRef`, `OutboundMessage`, `ChannelCaps`, `ToolPolicy`, ids), ports (`Channel`, `AgentBackend`, `ConversationStore`, `KnowledgeProvider`, `MemoryStore`, `Renderer`, `Clock`), shared errors. **The public SDK for third-party adapters** | none |
 | `okbot-config` | Config schema, loading, validation, env/secret resolution, migration of `config_version` | core |
 | `okbot-render` | Canonical Markdown → `MarkdownDialect`s, length-aware splitting (pulldown-cmark) | core |
+| `okbot-chart` | Charts as PNG images with embedded fonts (tiny-skia, ttf-parser; ADR 0016) | core |
 | `okbot-store` | SQLite implementation of `ConversationStore`, migrations, retention | core |
 | `okbot-agent` | `CliBackend` (agent-core), `FallbackBackend`, CLI detection, prompt assembly helpers | core |
 | `okbot-knowledge` | okbase `Bundle`, catalog cache, `ScopeBuilder`, RunToken registry, MCP servers (`/mcp/kb`, `/mcp/bot`), memory writer, default bundle template | core |
@@ -730,6 +731,34 @@ member failed after the forward timeout and worked again once back. A run across
 is pending (release checklist).
 
 ---
+
+### P29 — Interactive replies (ADR 0015)
+
+1. `reply_mode = "text" | "interactive"` in `[bot]`, per channel and per room; `text` by default.
+2. The gateway's built-in `ui` server with the `show` tool (cards with fields, tables and text bar
+   charts, 2–25 choices, one form, link buttons), checked against the platform's limits when called.
+3. Core: `Prompt.cards` and `select`, link buttons, pre-filled form fields, `ChannelCaps.ui`,
+   `Channel::update_prompt`, `InboundSink::prompt`; views kept in the store's `views` table.
+4. Discord (Components V2, menus, modals), Slack (Block Kit, modals), Google Chat (cards, dropdown,
+   dialogs over HTTP), Telegram (inline keyboards); the rest as text.
+5. A click becomes the clicker's next message after the access checks; the first answer wins.
+
+Exit criteria: a choice pressed after a restart starts a turn as the clicker; a second press does
+nothing; a platform without buttons shows the same view as text; a form field asking for a password
+is refused.
+
+### P30 — Chart images (ADR 0016)
+
+1. `okbot-chart`: bar, column and line charts drawn with tiny-skia and ttf-parser, in the embedded
+   Noto Sans and Noto Sans JP subsets (`fonts/build.py`), plus `[charts] fonts`; numbers by locale.
+2. Core: `Chart`, `Image`, the `ChartRenderer` port, `UiCaps.images`, `Card.image`.
+3. `show` charts gain `kind`, several series, `highlight` and `locale`; the runtime draws the first
+   chart of a view off the async threads, within 2 s, and falls back to text.
+4. Discord (a media gallery in the card), Telegram (a photo with caption and buttons), Slack (a
+   file message before the card), console (a PNG file); `[charts] images = true` turns it on.
+
+Exit criteria: a mixed Vietnamese and Japanese chart draws every letter; a label no font has keeps
+the chart text; the history keeps every chart as text.
 
 ## Part 5 — Release checklist (every release)
 

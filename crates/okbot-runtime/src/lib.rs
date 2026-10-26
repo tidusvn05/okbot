@@ -34,6 +34,7 @@ mod team;
 #[cfg(test)]
 mod test_support;
 mod turn;
+mod ui;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -125,6 +126,8 @@ pub(crate) struct Shared {
     pub(crate) memory: Option<Arc<dyn MemoryStore>>,
     pub(crate) tasks: Option<Arc<dyn TaskStore>>,
     pub(crate) renderer: Arc<dyn Renderer>,
+    /// Draws the charts of interactive views as pictures (ADR 0016); none keeps them text.
+    pub(crate) charts: Option<Arc<dyn okbot_core::ChartRenderer>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) channels: HashMap<ChannelId, Arc<dyn Channel>>,
     pub(crate) gate: policy::Gate,
@@ -274,6 +277,7 @@ pub struct RuntimeBuilder {
     memory: Option<Arc<dyn MemoryStore>>,
     tasks: Option<Arc<dyn TaskStore>>,
     renderer: Option<Arc<dyn Renderer>>,
+    charts: Option<Arc<dyn okbot_core::ChartRenderer>>,
     clock: Arc<dyn Clock>,
     channels: Vec<Arc<dyn Channel>>,
     http: Option<HttpOptions>,
@@ -330,6 +334,12 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Draws the charts of interactive views as pictures on channels that show them (ADR 0016).
+    pub fn charts(mut self, charts: Arc<dyn okbot_core::ChartRenderer>) -> Self {
+        self.charts = Some(charts);
+        self
+    }
+
     /// Replaces the system clock.
     pub fn clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
@@ -370,6 +380,7 @@ impl RuntimeBuilder {
             memory: self.memory,
             tasks: self.tasks,
             renderer: self.renderer.ok_or(BuildError::Missing("renderer"))?,
+            charts: self.charts,
             clock: self.clock,
             channels,
             in_flight: in_flight.clone(),
@@ -417,6 +428,10 @@ impl InboundSink for EventSink {
         tokio::spawn(interact::answer(self.shared.clone(), answer));
         Ok(())
     }
+
+    async fn prompt(&self, id: &str) -> Option<okbot_core::Prompt> {
+        ui::lookup(&self.shared, id).await
+    }
 }
 
 /// Observes a running runtime.
@@ -462,6 +477,7 @@ impl Runtime {
             memory: None,
             tasks: None,
             renderer: None,
+            charts: None,
             clock: Arc::new(SystemClock),
             channels: Vec::new(),
             http: None,
@@ -517,7 +533,10 @@ impl Runtime {
                 drop(sink); // the sink stays up while resuming
             });
         }
-        if !shared.config.mcp.is_empty() || shared.peers.is_some() {
+        if !shared.config.mcp.is_empty()
+            || shared.peers.is_some()
+            || shared.config.any_interactive()
+        {
             let gateway = gateway::serve(shared.clone(), channel_stop.clone())
                 .await
                 .map_err(|source| RunError::Http {

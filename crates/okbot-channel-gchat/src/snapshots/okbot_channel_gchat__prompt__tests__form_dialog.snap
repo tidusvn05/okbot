@@ -1,0 +1,74 @@
+---
+source: crates/okbot-channel-gchat/src/prompt.rs
+expression: "open_dialog(false, card.clone())"
+---
+{
+  "actionResponse": {
+    "dialogAction": {
+      "dialog": {
+        "body": {
+          "header": {
+            "title": "Your details"
+          },
+          "sections": [
+            {
+              "widgets": [
+                {
+                  "textInput": {
+                    "hintText": "Full name",
+                    "label": "Name",
+                    "name": "f1",
+                    "type": "SINGLE_LINE",
+                    "validation": {
+                      "characterLimit": 40
+                    },
+                    "value": "An"
+                  }
+                },
+                {
+                  "textInput": {
+                    "label": "Note",
+                    "name": "f2",
+                    "type": "MULTIPLE_LINE"
+                  }
+                },
+                {
+                  "buttonList": {
+                    "buttons": [
+                      {
+                        "onClick": {
+                          "action": {
+                            "function": "okp",
+                            "parameters": [
+                              {
+                                "key": "prompt",
+                                "value": "v1a2b3c4d"
+                              },
+                              {
+                                "key": "button",
+                                "value": "b2"
+                              },
+                              {
+                                "key": "submit",
+                                "value": "1"
+                              }
+                            ],
+                            "requiredWidgets": [
+                              "f1"
+                            ]
+                          }
+                        },
+                        "text": "B2"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "type": "DIALOG"
+  }
+}

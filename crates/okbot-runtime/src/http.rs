@@ -373,6 +373,7 @@ mod tests {
             memory: None,
             tasks: None,
             renderer: Arc::new(PlainRenderer),
+            charts: None,
             clock: Arc::new(SystemClock),
             channels: HashMap::from([(channel.id().clone(), channel)]),
             in_flight: Arc::new(InFlight::default()),

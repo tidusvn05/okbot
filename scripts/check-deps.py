@@ -17,6 +17,7 @@ ALLOWED = {
     CORE: set(),
     "okbot-config": {CORE},
     "okbot-render": {CORE},
+    "okbot-chart": {CORE},
     "okbot-store": {CORE},
     "okbot-agent": {CORE},
     "okbot-knowledge": {CORE},

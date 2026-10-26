@@ -247,6 +247,21 @@ fn console(options: ConsoleOptions, _state_dir: &Path) -> anyhow::Result<Console
     Ok(ConsoleChannel::stdio_with(options))
 }
 
+/// Inside a bot directory, chat as that bot: its profile, time zone and linked people apply.
+fn bot_dir_config(strict: bool) -> anyhow::Result<Option<okbot_config::Config>> {
+    match okbot_config::Config::load(Path::new(".")) {
+        Ok(bot) => Ok(Some(bot)),
+        Err(e) if Path::new(okbot_config::CONFIG_FILE).exists() => {
+            if strict {
+                return Err(e).context("--strict needs the bot directory's configuration");
+            }
+            tracing::warn!(error = %e, "ignoring the bot directory's configuration");
+            Ok(None)
+        }
+        Err(_) => Ok(None),
+    }
+}
+
 pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     crate::logging::init("warn");
     let backends = agents(&args).await?;
@@ -272,18 +287,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let store = open_store(&state_dir)?;
 
     let stop = CancellationToken::new();
-    // Inside a bot directory, chat as that bot: its profile, time zone and linked people apply.
-    let bot = match okbot_config::Config::load(Path::new(".")) {
-        Ok(bot) => Some(bot),
-        Err(e) if Path::new(okbot_config::CONFIG_FILE).exists() => {
-            if args.strict {
-                return Err(e).context("--strict needs the bot directory's configuration");
-            }
-            tracing::warn!(error = %e, "ignoring the bot directory's configuration");
-            None
-        }
-        Err(_) => None,
-    };
+    let bot = bot_dir_config(args.strict)?;
     let timezone = bot.as_ref().and_then(|b| b.bot.timezone.clone());
     let name = args
         .name
@@ -308,12 +312,16 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let http = http_addr(&args, bot.as_ref());
     let connector = connector(bot.as_ref()).await?;
     let peers = peers(bot.as_ref(), store.clone()).await?;
+    let charts = bot.as_ref().map(crate::bot::charts).transpose()?.flatten();
     let config = runtime_config(&args, &name, &state_dir, bot, timezone)?;
     let mut builder = Runtime::builder(config)
         .store(store)
         .agent(Arc::new(chain))
         .renderer(Arc::new(MarkdownRenderer))
         .channel(console.clone());
+    if let Some(charts) = charts {
+        builder = builder.charts(charts);
+    }
     if let Some(knowledge) = knowledge {
         builder = builder
             .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)

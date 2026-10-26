@@ -1,0 +1,32 @@
+[package]
+name = "okbot-chart"
+description = "Draws okbot's charts as PNG images, with embedded fonts for Vietnamese, English and Japanese."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# The embedded fonts (fonts/*.ttf.z) are Noto Sans and Noto Sans JP under the SIL OFL 1.1.
+license = "(MIT OR Apache-2.0) AND OFL-1.1"
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["ja"]
+## Embed the Japanese font (kana and JIS level 1 kanji, about 600 KB).
+ja = []
+
+[dependencies]
+okbot-core.workspace = true
+tiny-skia.workspace = true
+ttf-parser.workspace = true
+flate2.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true

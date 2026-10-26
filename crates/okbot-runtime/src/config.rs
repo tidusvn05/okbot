@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use okbot_core::{ChannelId, McpServer, Person, Secret, ToolPolicy, UserId};
+use okbot_core::{ChannelId, McpServer, Person, ReplyMode, Secret, ToolPolicy, UserId};
 
 /// When the bot answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +78,8 @@ pub struct RoomRule {
     pub internal: bool,
     /// A group where answers may use the asker's personal profile and data.
     pub personal: bool,
+    /// Reply mode override (ADR 0015).
+    pub reply_mode: Option<ReplyMode>,
 }
 
 /// Fixed texts the bot sends without asking an agent.
@@ -150,6 +152,10 @@ pub struct RuntimeConfig {
     pub tool_policy: ToolPolicy,
     /// Per-room overrides, keyed by channel and room id.
     pub rooms: HashMap<(ChannelId, String), RoomRule>,
+    /// Default reply mode (ADR 0015).
+    pub reply_mode: ReplyMode,
+    /// Reply mode per channel, over [`RuntimeConfig::reply_mode`].
+    pub channel_reply_modes: HashMap<ChannelId, ReplyMode>,
     /// Fixed replies.
     pub replies: FixedReplies,
     /// IANA timezone for the time shown to the agent (`Asia/Ho_Chi_Minh`); UTC if unset.
@@ -611,6 +617,8 @@ impl RuntimeConfig {
             },
             tool_policy: ToolPolicy::default(),
             rooms: HashMap::new(),
+            reply_mode: ReplyMode::default(),
+            channel_reply_modes: HashMap::new(),
             replies: FixedReplies::default(),
             timezone: None,
             resume_sessions: true,
@@ -627,6 +635,25 @@ impl RuntimeConfig {
             console_owner: None,
             teams: Vec::new(),
         }
+    }
+
+    /// The reply mode of a room: its own, else its channel's, else the bot's.
+    pub fn reply_mode(&self, channel: &ChannelId, room: &str) -> ReplyMode {
+        self.room(channel, room)
+            .reply_mode
+            .or_else(|| self.channel_reply_modes.get(channel).copied())
+            .unwrap_or(self.reply_mode)
+    }
+
+    /// Whether some room may be interactive (the gateway then serves the `ui` server).
+    pub fn any_interactive(&self) -> bool {
+        let interactive = ReplyMode::Interactive;
+        self.reply_mode == interactive
+            || self.channel_reply_modes.values().any(|m| *m == interactive)
+            || self
+                .rooms
+                .values()
+                .any(|r| r.reply_mode == Some(interactive))
     }
 
     /// The rule for a room (defaults when none is configured).

@@ -50,6 +50,39 @@ pub struct ChannelCaps {
     pub edit: bool,
     /// Whether a typing indicator exists.
     pub typing: bool,
+    /// What interactive replies can use (ADR 0015).
+    #[serde(default)]
+    pub ui: UiCaps,
+}
+
+/// The parts of a [`Prompt`](crate::Prompt) a channel shows natively. Whatever is missing is
+/// shown as text (cards, a numbered menu, a list of fields to type).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiCaps {
+    /// Buttons, including link buttons.
+    pub buttons: bool,
+    /// A menu of options ([`Select`](crate::Select)).
+    pub select: bool,
+    /// Forms behind buttons.
+    pub forms: bool,
+    /// Cards with a title, shown apart from the text.
+    pub cards: bool,
+    /// A card's chart as a picture ([`Card::image`](crate::Card::image), ADR 0016).
+    pub images: bool,
+}
+
+impl UiCaps {
+    /// Everything (Discord, Slack).
+    pub fn all() -> Self {
+        Self {
+            buttons: true,
+            select: true,
+            forms: true,
+            cards: true,
+            images: true,
+        }
+    }
 }
 
 impl ChannelCaps {
@@ -62,6 +95,7 @@ impl ChannelCaps {
             threads: false,
             edit: false,
             typing: false,
+            ui: UiCaps::default(),
         }
     }
 }
@@ -76,6 +110,19 @@ pub enum ToolPolicy {
     Web,
     /// okbot's MCP tools only.
     McpOnly,
+}
+
+/// How the bot answers (ADR 0015).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum ReplyMode {
+    /// Chat text only. The default.
+    #[default]
+    Text,
+    /// Text, plus cards, buttons, menus and forms the agent shows with its `show` tool, natively
+    /// where the platform has them and as text elsewhere.
+    Interactive,
 }
 
 /// What an agent backend can do natively. Missing capabilities are emulated or the backend is skipped.

@@ -437,6 +437,7 @@ mod tests {
             memory: None,
             tasks: None,
             renderer: Arc::new(PlainRenderer),
+            charts: None,
             clock,
             channels,
             in_flight: Arc::new(crate::InFlight::default()),

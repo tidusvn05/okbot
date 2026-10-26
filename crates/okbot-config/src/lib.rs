@@ -18,11 +18,11 @@ use okbot_core::Secret;
 pub use edit::ConfigEditor;
 pub use schema::{
     A2aAgentSection, A2aClientSection, A2aSection, AgentSection, AutomationSection, BotProfile,
-    BotSection, BridgeSection, ChannelAccess, ChannelsSection, CommandSection, Confirm, ConfirmBy,
-    Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection, LimitsSection, McpAuth,
-    McpCredentials, McpSection, NotifySection, OAuthSection, PersonSection, ProviderSection,
-    ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection, SourceSection,
-    TeamSection, TelegramSection, ZaloSection,
+    BotSection, BridgeSection, ChannelAccess, ChannelsSection, ChartsSection, CommandSection,
+    Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection,
+    LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection, OAuthSection, PersonSection,
+    ProviderSection, ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection,
+    SourceSection, TeamSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -236,6 +236,8 @@ pub struct Config {
     pub agent: AgentSection,
     /// `[http]`.
     pub http: HttpSection,
+    /// `[charts]`.
+    pub charts: ChartsSection,
     /// `[channels.*]`.
     pub channels: ChannelsSection,
     /// `[people.*]`: linked accounts by person id.
@@ -305,6 +307,7 @@ impl Config {
             bot: file.bot,
             agent: file.agent,
             http: file.http,
+            charts: file.charts,
             channels: file.channels,
             people: file.people,
             schedule: file.schedule,

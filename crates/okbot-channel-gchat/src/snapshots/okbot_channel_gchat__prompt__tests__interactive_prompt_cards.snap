@@ -1,0 +1,146 @@
+---
+source: crates/okbot-channel-gchat/src/prompt.rs
+expression: cards(&interactive())
+---
+[
+  {
+    "card": {
+      "header": {
+        "title": "✅ Order #12"
+      },
+      "sections": [
+        {
+          "widgets": [
+            {
+              "textParagraph": {
+                "text": "• <b>Tea</b> × 2<br>• <a href=\"https://shop.example/t\">Details</a> &amp; more"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "cardId": "okp-v1a2b3c4d-c1"
+  },
+  {
+    "card": {
+      "sections": [
+        {
+          "widgets": [
+            {
+              "textParagraph": {
+                "text": "Delivery <i>tomorrow</i>"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "cardId": "okp-v1a2b3c4d-c2"
+  },
+  {
+    "card": {
+      "sections": [
+        {
+          "widgets": [
+            {
+              "selectionInput": {
+                "items": [
+                  {
+                    "selected": true,
+                    "text": "Pick a size",
+                    "value": ""
+                  },
+                  {
+                    "selected": false,
+                    "text": "Small",
+                    "value": "o1"
+                  },
+                  {
+                    "selected": false,
+                    "text": "Large — +10k",
+                    "value": "o2"
+                  }
+                ],
+                "name": "okp_select",
+                "onChangeAction": {
+                  "function": "okp",
+                  "parameters": [
+                    {
+                      "key": "prompt",
+                      "value": "v1a2b3c4d"
+                    },
+                    {
+                      "key": "select",
+                      "value": "1"
+                    }
+                  ]
+                },
+                "type": "DROPDOWN"
+              }
+            },
+            {
+              "buttonList": {
+                "buttons": [
+                  {
+                    "color": {
+                      "alpha": 1,
+                      "blue": 0.37,
+                      "green": 0.77,
+                      "red": 0.13
+                    },
+                    "onClick": {
+                      "action": {
+                        "function": "okp",
+                        "parameters": [
+                          {
+                            "key": "prompt",
+                            "value": "v1a2b3c4d"
+                          },
+                          {
+                            "key": "button",
+                            "value": "b1"
+                          }
+                        ]
+                      }
+                    },
+                    "text": "B1"
+                  },
+                  {
+                    "onClick": {
+                      "action": {
+                        "function": "okp",
+                        "interaction": "OPEN_DIALOG",
+                        "parameters": [
+                          {
+                            "key": "prompt",
+                            "value": "v1a2b3c4d"
+                          },
+                          {
+                            "key": "button",
+                            "value": "b2"
+                          }
+                        ]
+                      }
+                    },
+                    "text": "B2",
+                    "type": "OUTLINED"
+                  },
+                  {
+                    "onClick": {
+                      "openLink": {
+                        "url": "https://shop.example/help"
+                      }
+                    },
+                    "text": "Docs"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "cardId": "okp-v1a2b3c4d"
+  }
+]

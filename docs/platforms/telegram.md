@@ -66,6 +66,29 @@ Prompts and tool approvals are inline buttons; okbot asks Telegram for `callback
 messages. A press by someone the prompt is not for shows them a notice and does nothing. Forms are not
 offered on Telegram.
 
+### Interactive replies
+
+With `reply_mode = "interactive"`, what the agent shows becomes one message with an inline keyboard:
+
+- **Buttons**: up to five in a row. **Link buttons** open their URL and send nothing back.
+- **Menus**: one row per option, above the buttons. An option's description is added to its button
+  (`Small — fits 1`) only when both fit in about 48 characters, because Telegram cuts long button
+  text off.
+- **Cards**: Telegram has none, so okbot adds them to the message text as blocks: the title in bold
+  with an emoji for the tone, then the card's text.
+- **Charts**: with `[charts] images = true`, a chart is sent as a photo with the message text as its
+  caption and the buttons under it, so chart, text and choices are one message. A caption holds at
+  most 1,024 characters; a longer text goes in a second message, under the photo, which then carries
+  the buttons. When the reply is answered, okbot rewrites the caption (or that second message) and
+  the photo stays. If the photo cannot be sent, the chart is shown as text instead.
+- **Forms**: Telegram has none either. okbot asks for the fields in the text instead, and people
+  answer in the chat.
+
+Buttons and menus keep working after okbot restarts: a press on an older message is matched to the
+reply okbot is still waiting on. Once the reply is answered, okbot rewrites the message with the
+outcome and removes the buttons it no longer needs. Presses on replies that are closed or forgotten
+show "This has expired."
+
 ## 5. Reminders
 
 Telegram lets a bot message a user at any time once the user has started a private chat with it

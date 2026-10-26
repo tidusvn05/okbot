@@ -134,6 +134,8 @@ fn config(env: &Env, delivery: Delivery) -> GChatConfig {
 struct Collect(
     Mutex<Vec<InboundEvent>>,
     Mutex<Vec<okbot_core::PromptAnswer>>,
+    /// Prompts the runtime still waits on (recovered after a restart).
+    Mutex<Vec<okbot_core::Prompt>>,
 );
 
 #[async_trait]
@@ -146,6 +148,10 @@ impl InboundSink for Collect {
     async fn answer(&self, answer: okbot_core::PromptAnswer) -> Result<(), SinkClosed> {
         self.1.lock().unwrap().push(answer);
         Ok(())
+    }
+
+    async fn prompt(&self, id: &str) -> Option<okbot_core::Prompt> {
+        self.2.lock().unwrap().iter().find(|p| p.id == id).cloned()
     }
 }
 
@@ -320,12 +326,15 @@ async fn prompts_are_card_buttons() {
         label: id.into(),
         style: okbot_core::ButtonStyle::Primary,
         form: None,
+        url: None,
     };
     let prompt = okbot_core::Prompt {
         id: "abc123".into(),
         text: "Deploy?".into(),
         buttons: vec![button("allow"), button("deny")],
         allowed: vec![okbot_core::UserId::new("users/7")],
+        cards: Vec::new(),
+        select: None,
     };
     let sent = channel.prompt(&to, &prompt).await.unwrap();
     let click = |user: &str, button: &str| {
@@ -378,4 +387,228 @@ async fn prompts_are_card_buttons() {
     let patch = calls.iter().find(|c| c.0 == "PATCH").unwrap();
     assert!(patch.1.ends_with("updateMask=text,cardsV2"), "{}", patch.1);
     assert_eq!(patch.3["cardsV2"], json!([]));
+}
+
+/// An HTTP channel whose sink is set, with a way to sign Google requests.
+fn http_channel(
+    env: &Env,
+) -> (
+    Arc<GChatChannel>,
+    Arc<Collect>,
+    impl Fn(Value) -> WebhookRequest,
+) {
+    let url = "https://bot.example.com/gchat/corp";
+    let channel = Arc::new(GChatChannel::new(config(
+        env,
+        Delivery::Http {
+            audience: Audience::EndpointUrl(url.into()),
+        },
+    )));
+    let sink = Arc::new(Collect::default());
+    let s: Arc<dyn InboundSink> = sink.clone();
+    channel.shared.sink.set(s).ok().unwrap();
+    let now = jiff::Timestamp::now().as_second();
+    let token = jwt::sign(
+        &json!({"iss": "https://accounts.google.com", "email": CHAT_ISSUER,
+                "email_verified": true, "aud": url, "iat": now, "exp": now + 300}),
+        &env.google_key,
+        Some("google-key"),
+    )
+    .unwrap();
+    let request = move |event: Value| WebhookRequest {
+        method: "POST".into(),
+        path: String::new(),
+        headers: vec![("authorization".to_string(), format!("Bearer {token}"))],
+        body: event.to_string().into_bytes(),
+    };
+    (channel, sink, request)
+}
+
+fn interactive_prompt() -> okbot_core::Prompt {
+    let field = okbot_core::FormField {
+        id: "f1".into(),
+        label: "Email".into(),
+        style: okbot_core::FieldStyle::Short,
+        required: true,
+        placeholder: None,
+        min_len: None,
+        max_len: None,
+        value: Some("an@example.com".into()),
+    };
+    okbot_core::Prompt {
+        id: "v1a2b3c4d".into(),
+        text: String::new(),
+        cards: vec![okbot_core::Card {
+            title: Some("Plan".into()),
+            tone: okbot_core::Tone::Info,
+            text: "*Pro* 250k".into(),
+            image: None,
+        }],
+        select: Some(okbot_core::Select {
+            placeholder: "Pick".into(),
+            options: ["o1", "o2"]
+                .map(|id| okbot_core::SelectOption {
+                    id: id.into(),
+                    label: id.into(),
+                    description: None,
+                })
+                .to_vec(),
+        }),
+        buttons: vec![okbot_core::PromptButton {
+            id: "b1".into(),
+            label: "Sign up".into(),
+            style: okbot_core::ButtonStyle::Primary,
+            form: Some(okbot_core::Form {
+                title: "Sign up".into(),
+                fields: vec![field],
+            }),
+            url: None,
+        }],
+        allowed: Vec::new(),
+    }
+}
+
+fn click_event(params: &Value, inputs: &Value) -> Value {
+    let parameters: Vec<Value> = params
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| json!({"key": k, "value": v}))
+        .collect();
+    json!({"type": "CARD_CLICKED", "user": {"name": "users/7", "displayName": "Lan"},
+           "action": {"actionMethodName": "okp", "parameters": parameters},
+           "common": {"formInputs": inputs},
+           "message": {"name": "spaces/AAA/messages/out-1",
+                       "thread": {"name": "spaces/AAA/threads/T"}},
+           "space": {"name": "spaces/AAA", "spaceType": "SPACE"}})
+}
+
+#[tokio::test]
+async fn http_dialogs_menus_and_recovery() {
+    let env = env().await;
+    let (channel, sink, request) = http_channel(&env);
+    assert!(channel.caps().ui.forms && channel.caps().ui.select && channel.caps().ui.cards);
+    let handler = channel.webhook().unwrap();
+    let prompt = interactive_prompt();
+    // Shown before a restart: the channel does not hold it, the runtime does.
+    sink.2.lock().unwrap().push(prompt.clone());
+
+    // Pressing the form button opens a dialog with the pre-filled field.
+    let open = handler
+        .handle(request(click_event(
+            &json!({"prompt": "v1a2b3c4d", "button": "b1"}),
+            &json!({}),
+        )))
+        .await;
+    let open: Value = serde_json::from_slice(&open.body).unwrap();
+    let body = &open["actionResponse"]["dialogAction"]["dialog"]["body"];
+    assert_eq!(
+        body["sections"][0]["widgets"][0]["textInput"]["value"],
+        "an@example.com"
+    );
+    assert!(
+        sink.1.lock().unwrap().is_empty(),
+        "opening is not an answer"
+    );
+
+    // A submission with the required field empty keeps the dialog open.
+    let empty = handler
+        .handle(request(click_event(
+            &json!({"prompt": "v1a2b3c4d", "button": "b1", "submit": "1"}),
+            &json!({"f1": {"stringInputs": {"value": [" "]}}}),
+        )))
+        .await;
+    let empty: Value = serde_json::from_slice(&empty.body).unwrap();
+    assert_eq!(
+        empty["actionResponse"]["dialogAction"]["actionStatus"]["statusCode"],
+        "INVALID_ARGUMENT"
+    );
+
+    // A valid submission answers with the values and closes the dialog.
+    let done = handler
+        .handle(request(click_event(
+            &json!({"prompt": "v1a2b3c4d", "button": "b1", "submit": "1"}),
+            &json!({"f1": {"stringInputs": {"value": ["lan@example.com"]}}}),
+        )))
+        .await;
+    let done: Value = serde_json::from_slice(&done.body).unwrap();
+    assert_eq!(
+        done["actionResponse"]["dialogAction"]["actionStatus"]["statusCode"],
+        "OK"
+    );
+    // A menu pick answers with the option id.
+    let pick = handler
+        .handle(request(click_event(
+            &json!({"prompt": "v1a2b3c4d", "select": "1"}),
+            &json!({"okp_select": {"stringInputs": {"value": ["o2"]}}}),
+        )))
+        .await;
+    assert_eq!(pick.body, b"{}");
+    let answers = sink.1.lock().unwrap().clone();
+    assert_eq!(answers.len(), 2);
+    assert_eq!(answers[0].button, "b1");
+    assert_eq!(answers[0].values["f1"].expose(), "lan@example.com");
+    assert_eq!(
+        answers[0].sent.message_id.as_str(),
+        "spaces/AAA/messages/out-1"
+    );
+    assert_eq!(
+        answers[0].conversation.thread.as_deref(),
+        Some("spaces/AAA/threads/T")
+    );
+    assert_eq!(answers[1].button, "o2");
+    assert!(answers[1].values.is_empty());
+
+    // Unknown prompts answer nothing; a dialog submission says it expired.
+    let gone = handler
+        .handle(request(click_event(
+            &json!({"prompt": "zzz", "button": "b1", "submit": "1"}),
+            &json!({}),
+        )))
+        .await;
+    let gone: Value = serde_json::from_slice(&gone.body).unwrap();
+    assert_eq!(
+        gone["actionResponse"]["dialogAction"]["actionStatus"]["userFacingMessage"],
+        "This prompt has expired."
+    );
+
+    // Closing: the message is rebuilt with its cards only.
+    let mut closed = prompt.clone();
+    closed.buttons.clear();
+    closed.select = None;
+    let sent = answers[1].sent.clone();
+    channel.update_prompt(&sent, &closed).await.unwrap();
+    assert!(lock(&channel.shared.prompts).is_empty());
+    let calls = env.fake.calls.lock().unwrap().clone();
+    let patch = calls.iter().find(|c| c.0 == "PATCH").unwrap();
+    assert_eq!(
+        patch.1,
+        "/v1/spaces/AAA/messages/out-1?updateMask=text,cardsV2"
+    );
+    let cards = patch.3["cardsV2"].as_array().unwrap();
+    assert_eq!(cards.len(), 1, "no menu or buttons left");
+    assert_eq!(cards[0]["card"]["header"]["title"], "ℹ️ Plan");
+}
+
+#[tokio::test]
+async fn pubsub_has_no_forms() {
+    let env = env().await;
+    let channel = GChatChannel::new(config(
+        &env,
+        Delivery::PubSub {
+            subscription: "projects/p/subscriptions/s".into(),
+        },
+    ));
+    assert!(!channel.caps().ui.forms && channel.caps().ui.buttons);
+    let to = ReplyTarget {
+        conversation: okbot_core::ConversationKey::room(
+            "gchat:corp".parse().unwrap(),
+            "spaces/AAA",
+        ),
+        in_reply_to: None,
+    };
+    assert!(matches!(
+        channel.prompt(&to, &interactive_prompt()).await,
+        Err(okbot_core::ChannelError::Unsupported("forms"))
+    ));
 }

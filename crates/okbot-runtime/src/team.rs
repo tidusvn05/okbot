@@ -212,11 +212,11 @@ pub(crate) async fn offered(shared: &Shared, who: &Who) -> bool {
         .is_ok_and(|members| members.iter().any(|m| teams.iter().any(|t| t.id == m.team)))
 }
 
-fn rpc_result(id: &Value, result: &Value) -> Response {
+pub(crate) fn rpc_result(id: &Value, result: &Value) -> Response {
     json_response(&json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
-fn json_response(body: &Value) -> Response {
+pub(crate) fn json_response(body: &Value) -> Response {
     let mut response = (StatusCode::OK, body.to_string()).into_response();
     response.headers_mut().insert(
         axum::http::header::CONTENT_TYPE,
@@ -225,7 +225,7 @@ fn json_response(body: &Value) -> Response {
     response
 }
 
-fn tool_text(id: &Value, text: &str, error: bool) -> Response {
+pub(crate) fn tool_text(id: &Value, text: &str, error: bool) -> Response {
     rpc_result(
         id,
         &json!({"content": [{"type": "text", "text": text}], "isError": error}),
@@ -763,9 +763,12 @@ async fn ask(
                     _ => ButtonStyle::Primary,
                 },
                 form: None,
+                url: None,
             })
             .collect(),
         allowed: vec![event.author.id.clone()],
+        cards: Vec::new(),
+        select: None,
     };
     let target = ReplyTarget::to_event(event);
     let Ok((sent, text)) = interact::show(shared, &target, &prompt, markdown).await else {

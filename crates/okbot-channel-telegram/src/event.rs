@@ -44,6 +44,30 @@ impl CallbackQuery {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CallbackMessage {
     pub(crate) message_id: i64,
+    #[serde(default)]
+    chat: Option<Chat>,
+    #[serde(default)]
+    message_thread_id: Option<i64>,
+    #[serde(default)]
+    is_topic_message: bool,
+}
+
+impl CallbackMessage {
+    /// The conversation the message is in (as [`to_inbound`] keys it); `None` for an
+    /// inaccessible message without its chat.
+    pub(crate) fn conversation(&self, channel: &ChannelId) -> Option<ConversationKey> {
+        let chat = self.chat.as_ref()?;
+        Some(ConversationKey {
+            channel: channel.clone(),
+            space: None,
+            room: chat.id.to_string(),
+            thread: self
+                .is_topic_message
+                .then_some(self.message_thread_id)
+                .flatten()
+                .map(|t| t.to_string()),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

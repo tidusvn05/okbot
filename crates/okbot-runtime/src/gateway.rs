@@ -69,6 +69,8 @@ pub(crate) struct Grant {
     pub(crate) team: bool,
     /// Tokens used by the tasks this turn delegated and saw end.
     pub(crate) delegated: Arc<std::sync::atomic::AtomicU64>,
+    /// Views the agent shows after its answer, when the room is interactive (ADR 0015).
+    pub(crate) ui: Option<crate::ui::Shown>,
 }
 
 /// Ends a [`Grant`] when dropped: its token stops working and pending approvals close.
@@ -250,6 +252,16 @@ async fn post(
             None => (StatusCode::UNAUTHORIZED, "a valid run token is required").into_response(),
         };
     }
+    if name == crate::ui::SERVER {
+        // Built in: interactive replies (ADR 0015).
+        return match bearer(&headers).and_then(|t| shared.gateway.find(t)) {
+            Some(grant) => match grant.ui.clone() {
+                Some(shown) => crate::ui::post(&shared, &grant, &shown, &body).await,
+                None => (StatusCode::NOT_FOUND, "no such server for this turn").into_response(),
+            },
+            None => (StatusCode::UNAUTHORIZED, "a valid run token is required").into_response(),
+        };
+    }
     let (grant, index, token) = match admit(&shared, &headers, &name) {
         Ok(found) => found,
         Err(response) => return response,
@@ -311,7 +323,7 @@ async fn delete(
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if name == crate::team::SERVER {
+    if name == crate::team::SERVER || name == crate::ui::SERVER {
         return StatusCode::OK.into_response();
     }
     let (grant, index, token) = match admit(&shared, &headers, &name) {

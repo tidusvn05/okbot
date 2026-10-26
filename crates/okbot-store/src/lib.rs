@@ -702,6 +702,10 @@ impl ConversationStore for SqliteStore {
                 params![cutoff],
             )?;
             removed += tx.execute(
+                "DELETE FROM views WHERE expires_at <= ?1",
+                params![millis(now)],
+            )?;
+            removed += tx.execute(
                 "DELETE FROM conversations WHERE updated_at < ?1
                  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)",
                 params![cutoff],
@@ -974,6 +978,44 @@ impl ConversationStore for SqliteStore {
                 params![millis(now)],
             )?;
             Ok(changed as u64)
+        })
+        .await
+    }
+
+    async fn put_view(&self, id: &str, data: String, expires: Timestamp) -> Result<(), StoreError> {
+        let id = id.to_string();
+        self.with(move |conn, _| {
+            conn.execute(
+                "INSERT OR REPLACE INTO views (id, data, expires_at) VALUES (?1, ?2, ?3)",
+                params![id, data, millis(expires)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
+        let id = id.to_string();
+        self.with(move |conn, _| {
+            conn.query_row(
+                "SELECT data FROM views WHERE id = ?1 AND expires_at > ?2",
+                params![id, millis(now)],
+                |row| row.get(0),
+            )
+            .optional()
+        })
+        .await
+    }
+
+    async fn take_view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
+        let id = id.to_string();
+        self.with(move |conn, _| {
+            conn.query_row(
+                "DELETE FROM views WHERE id = ?1 AND expires_at > ?2 RETURNING data",
+                params![id, millis(now)],
+                |row| row.get(0),
+            )
+            .optional()
         })
         .await
     }

@@ -39,6 +39,7 @@ unwrap_used = "warn"
 okbot-core = { path = "crates/okbot-core", version = "0.11.0-dev" }
 okbot-config = { path = "crates/okbot-config", version = "0.11.0-dev" }
 okbot-render = { path = "crates/okbot-render", version = "0.11.0-dev" }
+okbot-chart = { path = "crates/okbot-chart", version = "0.11.0-dev", default-features = false }
 okbot-store = { path = "crates/okbot-store", version = "0.11.0-dev" }
 okbot-agent = { path = "crates/okbot-agent", version = "0.11.0-dev" }
 okbot-knowledge = { path = "crates/okbot-knowledge", version = "0.11.0-dev" }
@@ -79,12 +80,17 @@ jiff = { version = "0.2", features = ["serde"] }
 inquire = { version = "0.9", default-features = false, features = ["crossterm"] }
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 pulldown-cmark = { version = "0.13", default-features = false }
+# Chart images (ADR 0016): paths and PNG, glyph outlines, the embedded fonts, NFC.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+unicode-normalization = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)
 rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form", "multipart"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
 rand = "0.10"
-twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "twilight-http", "zstd"] }
+twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "twilight-http", "zlib"] }
 twilight-http = { version = "0.17", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
 twilight-model = "0.17"
 tokio-websockets = { version = "0.13", default-features = false, features = ["client", "server", "rustls-webpki-roots", "ring", "rand", "sha1_smol"] }

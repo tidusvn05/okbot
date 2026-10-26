@@ -34,6 +34,7 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     sealed_secrets(store).await;
     automations(store, clock).await;
     peer_tasks(store, clock).await;
+    views(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -499,6 +500,33 @@ async fn role_grants(store: &dyn ConversationStore, clock: &ManualClock) {
 }
 
 /// Dedupe: first sighting is new, repeats are not, expiry makes it new again; per channel.
+/// Interactive replies (ADR 0015): kept until they expire, taken once.
+async fn views(store: &dyn ConversationStore, clock: &ManualClock) {
+    let now = clock.now();
+    let later = now + jiff::SignedDuration::from_secs(60);
+    store.put_view("v1", "{}".into(), later).await.expect("put");
+    store.put_view("v2", "[]".into(), later).await.expect("put");
+    assert_eq!(
+        store.view("v1", now).await.expect("view").as_deref(),
+        Some("{}")
+    );
+    assert_eq!(
+        store.take_view("v1", now).await.expect("take").as_deref(),
+        Some("{}")
+    );
+    assert_eq!(
+        store.take_view("v1", now).await.expect("take"),
+        None,
+        "taken once"
+    );
+    assert_eq!(
+        store.view("v2", later).await.expect("view"),
+        None,
+        "expired"
+    );
+    assert_eq!(store.take_view("v2", later).await.expect("take"), None);
+}
+
 async fn dedupe(store: &dyn ConversationStore, clock: &ManualClock) {
     let channel: okbot_core::ChannelId = "zalo:shop".parse().expect("id");
     let ttl = Duration::from_secs(60);

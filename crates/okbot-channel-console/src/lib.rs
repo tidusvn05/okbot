@@ -16,6 +16,7 @@ mod line;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,11 +86,18 @@ impl Preset {
             threads,
             edit,
             typing,
+            ui: okbot_core::UiCaps::default(),
         };
         match self {
+            // The terminal prints cards itself and writes charts to files (ADR 0016).
             Self::Console => ChannelCaps {
                 max_message_len: 100_000,
                 dialect: D::CommonMark,
+                ui: okbot_core::UiCaps {
+                    cards: true,
+                    images: true,
+                    ..okbot_core::UiCaps::default()
+                },
                 ..ChannelCaps::basic()
             },
             Self::Zalo => caps(2000, Utf16, D::ZaloMd, false, false, true),
@@ -191,6 +199,8 @@ pub struct ConsoleChannel {
     /// The transcript's length.
     shown: watch::Sender<usize>,
     idle: OnceLock<IdleWait>,
+    /// Where chart images go; [`chart_dir`] when unset.
+    charts: OnceLock<PathBuf>,
     /// `:expect` checks that failed.
     failures: AtomicU64,
 }
@@ -256,6 +266,7 @@ impl ConsoleChannel {
             transcript: StdMutex::new(Vec::new()),
             shown: watch::channel(0).0,
             idle: OnceLock::new(),
+            charts: OnceLock::new(),
             failures: AtomicU64::new(0),
         }
     }
@@ -268,6 +279,25 @@ impl ConsoleChannel {
     /// Makes `:wait` wait until the bot is idle instead of for its next message. Set once.
     pub fn set_idle_wait(&self, wait: IdleWait) {
         let _ = self.idle.set(wait);
+    }
+
+    /// Writes chart images to `dir` instead of `<temp dir>/okbot-console`. Set once.
+    pub fn set_chart_dir(&self, dir: PathBuf) {
+        let _ = self.charts.set(dir);
+    }
+
+    /// Writes a card's chart to `<chart dir>/<prompt id>-chart.png`; returns its path.
+    async fn save_chart(&self, prompt: &str, png: &[u8]) -> Result<PathBuf, ChannelError> {
+        let dir = self.charts.get().cloned().unwrap_or_else(chart_dir);
+        tokio::fs::create_dir_all(&dir).await.map_err(io_error)?;
+        // Prompt ids are the runtime's short ids; anything else is kept out of the path.
+        let id: String = prompt
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            .collect();
+        let path = dir.join(format!("{id}-chart.png"));
+        tokio::fs::write(&path, png).await.map_err(io_error)?;
+        Ok(path)
     }
 
     /// How many `:expect` and `:expect-not` checks failed.
@@ -615,6 +645,29 @@ impl ConsoleChannel {
     }
 }
 
+/// Where chart images go by default.
+fn chart_dir() -> PathBuf {
+    std::env::temp_dir().join("okbot-console")
+}
+
+/// A card as Markdown: a bold title with the tone's emoji, then the text (as the runtime prints
+/// cards on platforms without them).
+fn card_text(card: &okbot_core::Card) -> String {
+    let mut out = String::new();
+    if let Some(title) = &card.title {
+        let emoji = card.tone.emoji();
+        let gap = if emoji.is_empty() { "" } else { " " };
+        let _ = write!(out, "**{emoji}{gap}{title}**");
+    }
+    if !card.text.trim().is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(card.text.trim_end());
+    }
+    out
+}
+
 /// Terminal text with control characters other than line breaks escaped: a reply built from web
 /// pages or tool results cannot move the cursor, set the window title or write the clipboard.
 fn printable(text: &str) -> String {
@@ -767,7 +820,25 @@ impl Channel for ConsoleChannel {
             return Err(ChannelError::Unsupported("forms"));
         }
         let id = self.next_id();
-        let mut text = prompt.text.trim_end().to_string();
+        let mut parts = Vec::new();
+        if !prompt.text.trim().is_empty() {
+            parts.push(prompt.text.trim_end().to_string());
+        }
+        for card in &prompt.cards {
+            let mut part = card_text(card);
+            // Empty bytes: a prompt read back from the store; its chart was written before.
+            if let Some(image) = card.image.as_ref().filter(|i| !i.png.is_empty()) {
+                let path = self.save_chart(&prompt.id, &image.png).await?;
+                if !part.is_empty() {
+                    part.push('\n');
+                }
+                let _ = write!(part, "[chart: {}] {}", path.display(), image.alt);
+            }
+            if !part.is_empty() {
+                parts.push(part);
+            }
+        }
+        let mut text = parts.join("\n\n");
         text.push('\n');
         for (i, b) in prompt.buttons.iter().enumerate() {
             let _ = write!(text, "\n  [{}] {}", i + 1, b.label);
@@ -780,15 +851,21 @@ impl Channel for ConsoleChannel {
                 let _ = write!(text, " (form: {})", fields.join(", "));
             }
         }
-        text.push_str("\n\n(:press <n> to answer)");
+        // Cards alone (a view without choices) cannot be answered.
+        let answerable = !prompt.buttons.is_empty();
+        if answerable {
+            text.push_str("\n\n(:press <n> to answer)");
+        }
         let tags = self.tags(&to.conversation, Some(format!("prompt {}", id.as_str())));
         self.print(&tags, &text).await?;
         let sent = SentRef {
             target: to.clone(),
             message_id: id,
         };
-        self.state().prompts.push((prompt.clone(), sent.clone()));
-        self.shown(true, &text);
+        if answerable {
+            self.state().prompts.push((prompt.clone(), sent.clone()));
+        }
+        self.shown(answerable, &text);
         Ok(sent)
     }
 

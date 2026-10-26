@@ -120,6 +120,42 @@ async fn check_agents(config: &Config, r: &mut Report) {
         ),
         Err(error) => r.add("tool policy", Status::Fail, format!("{error:#}")),
     }
+    if interactive(config) {
+        match crate::bot::agent_chain(config)
+            .map(|chain| okbot_core::AgentBackend::caps(&chain).mcp)
+        {
+            Ok(true) => r.add("interactive replies", Status::Ok, "on"),
+            Ok(false) => r.add(
+                "interactive replies",
+                Status::Warn,
+                "reply_mode = \"interactive\" needs an agent that takes MCP servers (claude or \
+                 codex); answers stay text",
+            ),
+            Err(_) => {}
+        }
+    }
+    if config.charts.images {
+        match crate::bot::charts(config) {
+            Ok(_) if interactive(config) => r.add("chart images", Status::Ok, "on"),
+            Ok(_) => r.add(
+                "chart images",
+                Status::Warn,
+                "[charts] images = true only applies to reply_mode = \"interactive\" rooms",
+            ),
+            Err(error) => r.add("chart images", Status::Fail, format!("{error:#}")),
+        }
+    }
+}
+
+/// Whether the bot, a channel or a room has `reply_mode = "interactive"` (ADR 0015).
+fn interactive(config: &Config) -> bool {
+    let on = |m: Option<okbot_core::ReplyMode>| m == Some(okbot_core::ReplyMode::Interactive);
+    on(Some(config.bot.reply_mode))
+        || config
+            .channels
+            .access()
+            .iter()
+            .any(|(_, _, a)| on(a.reply_mode) || a.rooms.iter().any(|room| on(room.reply_mode)))
 }
 
 async fn check_knowledge(config: &Config, r: &mut Report) {

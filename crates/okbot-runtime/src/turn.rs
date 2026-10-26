@@ -144,6 +144,7 @@ async fn with_extra_mcp(
         guard: None,
         not_connected: Vec::new(),
         delegated: std::sync::Arc::default(),
+        views: None,
     };
     let Some(base) = shared.gateway.url().map(str::to_string) else {
         return out;
@@ -173,9 +174,11 @@ async fn with_extra_mcp(
     }
     // An automation's turn never delegates: its data is untrusted (ADR 0013).
     let team = !restricted && crate::team::offered(shared, &who).await;
-    if servers.is_empty() && !team {
+    let ui = crate::ui::enabled(shared, event, restricted);
+    if servers.is_empty() && !team && !ui {
         return out;
     }
+    let views = ui.then(crate::ui::Shown::default);
     let (token, guard) = shared.gateway.issue(crate::gateway::Grant {
         event: event.clone(),
         run_id,
@@ -188,7 +191,17 @@ async fn with_extra_mcp(
         restricted,
         team,
         delegated: out.delegated.clone(),
+        ui: views.clone(),
     });
+    out.views = views;
+    if out.views.is_some() {
+        out.servers.push(okbot_core::McpServer {
+            name: crate::ui::SERVER.into(),
+            url: format!("{base}/mcp/{}", crate::ui::SERVER),
+            bearer_token_env: crate::ui::TOKEN_ENV.into(),
+        });
+        out.env.push((crate::ui::TOKEN_ENV.into(), token.clone()));
+    }
     if team {
         out.servers.push(okbot_core::McpServer {
             name: crate::team::SERVER.into(),
@@ -220,6 +233,8 @@ struct TurnMcp {
     not_connected: Vec<String>,
     /// Tokens used by tasks this turn delegated (ADR 0014).
     delegated: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Views the agent asked to show, when the room is interactive (ADR 0015).
+    views: Option<crate::ui::Shown>,
 }
 
 /// The requester used up `[limits]` (administrators never do). A store error lets the turn run.
@@ -320,6 +335,7 @@ async fn answer_batch(
         personal: requester.personal,
         not_connected: &mcp.not_connected,
         peer: peer_note.as_deref(),
+        interactive: mcp.views.is_some(),
     };
     let prompt = context::build(&input);
     // An automation turn starts afresh and leaves no session behind, so its data never reaches
@@ -330,18 +346,7 @@ async fn answer_batch(
         resume_for(shared, event, &input, new_count).await
     };
 
-    let (progress, live) = match &typing.1 {
-        Some(placeholder) => {
-            let (progress, live) = crate::live::Live::start(
-                channel.clone(),
-                shared.renderer.clone(),
-                placeholder.clone(),
-                shared.config.progress_interval,
-            );
-            (Some(progress), Some(live))
-        }
-        None => (crate::team::progress_fn(shared, event), None),
-    };
+    let (progress, live) = progress(shared, event, channel, typing.1.as_ref());
     let turn = AgentTurn {
         system: prompt.system,
         prompt: prompt.prompt,
@@ -360,6 +365,7 @@ async fn answer_batch(
     };
     drop(grant);
     drop(mcp.guard);
+    let views = crate::ui::take(mcp.views);
     let delegated = mcp.delegated.load(std::sync::atomic::Ordering::Relaxed);
     drop(live);
     if let Some(Ok(answer)) = &outcome {
@@ -378,7 +384,38 @@ async fn answer_batch(
         started_at: now,
         person: Some(person),
     };
-    finish(shared, event, outcome, record, typing.1.as_ref(), delegated).await;
+    finish(
+        shared,
+        event,
+        outcome,
+        record,
+        typing.1.as_ref(),
+        delegated,
+        &views,
+    )
+    .await;
+}
+
+/// Progress of the turn: shown in the "thinking…" message when there is one, else passed to
+/// the bot that gave the task (ADR 0014).
+fn progress(
+    shared: &Shared,
+    event: &InboundEvent,
+    channel: &std::sync::Arc<dyn okbot_core::Channel>,
+    placeholder: Option<&SentRef>,
+) -> (Option<okbot_core::ProgressFn>, Option<crate::live::Live>) {
+    match placeholder {
+        Some(placeholder) => {
+            let (progress, live) = crate::live::Live::start(
+                channel.clone(),
+                shared.renderer.clone(),
+                placeholder.clone(),
+                shared.config.progress_interval,
+            );
+            (Some(progress), Some(live))
+        }
+        None => (crate::team::progress_fn(shared, event), None),
+    }
 }
 
 /// The room's tool policy. An automation's data is untrusted: no web, so nothing can be sent
@@ -572,6 +609,7 @@ async fn finish(
     mut record: AgentRunRecord,
     placeholder: Option<&SentRef>,
     delegated: u64,
+    views: &[crate::ui::View],
 ) {
     let kind = match &outcome {
         None => crate::metrics::Outcome::Cancelled,
@@ -604,12 +642,19 @@ async fn finish(
             let tokens = record.usage.as_ref().map_or(0, |u| u.input + u.output) + delegated;
             crate::team::report_usage(shared, event, tokens).await;
             if reply_over(shared, event, &answer.text, placeholder).await {
+                crate::ui::send(shared, event, views).await;
+                // The history keeps what was shown as text, so later turns know the choices.
+                let mut text = answer.text;
+                for view in views {
+                    text.push_str("\n\n");
+                    text.push_str(&view.markdown());
+                }
                 let message = NewMessage {
                     conversation: event.conversation.clone(),
                     role: MessageRole::Bot,
                     author_id: None,
                     author_name: shared.config.bot_name.clone(),
-                    text: answer.text,
+                    text,
                     message_id: None,
                     at: shared.clock.now(),
                 };

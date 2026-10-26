@@ -19,7 +19,7 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-default = ["zalo", "gchat", "discord", "slack", "telegram", "bridge", "line-editing"]
+default = ["zalo", "gchat", "discord", "slack", "telegram", "bridge", "line-editing", "charts-ja"]
 ## Zalo Bot Platform channel.
 zalo = ["dep:okbot-channel-zalo"]
 ## Google Chat channel.
@@ -34,12 +34,15 @@ telegram = ["dep:okbot-channel-telegram"]
 bridge = ["dep:okbot-channel-bridge"]
 ## History and arrow keys in `okbot chat` (Unix).
 line-editing = ["okbot-channel-console/line-editing"]
+## The Japanese font for chart images (about 600 KB; without it Japanese charts stay text).
+charts-ja = ["okbot-chart/ja"]
 
 [dependencies]
 okbot-core.workspace = true
 rustls.workspace = true
 okbot-agent.workspace = true
 okbot-render.workspace = true
+okbot-chart.workspace = true
 okbot-runtime.workspace = true
 okbot-knowledge.workspace = true
 okbot-store.workspace = true

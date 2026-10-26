@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use okbot_core::ToolPolicy;
+use okbot_core::{ReplyMode, ToolPolicy};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -15,6 +15,8 @@ pub(crate) struct File {
     pub(crate) agent: AgentSection,
     #[serde(default)]
     pub(crate) http: HttpSection,
+    #[serde(default)]
+    pub(crate) charts: ChartsSection,
     #[serde(default)]
     pub(crate) channels: ChannelsSection,
     #[serde(default)]
@@ -550,6 +552,10 @@ pub struct BotSection {
     /// Chat history older than this is deleted.
     #[serde(default = "default_retention")]
     pub retention_days: u32,
+    /// `text` (default) or `interactive`: cards, buttons, menus and forms from the agent
+    /// (ADR 0015). Channels and rooms may override it.
+    #[serde(default)]
+    pub reply_mode: ReplyMode,
 }
 
 fn default_kb() -> PathBuf {
@@ -651,6 +657,20 @@ pub struct HttpSection {
     pub public_url: Option<String>,
 }
 
+/// `[charts]`: charts in interactive replies drawn as pictures (ADR 0016).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChartsSection {
+    /// Draw the charts of `show` cards as PNG images on platforms that show them. Off by default:
+    /// charts are text bars.
+    #[serde(default)]
+    pub images: bool,
+    /// Extra TrueType or OpenType fonts for characters the embedded ones lack (Chinese, Korean),
+    /// tried in order; relative to the bot directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fonts: Vec<PathBuf>,
+}
+
 /// `[channels.<platform>.<instance>]`.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -698,6 +718,7 @@ impl ChannelsSection {
                     allow_users: &z.allow_users,
                     blocked_users: &z.blocked_users,
                     rooms: &z.rooms,
+                    reply_mode: z.reply_mode,
                 },
             ));
         }
@@ -710,6 +731,7 @@ impl ChannelsSection {
                     allow_users: &g.allow_users,
                     blocked_users: &g.blocked_users,
                     rooms: &g.rooms,
+                    reply_mode: g.reply_mode,
                 },
             ));
         }
@@ -738,6 +760,7 @@ macro_rules! access {
                     allow_users: &self.allow_users,
                     blocked_users: &self.blocked_users,
                     rooms: &self.rooms,
+                    reply_mode: self.reply_mode,
                 }
             }
         }
@@ -765,6 +788,9 @@ pub struct DiscordSection {
     /// Per-channel settings (`room` is the Discord channel id).
     #[serde(default)]
     pub rooms: Vec<RoomSection>,
+    /// Reply mode for this channel, over `[bot] reply_mode` (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 /// `[channels.slack.<instance>]`.
@@ -787,6 +813,9 @@ pub struct SlackSection {
     /// Per-channel settings (`room` is the Slack channel id).
     #[serde(default)]
     pub rooms: Vec<RoomSection>,
+    /// Reply mode for this channel, over `[bot] reply_mode` (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 /// `[channels.bridge.<instance>]`: an adapter process speaking the bridge protocol.
@@ -834,6 +863,9 @@ pub struct BridgeSection {
     /// Per-room settings.
     #[serde(default)]
     pub rooms: Vec<RoomSection>,
+    /// Reply mode for this channel, over `[bot] reply_mode` (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 fn default_bridge_len() -> usize {
@@ -860,6 +892,8 @@ pub struct ChannelAccess<'a> {
     pub blocked_users: &'a [String],
     /// Per-room settings.
     pub rooms: &'a [RoomSection],
+    /// Reply mode override.
+    pub reply_mode: Option<ReplyMode>,
 }
 
 /// How Google Chat delivers events.
@@ -903,6 +937,9 @@ pub struct GChatSection {
     /// Per-space settings (`room` is the space name, `spaces/…`).
     #[serde(default)]
     pub rooms: Vec<RoomSection>,
+    /// Reply mode for this channel, over `[bot] reply_mode` (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 /// How a channel receives events.
@@ -955,6 +992,9 @@ pub struct ZaloSection {
     /// Per-room settings.
     #[serde(default)]
     pub rooms: Vec<RoomSection>,
+    /// Reply mode for this channel, over `[bot] reply_mode` (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 /// `[channels.telegram.<instance>]`.
@@ -984,6 +1024,9 @@ pub struct TelegramSection {
     /// Per-chat settings (`room` is the chat id, negative for groups).
     #[serde(default)]
     pub rooms: Vec<RoomSection>,
+    /// Reply mode for this channel, over `[bot] reply_mode` (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 fn default_reply_on() -> Vec<ReplyOn> {
@@ -1006,6 +1049,9 @@ pub struct RoomSection {
     /// a family group). Off by default: everyone in a group reads the answers.
     #[serde(default)]
     pub personal: bool,
+    /// Reply mode for this room, over the channel's and the bot's (ADR 0015).
+    #[serde(default)]
+    pub reply_mode: Option<ReplyMode>,
 }
 
 fn default_true() -> bool {
