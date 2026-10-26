@@ -64,15 +64,19 @@ impl InboundSink for FakeRuntime {
                                 label: "Allow".into(),
                                 style: okbot_core::ButtonStyle::Success,
                                 form: None,
+                                url: None,
                             },
                             PromptButton {
                                 id: "deny".into(),
                                 label: "Deny".into(),
                                 style: okbot_core::ButtonStyle::Danger,
                                 form: None,
+                                url: None,
                             },
                         ],
                         allowed: vec![event.author.id.clone()],
+                        cards: Vec::new(),
+                        select: None,
                     };
                     channel.prompt(&to, &prompt).await.unwrap();
                 });

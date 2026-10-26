@@ -80,6 +80,12 @@ pub trait InboundSink: Send + Sync {
     async fn answer(&self, _answer: PromptAnswer) -> Result<(), SinkClosed> {
         Ok(())
     }
+
+    /// A prompt the runtime still waits on, for channels that no longer hold it (they restarted
+    /// since showing it). Interactive replies (ADR 0015) outlive restarts; other prompts do not.
+    async fn prompt(&self, _id: &str) -> Option<Prompt> {
+        None
+    }
 }
 
 /// A chat platform adapter (design §3.2).
@@ -137,6 +143,30 @@ pub trait Channel: Send + Sync {
         _keep_buttons: bool,
     ) -> Result<(), ChannelError> {
         Err(ChannelError::Unsupported("prompt"))
+    }
+
+    /// Replaces a prompt's message with `prompt`: its text, its cards and whatever can still be
+    /// answered (often nothing). Needed for prompts with cards, which [`Channel::close_prompt`]
+    /// cannot rebuild without the channel's memory of them. Channels without cards keep the
+    /// default, which closes the prompt with its text and cards as one message.
+    async fn update_prompt(&self, sent: &SentRef, prompt: &Prompt) -> Result<(), ChannelError> {
+        let mut text = prompt.text.clone();
+        for card in &prompt.cards {
+            for part in [
+                card.title.as_deref().unwrap_or_default(),
+                card.text.as_str(),
+            ] {
+                if !part.trim().is_empty() {
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
+                    }
+                    text.push_str(part);
+                }
+            }
+        }
+        let keep = prompt.is_answerable();
+        self.close_prompt(sent, &RenderedMessage { text }, keep)
+            .await
     }
 
     /// The direct chat with `user`, opened if needed, for messages the bot starts (notifications)

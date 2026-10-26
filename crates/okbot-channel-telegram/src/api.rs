@@ -51,6 +51,14 @@ impl TelegramError {
         matches!(self, Self::Api { code: 400, description, .. } if description.contains("can't parse entities"))
     }
 
+    /// An edit of the wrong kind: `editMessageText` on a photo ("there is no text in the message
+    /// to edit") or `editMessageCaption` on a text message ("there is no caption ...").
+    pub(crate) fn is_wrong_edit_kind(&self) -> bool {
+        matches!(self, Self::Api { code: 400, description, .. }
+            if description.contains("no text in the message")
+                || description.contains("no caption in the message"))
+    }
+
     /// An edit with the same text as before.
     pub(crate) fn is_not_modified(&self) -> bool {
         matches!(self, Self::Api { code: 400, description, .. } if description.contains("message is not modified"))
@@ -142,6 +150,40 @@ impl std::fmt::Debug for TelegramApi {
     }
 }
 
+/// A picture to upload.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Photo<'a> {
+    /// The file name (`chart.png`).
+    pub(crate) name: &'a str,
+    /// PNG data.
+    pub(crate) png: &'a [u8],
+}
+
+/// The fields that address a message to `to`: chat, forum topic and the quoted message.
+fn destination_fields(to: Destination<'_>) -> serde_json::Map<String, Value> {
+    let mut fields = serde_json::Map::new();
+    fields.insert("chat_id".into(), chat_id(to.chat_id));
+    if let Some(thread) = to.thread.and_then(|t| t.parse::<i64>().ok()) {
+        fields.insert("message_thread_id".into(), json!(thread));
+    }
+    if let Some(id) = to.reply_to.and_then(|m| m.parse::<i64>().ok()) {
+        fields.insert(
+            "reply_parameters".into(),
+            json!({ "message_id": id, "allow_sending_without_reply": true }),
+        );
+    }
+    fields
+}
+
+/// A message id as the number the API takes.
+fn message_id_number(message_id: &str) -> Result<i64, TelegramError> {
+    message_id.parse::<i64>().map_err(|_| TelegramError::Api {
+        code: 400,
+        description: format!("not a Telegram message id: {message_id}"),
+        retry_after: None,
+    })
+}
+
 /// Chat ids are integers; okbot keeps them as text. Numbers are sent as numbers.
 fn chat_id(id: &str) -> Value {
     id.parse::<i64>().map_or_else(|_| json!(id), |n| json!(n))
@@ -159,18 +201,41 @@ impl TelegramApi {
         }
     }
 
+    fn url(&self, method: &str) -> String {
+        format!("{}/bot{}/{method}", self.base, self.token.expose())
+    }
+
     async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
         body: &Value,
         timeout: Duration,
     ) -> Result<T, TelegramError> {
-        let url = format!("{}/bot{}/{method}", self.base, self.token.expose());
-        let answer: Answer = self
+        let request = self.http.post(self.url(method)).timeout(timeout).json(body);
+        Self::answer(method, request).await
+    }
+
+    /// A call with a `multipart/form-data` body (file uploads).
+    async fn call_multipart<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        form: reqwest::multipart::Form,
+        timeout: Duration,
+    ) -> Result<T, TelegramError> {
+        let request = self
             .http
-            .post(url)
+            .post(self.url(method))
             .timeout(timeout)
-            .json(body)
+            .multipart(form);
+        Self::answer(method, request).await
+    }
+
+    /// Sends `request` and reads Telegram's answer. Errors never carry the URL (it holds the token).
+    async fn answer<T: DeserializeOwned>(
+        method: &str,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, TelegramError> {
+        let answer: Answer = request
             .send()
             .await
             .map_err(|e| TelegramError::Transport(e.without_url().to_string()))?
@@ -189,6 +254,8 @@ impl TelegramApi {
     }
 
     const SHORT: Duration = Duration::from_secs(20);
+    /// For uploads.
+    const UPLOAD: Duration = Duration::from_secs(60);
 
     /// `getMe` (checks the token).
     pub async fn get_me(&self) -> Result<Me, TelegramError> {
@@ -264,26 +331,79 @@ impl TelegramApi {
         html: bool,
         markup: Option<&Value>,
     ) -> Result<i64, TelegramError> {
-        let mut body = json!({
-            "chat_id": chat_id(to.chat_id),
-            "text": text,
-            "link_preview_options": { "is_disabled": true },
-        });
+        let mut body = Value::Object(destination_fields(to));
+        body["text"] = json!(text);
+        body["link_preview_options"] = json!({ "is_disabled": true });
         if html {
             body["parse_mode"] = json!("HTML");
-        }
-        if let Some(thread) = to.thread.and_then(|t| t.parse::<i64>().ok()) {
-            body["message_thread_id"] = json!(thread);
-        }
-        if let Some(id) = to.reply_to.and_then(|m| m.parse::<i64>().ok()) {
-            body["reply_parameters"] =
-                json!({ "message_id": id, "allow_sending_without_reply": true });
         }
         if let Some(markup) = markup {
             body["reply_markup"] = markup.clone();
         }
         let sent: Sent = self.call("sendMessage", &body, Self::SHORT).await?;
         Ok(sent.message_id)
+    }
+
+    /// `sendPhoto` with the picture uploaded as multipart (`photo`, a PNG named `name`), an
+    /// optional `caption` (`html` selects `parse_mode = "HTML"`) and `markup` buttons. Returns the
+    /// message id.
+    pub(crate) async fn send_photo(
+        &self,
+        to: Destination<'_>,
+        photo: Photo<'_>,
+        caption: Option<&str>,
+        html: bool,
+        markup: Option<&Value>,
+    ) -> Result<i64, TelegramError> {
+        let part = reqwest::multipart::Part::bytes(photo.png.to_vec())
+            .file_name(photo.name.to_string())
+            .mime_str("image/png")
+            .map_err(|e| TelegramError::Transport(e.without_url().to_string()))?;
+        let mut form = reqwest::multipart::Form::new().part("photo", part);
+        for (key, value) in destination_fields(to) {
+            // Multipart fields are text: numbers as digits, objects as JSON.
+            let value = match value {
+                Value::String(s) => s,
+                other => other.to_string(),
+            };
+            form = form.text(key, value);
+        }
+        if let Some(caption) = caption {
+            form = form.text("caption", caption.to_string());
+            if html {
+                form = form.text("parse_mode", "HTML");
+            }
+        }
+        if let Some(markup) = markup {
+            form = form.text("reply_markup", markup.to_string());
+        }
+        let sent: Sent = self.call_multipart("sendPhoto", form, Self::UPLOAD).await?;
+        Ok(sent.message_id)
+    }
+
+    /// `editMessageCaption` of a photo message; `markup` as in [`Self::edit_message`].
+    pub(crate) async fn edit_caption(
+        &self,
+        chat: &str,
+        message_id: &str,
+        caption: &str,
+        html: bool,
+        markup: Option<&Value>,
+    ) -> Result<(), TelegramError> {
+        let mut body = json!({
+            "chat_id": chat_id(chat),
+            "message_id": message_id_number(message_id)?,
+            "caption": caption,
+        });
+        if html {
+            body["parse_mode"] = json!("HTML");
+        }
+        if let Some(markup) = markup {
+            body["reply_markup"] = markup.clone();
+        }
+        self.call::<Value>("editMessageCaption", &body, Self::SHORT)
+            .await
+            .map(drop)
     }
 
     /// `editMessageText`; `markup` replaces the buttons (an empty keyboard removes them, `None`
@@ -296,14 +416,9 @@ impl TelegramApi {
         html: bool,
         markup: Option<&Value>,
     ) -> Result<(), TelegramError> {
-        let id = message_id.parse::<i64>().map_err(|_| TelegramError::Api {
-            code: 400,
-            description: format!("not a Telegram message id: {message_id}"),
-            retry_after: None,
-        })?;
         let mut body = json!({
             "chat_id": chat_id(chat),
-            "message_id": id,
+            "message_id": message_id_number(message_id)?,
             "text": text,
             "link_preview_options": { "is_disabled": true },
         });

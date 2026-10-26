@@ -150,6 +150,7 @@ impl ZaloChannel {
                 threads: false,
                 edit: false,
                 typing: true,
+                ui: okbot_core::UiCaps::default(),
             },
             delivery: config.delivery,
         }

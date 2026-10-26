@@ -11,7 +11,9 @@
 //!   runtime shows "typing…" and sends the final answer;
 //! - in groups, privacy mode (on by default) delivers only commands, replies to the bot and
 //!   mentions; turn it off in @BotFather for `reply_on = ["all"]`;
-//! - forum topics are threads (`message_thread_id`).
+//! - forum topics are threads (`message_thread_id`);
+//! - there is no card widget: cards are bold-titled blocks of text, and a card's chart (ADR 0016)
+//!   is a photo (`sendPhoto`) with the text as its caption and the buttons under it.
 
 pub mod api;
 mod event;
@@ -130,29 +132,13 @@ impl Shared {
     }
 
     /// A button press: checked against the prompt's allowed people, then handed to the runtime.
+    /// A prompt this process does not hold (it restarted since showing it) is asked of the sink.
     async fn pressed(&self, query: &event::CallbackQuery, sink: &dyn InboundSink) -> bool {
         let user = query.user();
-        let found = query
-            .data
-            .as_deref()
-            .and_then(prompt::parse)
-            .and_then(|(id, button)| {
-                let prompts = lock(&self.prompts);
-                let open = prompts.get(id)?;
-                let same_message = query
-                    .message
-                    .as_ref()
-                    .is_none_or(|m| m.message_id == open.message_id);
-                same_message.then(|| {
-                    (
-                        id.to_string(),
-                        button.to_string(),
-                        open.allowed.is_empty() || open.allowed.contains(&user.id),
-                        open.target.clone(),
-                        open.message_id,
-                    )
-                })
-            });
+        let found = match query.data.as_deref().and_then(prompt::parse) {
+            Some((id, button)) => self.open_for(query, id, button, &user.id, sink).await,
+            None => None,
+        };
         let Some((prompt, button, allowed, target, message_id)) = found else {
             // An old or foreign button: stop its spinner.
             let _ = self
@@ -183,6 +169,51 @@ impl Shared {
             },
         };
         sink.answer(answer).await.is_ok()
+    }
+
+    /// The open prompt `id` a press of `button` answers, from memory or else from the sink:
+    /// `(prompt, button, may answer, where, message id)`.
+    async fn open_for(
+        &self,
+        query: &event::CallbackQuery,
+        id: &str,
+        button: &str,
+        user: &UserId,
+        sink: &dyn InboundSink,
+    ) -> Option<(String, String, bool, ReplyTarget, i64)> {
+        let check = |open: &prompt::Open| {
+            let same_message = query
+                .message
+                .as_ref()
+                .is_none_or(|m| m.message_id == open.message_id);
+            (same_message && open.answers.iter().any(|a| a == button)).then(|| {
+                (
+                    id.to_string(),
+                    button.to_string(),
+                    open.allowed.is_empty() || open.allowed.contains(user),
+                    open.target.clone(),
+                    open.message_id,
+                )
+            })
+        };
+        if let Some(open) = lock(&self.prompts).get(id) {
+            return check(open);
+        }
+        // Recovering needs the message and its chat, which very old messages no longer carry.
+        let message = query.message.as_ref()?;
+        let conversation = message.conversation(&self.id)?;
+        let prompt = sink.prompt(id).await?;
+        if !prompt.is_answerable() {
+            return None;
+        }
+        let target = ReplyTarget {
+            conversation,
+            in_reply_to: None,
+        };
+        let open = prompt::Open::new(&prompt, target, message.message_id);
+        let found = check(&open);
+        lock(&self.prompts).insert(id.to_string(), open);
+        found
     }
 
     /// Turns a file id into an attachment with a download URL; `None` when Telegram refuses.
@@ -256,6 +287,40 @@ fn html_to_plain(html: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// Where a message to `to` goes.
+fn destination(to: &ReplyTarget) -> api::Destination<'_> {
+    let conversation = &to.conversation;
+    api::Destination {
+        chat_id: &conversation.room,
+        thread: conversation.thread.as_deref(),
+        // Quote the question in groups, where several people talk; not in direct chats.
+        reply_to: to
+            .in_reply_to
+            .as_ref()
+            .filter(|_| conversation.room.starts_with('-'))
+            .map(MessageId::as_str),
+    }
+}
+
+/// Plain text cut to fit a caption, with an ellipsis when cut.
+fn short_caption(plain: &str) -> String {
+    if prompt::fits_caption(plain) {
+        return plain.to_string();
+    }
+    let mut out = String::new();
+    let mut units = 0;
+    for c in plain.chars() {
+        // Room for the ellipsis (one unit).
+        if units + c.len_utf16() > 1023 {
+            break;
+        }
+        units += c.len_utf16();
+        out.push(c);
+    }
+    out.push('…');
+    out
+}
+
 /// Compares secrets without an early exit on the first differing byte.
 fn same_secret(presented: &[u8], expected: &[u8]) -> bool {
     use sha2::{Digest as _, Sha256};
@@ -284,6 +349,16 @@ impl TelegramChannel {
                 threads: true,
                 edit: true,
                 typing: true,
+                // Inline keyboards hold buttons, links and a menu (a row per option); there are
+                // no forms. Cards are drawn here as text blocks, so that a chart can go with them
+                // as a photo.
+                ui: okbot_core::UiCaps {
+                    buttons: true,
+                    select: true,
+                    forms: false,
+                    cards: true,
+                    images: true,
+                },
             },
             delivery: config.delivery,
         }
@@ -357,17 +432,7 @@ impl TelegramChannel {
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> Result<i64, TelegramError> {
-        let conversation = &to.conversation;
-        let destination = api::Destination {
-            chat_id: &conversation.room,
-            thread: conversation.thread.as_deref(),
-            // Quote the question in groups, where several people talk; not in direct chats.
-            reply_to: to
-                .in_reply_to
-                .as_ref()
-                .filter(|_| conversation.room.starts_with('-'))
-                .map(MessageId::as_str),
-        };
+        let destination = destination(to);
         let api = &self.shared.api;
         match api.send_message(destination, text, true, markup).await {
             Err(error) if error.is_parse_error() => {
@@ -379,25 +444,120 @@ impl TelegramChannel {
         }
     }
 
+    /// `sendPhoto` of `image` with an HTML `caption` (plain text when Telegram cannot parse it).
+    async fn send_photo(
+        &self,
+        to: &ReplyTarget,
+        image: &okbot_core::Image,
+        caption: Option<&str>,
+        markup: Option<&serde_json::Value>,
+    ) -> Result<i64, TelegramError> {
+        let destination = destination(to);
+        let photo = api::Photo {
+            name: if image.name.is_empty() {
+                "chart.png"
+            } else {
+                &image.name
+            },
+            png: &image.png,
+        };
+        let api = &self.shared.api;
+        match api
+            .send_photo(destination, photo, caption, true, markup)
+            .await
+        {
+            Err(error) if error.is_parse_error() => {
+                tracing::warn!(channel = %self.shared.id, %error, "HTML caption rejected; sending plain text");
+                let plain = caption.map(html_to_plain);
+                api.send_photo(destination, photo, plain.as_deref(), false, markup)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    /// Replaces the text of a message the bot sent, or its caption when it is a photo.
+    ///
+    /// The channel does not remember which kind a message is (it works after a restart), so it
+    /// tries the likelier edit first (`caption_first` for a prompt with a chart whose text fits a
+    /// caption) and, when Telegram answers that the message has no text (or no caption) to edit,
+    /// the other. A text too long for a caption becomes a shortened plain caption.
     async fn edit_text(
         &self,
         sent: &SentRef,
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> Result<(), ChannelError> {
+        self.edit_any(sent, text, markup, false).await
+    }
+
+    async fn edit_any(
+        &self,
+        sent: &SentRef,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+        caption_first: bool,
+    ) -> Result<(), ChannelError> {
+        let result = if caption_first {
+            match self.edit_caption_once(sent, text, markup).await {
+                Err(error) if error.is_wrong_edit_kind() => {
+                    self.edit_text_once(sent, text, markup).await
+                }
+                other => other,
+            }
+        } else {
+            match self.edit_text_once(sent, text, markup).await {
+                Err(error) if error.is_wrong_edit_kind() => {
+                    self.edit_caption_once(sent, text, markup).await
+                }
+                other => other,
+            }
+        };
+        match result {
+            Err(error) if error.is_not_modified() => Ok(()),
+            other => other.map_err(channel_error),
+        }
+    }
+
+    /// `editMessageText`, in plain text when Telegram cannot parse the HTML.
+    async fn edit_text_once(
+        &self,
+        sent: &SentRef,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> Result<(), TelegramError> {
         let api = &self.shared.api;
         let chat = &sent.target.conversation.room;
         let id = sent.message_id.as_str();
-        let result = match api.edit_message(chat, id, text, true, markup).await {
+        match api.edit_message(chat, id, text, true, markup).await {
             Err(error) if error.is_parse_error() => {
                 api.edit_message(chat, id, &html_to_plain(text), false, markup)
                     .await
             }
             other => other,
-        };
-        match result {
-            Err(error) if error.is_not_modified() => Ok(()),
-            other => other.map_err(channel_error),
+        }
+    }
+
+    /// `editMessageCaption`, in plain text when Telegram cannot parse the HTML or it is too long.
+    async fn edit_caption_once(
+        &self,
+        sent: &SentRef,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> Result<(), TelegramError> {
+        let api = &self.shared.api;
+        let chat = &sent.target.conversation.room;
+        let id = sent.message_id.as_str();
+        if !prompt::fits_caption(text) {
+            let short = short_caption(&html_to_plain(text));
+            return api.edit_caption(chat, id, &short, false, markup).await;
+        }
+        match api.edit_caption(chat, id, text, true, markup).await {
+            Err(error) if error.is_parse_error() => {
+                let short = short_caption(&html_to_plain(text));
+                api.edit_caption(chat, id, &short, false, markup).await
+            }
+            other => other,
         }
     }
 }
@@ -527,24 +687,55 @@ impl Channel for TelegramChannel {
         if prompt.buttons.iter().any(|b| b.form.is_some()) {
             return Err(ChannelError::Unsupported("forms"));
         }
+        let open = |id| prompt::Open::new(prompt, to.clone(), id);
         let markup = prompt::markup(prompt);
-        let id = self
-            .send_text(to, &prompt.text, Some(&markup))
-            .await
-            .map_err(channel_error)?;
-        lock(&self.shared.prompts).insert(
-            prompt.id.clone(),
-            prompt::Open {
-                allowed: prompt.allowed.clone(),
-                markup,
-                target: to.clone(),
-                message_id: id,
-            },
-        );
+        let text = prompt::text(prompt);
+        let id = match prompt::image(prompt) {
+            // One message: the chart, the text as its caption and the buttons.
+            Some((_, image)) if !image.png.is_empty() && prompt::fits_caption(&text) => {
+                self.send_photo(to, image, Some(&text), Some(&markup)).await
+            }
+            // Too long for a caption: the chart (captioned with the card's title), then the text
+            // with the buttons. A failed photo is an error: the runtime then sends text only.
+            Some((card, image)) if !image.png.is_empty() => {
+                let title = prompt::heading(card).filter(|t| prompt::fits_caption(t));
+                self.send_photo(to, image, title.as_deref(), None)
+                    .await
+                    .map_err(channel_error)?;
+                self.send_text(to, &text, Some(&markup)).await
+            }
+            _ => self.send_text(to, &text, Some(&markup)).await,
+        }
+        .map_err(channel_error)?;
+        lock(&self.shared.prompts).insert(prompt.id.clone(), open(id));
         Ok(SentRef {
             target: to.clone(),
             message_id: MessageId::new(id.to_string()),
         })
+    }
+
+    /// Rebuilds the message from `prompt` alone (it works after a restart): its text and a
+    /// keyboard of what is left in it, none when nothing is. A prompt with a chart may sit on a
+    /// photo: when its text fits a caption, the caption is edited first and the photo stays; the
+    /// text is edited instead when Telegram answers that the message has no caption (the text
+    /// went in a message of its own).
+    async fn update_prompt(&self, sent: &SentRef, prompt: &Prompt) -> Result<(), ChannelError> {
+        let markup = prompt::markup(prompt);
+        let text = prompt::text(prompt);
+        let caption_first = prompt::image(prompt).is_some() && prompt::fits_caption(&text);
+        self.edit_any(sent, &text, Some(&markup), caption_first)
+            .await?;
+        let mut prompts = lock(&self.shared.prompts);
+        match sent.message_id.as_str().parse::<i64>() {
+            Ok(message_id) if prompt.is_answerable() => {
+                let open = prompt::Open::new(prompt, sent.target.clone(), message_id);
+                prompts.insert(prompt.id.clone(), open);
+            }
+            _ => {
+                prompts.remove(&prompt.id);
+            }
+        }
+        Ok(())
     }
 
     async fn close_prompt(
@@ -641,6 +832,16 @@ mod tests {
         assert_eq!(c.caps().dialect, MarkdownDialect::TelegramHtml);
         assert!(c.caps().typing && c.caps().edit);
         assert!(c.webhook().is_none());
+        let ui = c.caps().ui;
+        assert!(ui.cards && ui.images && !ui.forms);
+    }
+
+    #[test]
+    fn long_captions_are_cut() {
+        assert_eq!(short_caption("short"), "short");
+        let cut = short_caption(&"ab".repeat(600));
+        assert_eq!(cut.encode_utf16().count(), 1024);
+        assert!(cut.ends_with('…'));
     }
 
     #[test]

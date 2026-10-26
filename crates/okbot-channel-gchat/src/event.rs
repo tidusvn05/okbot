@@ -2,8 +2,10 @@
 //! (`{"type": "MESSAGE", "message": …}`) and the Workspace add-on format
 //! (`{"chat": {"messagePayload": …}}`) are accepted.
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
-use okbot_core::{ChannelId, ConversationKey, InboundEvent, MessageId, UserId, UserRef};
+use okbot_core::{ChannelId, ConversationKey, InboundEvent, MessageId, Secret, UserId, UserRef};
 use serde_json::Value;
 
 /// `(message, space)` of a message event, or `None` for other events.
@@ -33,9 +35,7 @@ pub(crate) fn to_inbound(
     let space_name = space["name"]
         .as_str()
         .or_else(|| message["space"]["name"].as_str())?;
-    let direct = matches!(space["spaceType"].as_str(), Some("DIRECT_MESSAGE"))
-        || matches!(space["type"].as_str(), Some("DM"))
-        || space["singleUserBotDm"].as_bool() == Some(true);
+    let direct = is_direct(space);
     let sender = &message["sender"];
     let user = sender["name"].as_str().unwrap_or("users/unknown");
     // `argumentText` is the text without the app's @mention.
@@ -79,56 +79,149 @@ pub(crate) fn to_inbound(
     })
 }
 
-/// A press of one of okbot's card buttons.
+/// Where a clicked prompt is: its message and conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Click {
-    pub(crate) prompt: String,
-    pub(crate) button: String,
-    pub(crate) user: UserRef,
+pub(crate) struct Place {
+    /// The message name.
+    pub(crate) message: String,
+    /// The space name.
+    pub(crate) room: String,
+    /// The thread, outside direct messages.
+    pub(crate) thread: Option<String>,
 }
 
-/// A card click (`CARD_CLICKED`, or an add-on `buttonClickedPayload`) on an okbot prompt button.
+/// A press of one of okbot's card buttons, a pick in a prompt's menu or a submitted dialog.
+#[derive(Debug, Clone)]
+pub(crate) struct Click {
+    pub(crate) prompt: String,
+    /// The button pressed or the option picked; `None` when the menu went back to its
+    /// placeholder.
+    pub(crate) button: Option<String>,
+    /// A dialog's submit button: [`Click::inputs`] are the form's values.
+    pub(crate) submit: bool,
+    /// Text inputs of a dialog, by widget name.
+    pub(crate) inputs: BTreeMap<String, Secret<String>>,
+    pub(crate) user: UserRef,
+    /// The event came in the Workspace add-on format (its synchronous answers differ).
+    pub(crate) add_on: bool,
+    /// Where the prompt is, when the event says.
+    pub(crate) place: Option<Place>,
+}
+
+fn is_direct(space: &Value) -> bool {
+    matches!(space["spaceType"].as_str(), Some("DIRECT_MESSAGE"))
+        || matches!(space["type"].as_str(), Some("DM"))
+        || space["singleUserBotDm"].as_bool() == Some(true)
+}
+
+/// The first string value of each form input (`{"name": {"stringInputs": {"value": [..]}}}`).
+fn inputs(form: Option<&Value>) -> BTreeMap<String, Secret<String>> {
+    form.and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, input)| {
+            let value = input.pointer("/stringInputs/value/0")?.as_str()?;
+            Some((name.clone(), Secret::new(value.to_string())))
+        })
+        .collect()
+}
+
+/// A dialog was closed without submitting (`CANCEL_DIALOG`): `Some(add_on)`.
+pub(crate) fn dialog_cancelled(event: &Value) -> Option<bool> {
+    if let Some(payload) = event.pointer("/chat/buttonClickedPayload") {
+        return (payload["dialogEventType"].as_str() == Some("CANCEL_DIALOG")).then_some(true);
+    }
+    (event["dialogEventType"].as_str() == Some("CANCEL_DIALOG")).then_some(false)
+}
+
+/// A card click (`CARD_CLICKED`, or an add-on `buttonClickedPayload`) on an okbot prompt.
 pub(crate) fn to_click(event: &Value) -> Option<Click> {
-    let (function, parameters, user) =
-        if let Some(payload) = event.pointer("/chat/buttonClickedPayload") {
-            (
-                event.pointer("/commonEventObject/invokedFunction"),
-                event.pointer("/commonEventObject/parameters").cloned(),
-                &payload["user"],
-            )
-        } else if event["type"].as_str() == Some("CARD_CLICKED") {
-            // Classic events list parameters as `[{key, value}]`; turn them into a map.
-            let list = event
-                .pointer("/action/parameters")
-                .and_then(Value::as_array);
-            let map: serde_json::Map<String, Value> = list
-                .into_iter()
-                .flatten()
-                .filter_map(|p| Some((p["key"].as_str()?.to_string(), p["value"].clone())))
-                .collect();
-            (
-                event
-                    .pointer("/action/actionMethodName")
-                    .or_else(|| event.pointer("/common/invokedFunction")),
-                Some(Value::Object(map)),
-                &event["user"],
-            )
+    let add_on = event.pointer("/chat/buttonClickedPayload");
+    let (function, parameters, form, user, message, space) = if let Some(payload) = add_on {
+        (
+            event.pointer("/commonEventObject/invokedFunction"),
+            event.pointer("/commonEventObject/parameters").cloned(),
+            event.pointer("/commonEventObject/formInputs"),
+            &payload["user"],
+            &payload["message"],
+            &payload["space"],
+        )
+    } else if event["type"].as_str() == Some("CARD_CLICKED") {
+        // Classic events list parameters as `[{key, value}]`; turn them into a map.
+        let list = event
+            .pointer("/action/parameters")
+            .and_then(Value::as_array);
+        let map: serde_json::Map<String, Value> = list
+            .into_iter()
+            .flatten()
+            .filter_map(|p| Some((p["key"].as_str()?.to_string(), p["value"].clone())))
+            .collect();
+        let parameters = if map.is_empty() {
+            event.pointer("/common/parameters").cloned()
         } else {
-            return None;
+            Some(Value::Object(map))
         };
+        (
+            event
+                .pointer("/action/actionMethodName")
+                .or_else(|| event.pointer("/common/invokedFunction")),
+            parameters,
+            event.pointer("/common/formInputs"),
+            &event["user"],
+            &event["message"],
+            &event["space"],
+        )
+    } else {
+        return None;
+    };
     if function.and_then(Value::as_str) != Some(crate::prompt::FUNCTION) {
         return None;
     }
     let parameters = parameters?;
     let id = user["name"].as_str()?;
+    let mut inputs = inputs(form);
+    let button = if parameters["select"].as_str().is_some() {
+        inputs
+            .remove(crate::prompt::SELECT_INPUT)
+            .map(|v| v.expose().clone())
+            .filter(|v| !v.is_empty())
+    } else {
+        Some(parameters["button"].as_str()?.to_string())
+    };
+    let submit = parameters["submit"].as_str().is_some();
+    if !submit {
+        // Only a dialog's values are kept.
+        inputs.clear();
+    }
+    let space = if space.is_object() {
+        space
+    } else {
+        &message["space"]
+    };
+    let place = match (message["name"].as_str(), space["name"].as_str()) {
+        (Some(message_name), Some(room)) => Some(Place {
+            message: message_name.to_string(),
+            room: room.to_string(),
+            thread: if is_direct(space) {
+                None
+            } else {
+                message["thread"]["name"].as_str().map(str::to_string)
+            },
+        }),
+        _ => None,
+    };
     Some(Click {
         prompt: parameters["prompt"].as_str()?.to_string(),
-        button: parameters["button"].as_str()?.to_string(),
+        button,
+        submit,
+        inputs,
         user: UserRef {
             id: UserId::new(id),
             display_name: user["displayName"].as_str().unwrap_or(id).to_string(),
             is_bot: false,
         },
+        add_on: add_on.is_some(),
+        place,
     })
 }
 
@@ -188,18 +281,68 @@ mod tests {
             "space": {"name": "spaces/AAA"}});
         let click = to_click(&classic).unwrap();
         assert_eq!(
-            (click.prompt.as_str(), click.button.as_str()),
-            ("abc123", "allow")
+            (click.prompt.as_str(), click.button.as_deref()),
+            ("abc123", Some("allow"))
         );
+        assert!(!click.add_on && !click.submit && click.place.is_none());
         assert_eq!(click.user.id.as_str(), "users/7");
         let add_on = json!({"chat": {"buttonClickedPayload": {"user": {"name": "users/8"}}},
             "commonEventObject": {"invokedFunction": "okp",
                                   "parameters": {"prompt": "abc123", "button": "deny"}}});
-        assert_eq!(to_click(&add_on).unwrap().button, "deny");
+        let click = to_click(&add_on).unwrap();
+        assert_eq!(click.button.as_deref(), Some("deny"));
+        assert!(click.add_on);
         let other = json!({"type": "CARD_CLICKED", "user": {"name": "users/7"},
             "action": {"actionMethodName": "something", "parameters": []}});
         assert!(to_click(&other).is_none());
         assert!(to_inbound(&channel(), &classic, Timestamp::UNIX_EPOCH).is_none());
+    }
+
+    #[test]
+    fn menu_picks_and_dialog_submissions() {
+        let pick = |value: &str| {
+            json!({"type": "CARD_CLICKED", "user": {"name": "users/7"},
+                "action": {"actionMethodName": "okp", "parameters": [
+                    {"key": "prompt", "value": "v1a2b3c4d"}, {"key": "select", "value": "1"}]},
+                "common": {"formInputs": {"okp_select": {"stringInputs": {"value": [value]}}}},
+                "message": {"name": "spaces/AAA/messages/M9",
+                            "thread": {"name": "spaces/AAA/threads/T"}},
+                "space": {"name": "spaces/AAA", "spaceType": "SPACE"}})
+        };
+        let click = to_click(&pick("o2")).unwrap();
+        assert_eq!(click.button.as_deref(), Some("o2"));
+        assert!(click.inputs.is_empty());
+        assert_eq!(
+            click.place,
+            Some(Place {
+                message: "spaces/AAA/messages/M9".into(),
+                room: "spaces/AAA".into(),
+                thread: Some("spaces/AAA/threads/T".into()),
+            })
+        );
+        assert_eq!(to_click(&pick("")).unwrap().button, None, "the placeholder");
+
+        let submit = json!({"chat": {"buttonClickedPayload": {
+                "user": {"name": "users/8"}, "isDialogEvent": true,
+                "dialogEventType": "SUBMIT_DIALOG",
+                "message": {"name": "spaces/DM/messages/M1",
+                            "thread": {"name": "spaces/DM/threads/X"}},
+                "space": {"name": "spaces/DM", "spaceType": "DIRECT_MESSAGE"}}},
+            "commonEventObject": {"invokedFunction": "okp",
+                "parameters": {"prompt": "v1a2b3c4d", "button": "b2", "submit": "1"},
+                "formInputs": {"f1": {"stringInputs": {"value": ["Lan"]}}}}});
+        let click = to_click(&submit).unwrap();
+        assert!(click.submit && click.add_on);
+        assert_eq!(click.button.as_deref(), Some("b2"));
+        assert_eq!(click.inputs["f1"].expose(), "Lan");
+        assert_eq!(
+            click.place.unwrap().thread,
+            None,
+            "direct messages have no thread"
+        );
+        let cancel = json!({"type": "CARD_CLICKED", "dialogEventType": "CANCEL_DIALOG"});
+        assert_eq!(dialog_cancelled(&cancel), Some(false));
+        assert_eq!(dialog_cancelled(&pick("o1")), None);
     }
 
     #[test]

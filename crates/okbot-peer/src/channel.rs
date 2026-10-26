@@ -34,6 +34,7 @@ impl PeerChannel {
                 threads: false,
                 edit: false,
                 typing: false,
+                ui: okbot_core::UiCaps::default(),
             },
             inner,
         }

@@ -96,6 +96,7 @@ jobs:
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/okbot" "dist/$name/"
           cp README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md THIRD_PARTY_LICENSES.md CHANGELOG.md "dist/$name/"
+          cp crates/okbot-chart/fonts/OFL.txt "dist/$name/FONTS-OFL.txt"
           cd dist && tar -czf "$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
         with:

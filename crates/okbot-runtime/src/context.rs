@@ -44,6 +44,8 @@ pub(crate) struct PromptInput<'a> {
     pub(crate) not_connected: &'a [String],
     /// For a task from another bot of a team: who asks and for whom (ADR 0014).
     pub(crate) peer: Option<&'a str>,
+    /// The agent may show cards, buttons, menus and forms (ADR 0015).
+    pub(crate) interactive: bool,
 }
 
 /// The system prompt and the conversation prompt.
@@ -78,6 +80,19 @@ fn format_rules(caps: &ChannelCaps) -> String {
          of listing them. End with the next step when there is one.\n\
          One chat message holds about {limit} characters; longer answers are split into several \
          messages, so stay well below that unless detail is needed."
+    )
+}
+
+/// The `<accounts>` section: OAuth servers the asker has not connected (empty when none).
+fn accounts(not_connected: &[String]) -> String {
+    if not_connected.is_empty() {
+        return String::new();
+    }
+    let names: Vec<String> = not_connected.iter().map(|n| format!("`{n}`")).collect();
+    format!(
+        "Not connected yet, so their tools are missing: {}. When the user asks for one of them, \
+         tell them to send `/connect <name>` in a direct chat with you.",
+        names.join(", ")
     )
 }
 
@@ -148,6 +163,9 @@ pub(crate) fn build(input: &PromptInput<'_>) -> Prompt {
     };
     section(&mut system, "rules", &format!("{RULES}{tools}"));
     section(&mut system, "format", &format_rules(input.caps));
+    if input.interactive {
+        section(&mut system, "interactive", crate::ui::PROMPT_NOTE);
+    }
     section(&mut system, "knowledge", &input.knowledge.catalog);
     if let Some(excerpts) = input.excerpts {
         section(&mut system, "excerpts", excerpts);
@@ -180,22 +198,7 @@ pub(crate) fn build(input: &PromptInput<'_>) -> Prompt {
     if let Some(note) = input.peer {
         section(&mut system, "team", note);
     }
-    if !input.not_connected.is_empty() {
-        let names: Vec<String> = input
-            .not_connected
-            .iter()
-            .map(|n| format!("`{n}`"))
-            .collect();
-        section(
-            &mut system,
-            "accounts",
-            &format!(
-                "Not connected yet, so their tools are missing: {}. When the user asks for one of \
-                 them, tell them to send `/connect <name>` in a direct chat with you.",
-                names.join(", ")
-            ),
-        );
-    }
+    section(&mut system, "accounts", &accounts(input.not_connected));
 
     // History: keep the new messages, then as many older ones as fit the budget.
     let split = input.history.len().saturating_sub(input.new_count);
@@ -270,6 +273,7 @@ mod tests {
             personal: event.is_direct,
             not_connected: &[],
             peer: None,
+            interactive: false,
         }
     }
 

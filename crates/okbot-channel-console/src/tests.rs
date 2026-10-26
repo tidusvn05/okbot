@@ -214,6 +214,7 @@ async fn shows_rooms_edits_typing_and_prompts() {
                 label: "Allow".into(),
                 style: ButtonStyle::default(),
                 form: None,
+                url: None,
             },
             PromptButton {
                 id: "deny".into(),
@@ -229,11 +230,15 @@ async fn shows_rooms_edits_typing_and_prompts() {
                         placeholder: None,
                         min_len: None,
                         max_len: None,
+                        value: None,
                     }],
                 }),
+                url: None,
             },
         ],
         allowed: vec![],
+        cards: Vec::new(),
+        select: None,
     };
     let sent = channel.prompt(&team, &prompt).await.unwrap();
     channel
@@ -290,6 +295,7 @@ async fn presses_prompt_buttons() {
             placeholder: None,
             min_len: None,
             max_len: None,
+            value: None,
         }],
     };
     let button = |id: &str, form: Option<Form>| PromptButton {
@@ -297,12 +303,15 @@ async fn presses_prompt_buttons() {
         label: id.into(),
         style: ButtonStyle::default(),
         form,
+        url: None,
     };
     let prompt = Prompt {
         id: "p1".into(),
         text: "Deploy?".into(),
         buttons: vec![button("allow", None), button("deny", Some(form))],
         allowed: vec![UserId::new("me")],
+        cards: Vec::new(),
+        select: None,
     };
     let sent = channel.prompt(&team, &prompt).await.unwrap();
 
@@ -354,8 +363,11 @@ async fn zalo_has_no_buttons_and_telegram_no_forms() {
             label: "A".into(),
             style: ButtonStyle::default(),
             form,
+            url: None,
         }],
         allowed: vec![],
+        cards: Vec::new(),
+        select: None,
     };
     let to = ReplyTarget {
         conversation: ConversationKey::room("console:local".parse().unwrap(), "console"),
@@ -446,8 +458,11 @@ impl InboundSink for Bot {
                     label: "Yes".into(),
                     style: ButtonStyle::default(),
                     form: None,
+                    url: None,
                 }],
                 allowed: vec![],
+                cards: Vec::new(),
+                select: None,
             };
             channel.prompt(&to, &prompt).await.unwrap();
         } else {
@@ -589,4 +604,84 @@ async fn escapes_terminal_control_characters() {
         .await
         .unwrap();
     assert_eq!(out.text(), "a\\u{1b}]52;c;ZXZpbA==\\u{7}b\nnext\n\n");
+}
+
+#[tokio::test]
+async fn prints_cards_and_writes_charts_to_files() {
+    let (channel, out) = console(Preset::Console, "");
+    assert!(channel.caps().ui.cards && channel.caps().ui.images);
+    assert!(
+        !channel.caps().ui.buttons,
+        "views keep their choices as text"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    channel.set_chart_dir(dir.path().to_path_buf());
+    let to = ReplyTarget {
+        conversation: channel.open_direct(&UserId::new("me")).await.unwrap(),
+        in_reply_to: None,
+    };
+    let card = |image: Option<okbot_core::Image>| okbot_core::Card {
+        title: Some("Weekly sales".into()),
+        tone: okbot_core::Tone::Success,
+        text: "Top: Phở bò".into(),
+        image,
+    };
+    let image = okbot_core::Image {
+        name: "chart.png".into(),
+        alt: "Bar chart, Weekly sales".into(),
+        width: 1200,
+        height: 600,
+        png: b"\x89PNG fake".to_vec(),
+    };
+    let prompt = Prompt {
+        id: "v1a2b".into(),
+        text: "This week:".into(),
+        cards: vec![
+            card(Some(image.clone())),
+            okbot_core::Card {
+                title: None,
+                tone: okbot_core::Tone::Neutral,
+                text: "No returns.".into(),
+                image: None,
+            },
+        ],
+        ..Prompt::default()
+    };
+    channel.prompt(&to, &prompt).await.unwrap();
+    let path = dir.path().join("v1a2b-chart.png");
+    assert_eq!(std::fs::read(&path).unwrap(), b"\x89PNG fake");
+    // Read back from the store: no bytes, so nothing is written and no path is shown.
+    let stored = Prompt {
+        id: "v9".into(),
+        cards: vec![card(Some(okbot_core::Image {
+            png: Vec::new(),
+            ..image
+        }))],
+        ..Prompt::default()
+    };
+    channel.prompt(&to, &stored).await.unwrap();
+    assert!(!dir.path().join("v9-chart.png").exists());
+    assert!(
+        channel.state().prompts.is_empty(),
+        "cards alone are not answerable"
+    );
+
+    let shown = out
+        .text()
+        .replace(&dir.path().display().to_string(), "<dir>");
+    insta::assert_snapshot!(shown, @r"
+    [prompt out-1]
+    This week:
+
+    **✅ Weekly sales**
+    Top: Phở bò
+    [chart: <dir>/v1a2b-chart.png] Bar chart, Weekly sales
+
+    No returns.
+
+    [prompt out-2]
+    **✅ Weekly sales**
+    Top: Phở bò
+
+    ");
 }

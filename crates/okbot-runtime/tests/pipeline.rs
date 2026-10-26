@@ -285,6 +285,7 @@ async fn room_rules_choose_the_tool_policy() {
                 tool_policy: Some(ToolPolicy::McpOnly),
                 internal: false,
                 personal: false,
+                reply_mode: None,
             },
         );
     });

@@ -19,3 +19,5 @@ by a new ADR that supersedes the old one; old ADRs are kept.
 | [0012](0012-oauth-for-mcp-servers.md) | OAuth for `[[mcp]]` servers, per person or shared | Accepted |
 | [0013](0013-automations.md) | Automations: triggers, sources and actions | Accepted |
 | [0014](0014-peers-and-teams.md) | Peers and teams: bots that delegate work to each other | Accepted |
+| [0015](0015-interactive-replies.md) | Interactive replies: cards, buttons, menus and forms from the agent | Accepted |
+| [0016](0016-chart-images.md) | Chart images: a small PNG renderer for Vietnamese, English and Japanese | Accepted |

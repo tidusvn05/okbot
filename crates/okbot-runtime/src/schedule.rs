@@ -449,6 +449,7 @@ mod tests {
             memory: None,
             tasks: Some(tasks.clone()),
             renderer: Arc::new(PlainRenderer),
+            charts: None,
             clock: clock.clone(),
             channels,
             in_flight: Arc::new(crate::InFlight::default()),

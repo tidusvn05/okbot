@@ -57,6 +57,7 @@
 mod agent;
 mod caps;
 mod channel;
+mod chart;
 mod clock;
 mod id;
 mod knowledge;
@@ -75,8 +76,14 @@ pub use agent::{
     AgentBackend, AgentError, AgentProgress, AgentReply, AgentTurn, McpServer, ProgressFn, Resume,
     TokenUsage,
 };
-pub use caps::{AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ToolPolicy};
+pub use caps::{
+    AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ReplyMode, ToolPolicy, UiCaps,
+};
 pub use channel::{Channel, ChannelError, CommandInfo, CommandParam, InboundSink, SinkClosed};
+pub use chart::{
+    Chart, ChartError, ChartKind, ChartRenderer, Image, MAX_BARS, MAX_CHART_LABEL, MAX_CHART_VALUE,
+    MAX_COLUMNS, MAX_LINE_POINTS, MAX_SERIES, Series,
+};
 pub use clock::{Clock, SystemClock};
 pub use id::{ChannelId, ConversationKey, IdError, MessageId, RunId, UserId, UserRef};
 pub use knowledge::{
@@ -92,8 +99,8 @@ pub use peer::{
     PeerError, PeerInfo, PeerPrompt, PeerTarget, PeerTask, PeerTaskRecord, PeerTaskState, Peers,
 };
 pub use prompt::{
-    ButtonStyle, FieldStyle, Form, FormField, MAX_BUTTONS, MAX_FIELDS, Prompt, PromptAnswer,
-    PromptButton,
+    ButtonStyle, Card, FieldStyle, Form, FormField, MAX_BUTTONS, MAX_CARDS, MAX_FIELDS,
+    MAX_OPTIONS, MAX_PROMPT_CHARS, Prompt, PromptAnswer, PromptButton, Select, SelectOption, Tone,
 };
 pub use render::Renderer;
 pub use secret::{Redactor, Secret};

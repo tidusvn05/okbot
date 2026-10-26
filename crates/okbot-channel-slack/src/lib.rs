@@ -3,8 +3,9 @@
 //! Socket Mode needs no public URL: okbot opens a WebSocket with the app-level token
 //! (`xapp-…`), acknowledges every envelope at once (Slack's 3-second rule) and answers with the
 //! Web API using the bot token (`xoxb-…`). The app subscribes to `app_mention` and `message.im`;
-//! replies go into the message's thread. Prompts are Block Kit buttons; their presses arrive as
-//! `interactive` envelopes (Interactivity must be on, which Socket Mode needs no URL for).
+//! replies go into the message's thread. Prompts are Block Kit messages (cards, a menu, buttons;
+//! forms open as modals); presses and submitted forms arrive as `interactive` envelopes
+//! (Interactivity must be on, which Socket Mode needs no URL for).
 
 mod event;
 mod prompt;
@@ -21,7 +22,7 @@ use okbot_core::{
 use serde_json::{Value, json};
 use tokio_websockets::{ClientBuilder, Message};
 
-pub use web::{SLACK_API, SlackError, SlackWeb};
+pub use web::{SLACK_API, SlackError, SlackWeb, Upload};
 
 /// Settings of one Slack app.
 #[derive(Debug, Clone)]
@@ -42,7 +43,7 @@ pub struct SlackChannel {
     web: SlackWeb,
     caps: ChannelCaps,
     me: OnceLock<String>,
-    /// Prompts with buttons, by prompt id.
+    /// Prompts that can be answered, by prompt id.
     prompts: std::sync::Mutex<std::collections::HashMap<String, prompt::Open>>,
 }
 
@@ -97,6 +98,7 @@ impl SlackChannel {
                 threads: true,
                 edit: true,
                 typing: false,
+                ui: okbot_core::UiCaps::all(),
             },
             me: OnceLock::new(),
             prompts: std::sync::Mutex::default(),
@@ -161,7 +163,9 @@ impl SlackChannel {
                         return Ok(Next::Stop);
                     }
                 }
-                Some("interactive") if !self.pressed(&envelope["payload"], sink.as_ref()).await => {
+                Some("interactive")
+                    if !self.interaction(&envelope["payload"], sink.as_ref()).await =>
+                {
                     return Ok(Next::Stop);
                 }
                 _ => {}
@@ -169,19 +173,20 @@ impl SlackChannel {
         }
     }
 
-    /// A `block_actions` payload for one of okbot's prompts: checked against the prompt's allowed
-    /// people, then handed to the runtime. Returns `false` when the runtime stopped.
-    async fn pressed(&self, payload: &Value, sink: &dyn InboundSink) -> bool {
-        if payload["type"].as_str() != Some("block_actions") {
-            return true;
+    /// An `interactive` payload: a press or pick on one of okbot's prompts (`block_actions`) or
+    /// a submitted form (`view_submission`). Returns `false` when the runtime stopped.
+    async fn interaction(&self, payload: &Value, sink: &dyn InboundSink) -> bool {
+        match payload["type"].as_str() {
+            Some("block_actions") => self.pressed(payload, sink).await,
+            Some("view_submission") if payload["view"]["callback_id"] == prompt::FORM => {
+                self.submitted(payload, sink).await
+            }
+            _ => true,
         }
-        let Some((prompt, button)) = payload["actions"][0]["action_id"]
-            .as_str()
-            .and_then(prompt::parse)
-        else {
-            return true;
-        };
-        let user = okbot_core::UserRef {
+    }
+
+    fn user(payload: &Value) -> okbot_core::UserRef {
+        okbot_core::UserRef {
             id: okbot_core::UserId::new(payload["user"]["id"].as_str().unwrap_or_default()),
             display_name: payload["user"]["name"]
                 .as_str()
@@ -189,37 +194,137 @@ impl SlackChannel {
                 .unwrap_or_default()
                 .to_string(),
             is_bot: false,
-        };
-        let found = lock(&self.prompts).get(prompt).map(|open| {
-            (
-                open.allowed.is_empty() || open.allowed.contains(&user.id),
-                open.target.clone(),
-                open.ts.clone(),
+        }
+    }
+
+    /// The open prompt `id`: from memory, or from the runtime after a restart (then shown in
+    /// `found`, the message the press came from).
+    async fn open(
+        &self,
+        id: &str,
+        found: Option<(ReplyTarget, String)>,
+        sink: &dyn InboundSink,
+    ) -> Option<(Prompt, ReplyTarget, String)> {
+        if let Some(open) = lock(&self.prompts).get(id) {
+            return Some((open.prompt.clone(), open.target.clone(), open.ts.clone()));
+        }
+        let (target, ts) = found?;
+        let prompt = sink.prompt(id).await?;
+        lock(&self.prompts).insert(
+            id.to_string(),
+            prompt::Open {
+                prompt: prompt.clone(),
+                target: target.clone(),
+                ts: ts.clone(),
+            },
+        );
+        Some((prompt, target, ts))
+    }
+
+    /// Tells `user` privately why their press does nothing.
+    async fn notice(&self, target: &ReplyTarget, user: &okbot_core::UserId, text: &str) {
+        let conversation = &target.conversation;
+        if let Err(error) = self
+            .web
+            .post_ephemeral(
+                &conversation.room,
+                user.as_str(),
+                conversation.thread.as_deref(),
+                text,
             )
-        });
-        let Some((allowed, target, ts)) = found else {
+            .await
+        {
+            tracing::debug!(channel = %self.id, %error, "cannot tell a presser about a prompt");
+        }
+    }
+
+    /// A `block_actions` payload: checked against the prompt's allowed people, then handed to
+    /// the runtime, or a form opened. Presses of link buttons are ignored.
+    async fn pressed(&self, payload: &Value, sink: &dyn InboundSink) -> bool {
+        let prompt::Press::Answer {
+            prompt: id,
+            id: answer,
+        } = prompt::press(&payload["actions"][0])
+        else {
             return true;
         };
-        if !allowed {
-            let conversation = &target.conversation;
-            if let Err(error) = self
-                .web
-                .post_ephemeral(
-                    &conversation.room,
-                    user.id.as_str(),
-                    conversation.thread.as_deref(),
-                    "⛔ This is not yours to answer.",
-                )
-                .await
-            {
-                tracing::debug!(channel = %self.id, %error, "cannot tell a presser it is not theirs");
+        let user = Self::user(payload);
+        let found = prompt::located(&self.id, payload);
+        let Some((prompt, target, ts)) = self.open(id, found.clone(), sink).await else {
+            if let Some((target, _)) = found {
+                self.notice(&target, &user.id, "⌛ This prompt has expired.")
+                    .await;
+            }
+            return true;
+        };
+        if !prompt.may_answer(&user.id) {
+            self.notice(&target, &user.id, "⛔ This is not yours to answer.")
+                .await;
+            return true;
+        }
+        if !prompt.answers_with(answer) {
+            return true;
+        }
+        if let Some(form) = prompt.button(answer).and_then(|b| b.form.as_ref()) {
+            let meta = prompt::Meta {
+                prompt: id.to_string(),
+                button: answer.to_string(),
+                target,
+                ts,
+            };
+            let view = prompt::modal(form, &meta);
+            let trigger = payload["trigger_id"].as_str().unwrap_or_default();
+            if let Err(error) = self.web.views_open(trigger, &view).await {
+                tracing::warn!(channel = %self.id, %error, "cannot open a prompt's form");
             }
             return true;
         }
         let answer = okbot_core::PromptAnswer {
-            prompt: prompt.to_string(),
-            button: button.to_string(),
+            prompt: id.to_string(),
+            button: answer.to_string(),
             values: std::collections::BTreeMap::new(),
+            user,
+            conversation: target.conversation.clone(),
+            sent: SentRef {
+                target,
+                message_id: MessageId::new(ts),
+            },
+        };
+        sink.answer(answer).await.is_ok()
+    }
+
+    /// A `view_submission` of one of okbot's forms: the values go to the runtime as secrets.
+    async fn submitted(&self, payload: &Value, sink: &dyn InboundSink) -> bool {
+        let view = &payload["view"];
+        let Some(meta) = view["private_metadata"]
+            .as_str()
+            .and_then(|m| prompt::Meta::decode(&self.id, m))
+        else {
+            return true;
+        };
+        let user = Self::user(payload);
+        let found = Some((meta.target.clone(), meta.ts.clone()));
+        let Some((prompt, target, ts)) = self.open(&meta.prompt, found, sink).await else {
+            self.notice(&meta.target, &user.id, "⌛ This prompt has expired.")
+                .await;
+            return true;
+        };
+        if !prompt.may_answer(&user.id) {
+            self.notice(&target, &user.id, "⛔ This is not yours to answer.")
+                .await;
+            return true;
+        }
+        let Some(form) = prompt
+            .button(&meta.button)
+            .filter(|b| b.url.is_none())
+            .and_then(|b| b.form.as_ref())
+        else {
+            return true;
+        };
+        let answer = okbot_core::PromptAnswer {
+            prompt: meta.prompt,
+            button: meta.button,
+            values: prompt::values(form, view),
             user,
             conversation: target.conversation.clone(),
             sent: SentRef {
@@ -304,17 +409,45 @@ impl Channel for SlackChannel {
     }
 
     async fn prompt(&self, to: &ReplyTarget, prompt: &Prompt) -> Result<SentRef, ChannelError> {
-        // Modals need a trigger id from a fresh interaction; forms are not offered here.
-        if prompt.buttons.iter().any(|b| b.form.is_some()) {
-            return Err(ChannelError::Unsupported("forms"));
+        // A chart goes first, as its own file message; the prompt follows it (ADR 0016).
+        for card in &prompt.cards {
+            let Some(image) = card.image.as_ref().filter(|i| !i.png.is_empty()) else {
+                continue;
+            };
+            let upload = Upload {
+                name: &image.name,
+                title: card.title.as_deref().unwrap_or("chart"),
+                alt: &image.alt,
+                mime: "image/png",
+                bytes: &image.png,
+            };
+            if let Err(error) = self
+                .web
+                .upload_file(
+                    &to.conversation.room,
+                    to.conversation.thread.as_deref(),
+                    &upload,
+                )
+                .await
+            {
+                if matches!(&error, SlackError::Api(code) if code == "missing_scope") {
+                    tracing::warn!(
+                        channel = %self.id,
+                        "cannot upload a chart: the Slack app needs the files:write bot scope"
+                    );
+                } else {
+                    tracing::warn!(channel = %self.id, %error, "cannot upload a chart");
+                }
+                return Err(channel_error(error));
+            }
         }
-        let blocks = prompt::blocks(&prompt.text, Some(prompt));
+        let blocks = prompt::blocks(prompt, true);
         let ts = self
             .web
             .post_message(
                 &to.conversation.room,
                 to.conversation.thread.as_deref(),
-                &prompt.text,
+                &prompt::fallback(prompt),
                 Some(&blocks),
             )
             .await
@@ -322,7 +455,6 @@ impl Channel for SlackChannel {
         lock(&self.prompts).insert(
             prompt.id.clone(),
             prompt::Open {
-                allowed: prompt.allowed.clone(),
                 prompt: prompt.clone(),
                 target: to.clone(),
                 ts: ts.clone(),
@@ -355,12 +487,46 @@ impl Channel for SlackChannel {
                 None => None,
             }
         };
-        let blocks = prompt::blocks(&message.text, kept.as_ref());
+        let shown = Prompt {
+            text: message.text.clone(),
+            ..kept.unwrap_or_default()
+        };
+        let blocks = prompt::blocks(&shown, true);
         self.web
             .update(
                 &sent.target.conversation.room,
                 sent.message_id.as_str(),
                 &message.text,
+                Some(&blocks),
+            )
+            .await
+            .map_err(channel_error)
+    }
+
+    async fn update_prompt(&self, sent: &SentRef, prompt: &Prompt) -> Result<(), ChannelError> {
+        // A chart is its own file message, so the update leaves it as it is.
+        let open = prompt.is_answerable();
+        {
+            let mut prompts = lock(&self.prompts);
+            if open {
+                prompts.insert(
+                    prompt.id.clone(),
+                    prompt::Open {
+                        prompt: prompt.clone(),
+                        target: sent.target.clone(),
+                        ts: sent.message_id.as_str().to_string(),
+                    },
+                );
+            } else {
+                prompts.remove(&prompt.id);
+            }
+        }
+        let blocks = prompt::blocks(prompt, open);
+        self.web
+            .update(
+                &sent.target.conversation.room,
+                sent.message_id.as_str(),
+                &prompt::fallback(prompt),
                 Some(&blocks),
             )
             .await

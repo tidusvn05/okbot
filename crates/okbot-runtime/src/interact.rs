@@ -194,6 +194,8 @@ pub(crate) async fn create(
         text: text.text.clone(),
         buttons: request.buttons,
         allowed: allowed(shared, &claims, request.answer_by),
+        cards: Vec::new(),
+        select: None,
     };
     if let Err(message) = prompt.validate() {
         return error(StatusCode::BAD_REQUEST, message);
@@ -429,6 +431,7 @@ async fn post_callback(
 pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     enum Next {
         Skip,
+        View,
         Expired(Pending),
         NotYours(SentRef),
         Confirm(Pending),
@@ -437,7 +440,8 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     let next = {
         let mut prompts = shared.prompts.lock();
         match prompts.get_mut(&answer.prompt) {
-            None => Next::Skip,
+            // Not an `[[mcp]]` prompt or an approval: an interactive reply (ADR 0015).
+            None => Next::View,
             Some(p) if !same_room(&p.sent.target.conversation, &answer.conversation) => Next::Skip,
             Some(p) if !p.buttons.contains(&answer.button) => Next::Skip,
             Some(p) if !p.allowed.is_empty() && !p.allowed.contains(&answer.user.id) => {
@@ -468,6 +472,7 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     };
     let (mcp, callback, markdown, sent, text, allowed) = match next {
         Next::Skip => return,
+        Next::View => return crate::ui::answer(shared, answer).await,
         Next::NotYours(sent) => {
             // Only reached for text answers: buttons are checked by the platform adapter.
             crate::turn::send_to(&shared, &sent.target, "⛔ This is not yours to answer.")
@@ -563,6 +568,8 @@ async fn show_next(
         text: message.text.clone(),
         buttons: step.buttons,
         allowed,
+        cards: Vec::new(),
+        select: None,
     };
     prompt.validate()?;
     let (sent, text) = match show(shared, target, &prompt, &step.text).await {

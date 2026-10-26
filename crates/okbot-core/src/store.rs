@@ -515,4 +515,24 @@ pub trait ConversationStore: Send + Sync {
         let _ = now;
         Err(unsupported())
     }
+
+    /// Keeps the state of an interactive reply waiting for an answer (ADR 0015) until `expires`.
+    /// The runtime defines `data`; the store only keeps it.
+    async fn put_view(&self, id: &str, data: String, expires: Timestamp) -> Result<(), StoreError> {
+        let _ = (id, data, expires);
+        Err(unsupported())
+    }
+
+    /// The state of view `id`, unless it expired.
+    async fn view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
+        let _ = (id, now);
+        Err(unsupported())
+    }
+
+    /// Removes view `id` and returns its state, unless it expired: only one caller gets it
+    /// (the first answer wins).
+    async fn take_view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
+        let _ = (id, now);
+        Err(unsupported())
+    }
 }

@@ -33,6 +33,8 @@ struct State {
     automation_runs: Vec<AutomationRun>,
     /// (inbound, id) → task
     peer_tasks: HashMap<(bool, String), PeerTaskRecord>,
+    /// id → (data, expires)
+    views: HashMap<String, (String, Timestamp)>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -544,6 +546,33 @@ impl ConversationStore for MemoryStore {
             }
         }
         Ok(changed)
+    }
+
+    async fn put_view(&self, id: &str, data: String, expires: Timestamp) -> Result<(), StoreError> {
+        self.lock().views.insert(id.to_string(), (data, expires));
+        Ok(())
+    }
+
+    async fn view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .lock()
+            .views
+            .get(id)
+            .filter(|(_, expires)| *expires > now)
+            .map(|(data, _)| data.clone()))
+    }
+
+    async fn take_view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
+        let mut state = self.lock();
+        let live = state
+            .views
+            .get(id)
+            .is_some_and(|(_, expires)| *expires > now);
+        Ok(if live {
+            state.views.remove(id).map(|(data, _)| data)
+        } else {
+            None
+        })
     }
 }
 

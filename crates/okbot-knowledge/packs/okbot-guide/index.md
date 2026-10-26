@@ -14,6 +14,7 @@ your own notes elsewhere.
 * [Slack](slack.md) - Creating and connecting a Slack app.
 * [Google Chat](google-chat.md) - Creating and connecting a Google Chat app.
 * [Console and other platforms](other-platforms.md) - okbot chat, test scenarios and bridge adapters.
+* [Interactive replies](interactive-replies.md) - Cards, buttons, menus and forms from the agent with reply_mode = "interactive".
 * [Agent CLIs](agents.md) - Claude Code, Codex and others, fallbacks, models and costs.
 * [Permissions](permissions.md) - Who the bot answers, roles, rooms, tool rules, approvals, audit and limits.
 * [Knowledge base](knowledge-base.md) - Documents, persona, private knowledge and knowledge packs.

@@ -50,6 +50,7 @@ fn button(id: &str, label: &str, style: ButtonStyle) -> PromptButton {
         label: label.into(),
         style,
         form: None,
+        url: None,
     }
 }
 
@@ -134,6 +135,8 @@ async fn ask_shown(
             button("deny", "Deny", ButtonStyle::Danger),
         ],
         allowed: allowed.clone(),
+        cards: Vec::new(),
+        select: None,
     };
     let target = ReplyTarget {
         conversation: grant.event.conversation.clone(),

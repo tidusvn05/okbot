@@ -42,6 +42,22 @@ impl Gate {
             .contains(&(event.conversation.channel.clone(), event.author.id.clone()))
     }
 
+    /// Whether the author may be answered here at all: the checks of [`Gate::check`] that have
+    /// no side effects (no rate limit). For presses on interactive replies (ADR 0015).
+    pub(crate) fn admits(&self, event: &InboundEvent) -> bool {
+        let p = &self.policy;
+        let channel = &event.conversation.channel;
+        let user = (channel.clone(), event.author.id.clone());
+        (!event.author.is_bot || p.answer_bots)
+            && !p.blocked_users.contains(&user)
+            && p.allow_users
+                .as_ref()
+                .is_none_or(|users| users.contains(&user))
+            && p.allow_rooms.as_ref().is_none_or(|rooms| {
+                rooms.contains(&(channel.clone(), event.conversation.room.clone()))
+            })
+    }
+
     /// Decides what to do with `event` at time `now`.
     pub(crate) fn check(&self, event: &InboundEvent, now: Timestamp) -> Verdict {
         let p = &self.policy;

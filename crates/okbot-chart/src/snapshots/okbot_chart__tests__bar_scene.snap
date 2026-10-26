@@ -1,0 +1,22 @@
+---
+source: crates/okbot-chart/src/tests.rs
+expression: scene(&sales())
+---
+scene 480x249
+text 20,37 17 bold Start #111827 "Doanh thu tuần"
+text 20,61.2 12.5 Start #64748b "Đơn vị: đồng"
+text 20,98.8 14 Start #111827 "Trà sữa trân châu đường…"
+rect 216.8,84.8 151.1x18 r3 #cbd5e1
+text 460,98.5 13 End #64748b "1.234.500"
+text 20,128.8 14 Start #111827 "Cà phê đá"
+rect 216.8,114.8 116.9x18 r3 #cbd5e1
+text 460,128.5 13 End #64748b "955.000"
+text 20,158.8 14 Start #111827 "Phở bò tái chín"
+rect 216.8,144.8 173.8x18 r3 #2563eb
+text 460,158.5 13 bold End #111827 "1.420.000"
+text 20,188.8 14 Start #111827 "抹茶ラテ（アイス）"
+rect 216.8,174.8 74.7x18 r3 #cbd5e1
+text 460,188.5 13 End #64748b "610.000"
+text 20,218.8 14 Start #111827 "Iced Americano"
+rect 216.8,204.8 36.7x18 r3 #cbd5e1
+text 460,218.5 13 End #64748b "300.000"

@@ -11,6 +11,8 @@ accepted = [
     "Zlib",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
+    # Only the embedded chart fonts of okbot-chart (an exception in deny.toml, ADR 0016).
+    "OFL-1.1",
 ]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true

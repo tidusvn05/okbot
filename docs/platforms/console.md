@@ -57,6 +57,13 @@ The presets copy each adapter's capabilities; they test rendering, splitting and
 choices (a "thinking…" message that is edited, text answers instead of buttons), not the
 platform's API.
 
+In interactive rooms (`reply_mode = "interactive"`), the plain `console` preset prints the agent's
+cards itself: a bold title with the tone's emoji, then the card's text. Choices stay a numbered
+list in the text. With `[charts] images = true`, a card's chart is written as a PNG to
+`<temp dir>/okbot-console/<prompt id>-chart.png`, and the card shows
+`[chart: <path>] <description>`, so charts can be checked without a chat platform. The other
+presets print cards and charts as text.
+
 ## Who you are
 
 The user from `--user` (default `you`) is the terminal's own user: on a personal bot they are the

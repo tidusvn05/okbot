@@ -141,6 +141,7 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     rc.history_tokens = config.agent.history_tokens;
     rc.tool_policy = config.agent.tool_policy;
     rc.timezone.clone_from(&config.bot.timezone);
+    rc.reply_mode = config.bot.reply_mode;
     rc.personal = config.bot.profile == okbot_config::BotProfile::Personal;
     rc.schedule.enabled = config.schedule.enabled;
     rc.schedule.late_grace = Duration::from_secs(config.schedule.late_grace_minutes * 60);
@@ -176,6 +177,9 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
                 .blocked_users
                 .insert((channel.clone(), UserId::new(user.as_str())));
         }
+        if let Some(mode) = access.reply_mode {
+            rc.channel_reply_modes.insert(channel.clone(), mode);
+        }
         for room in access.rooms {
             rc.rooms.insert(
                 (channel.clone(), room.room.clone()),
@@ -183,6 +187,7 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
                     tool_policy: room.tool_policy,
                     internal: room.internal,
                     personal: room.personal,
+                    reply_mode: room.reply_mode,
                 },
             );
         }
@@ -717,6 +722,7 @@ fn bridge_channels(config: &Config) -> anyhow::Result<Vec<Arc<dyn Channel>>> {
                 threads: b.threads,
                 edit: b.edit,
                 typing: b.typing,
+                ui: okbot_core::UiCaps::default(),
             },
         })));
     }
@@ -795,6 +801,9 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
         .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
         .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
         .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
+    if let Some(charts) = charts(config)? {
+        builder = builder.charts(charts);
+    }
     let needs_http = config
         .channels
         .zalo
@@ -862,4 +871,24 @@ pub(crate) async fn retention(store: Arc<SqliteStore>, days: u32, stop: Cancella
             () = tokio::time::sleep(Duration::from_secs(3600)) => {}
         }
     }
+}
+
+/// The chart renderer when `[charts] images = true` (ADR 0016), with the extra fonts loaded.
+pub(crate) fn charts(
+    config: &Config,
+) -> anyhow::Result<Option<Arc<dyn okbot_core::ChartRenderer>>> {
+    if !config.charts.images {
+        return Ok(None);
+    }
+    let mut fonts = Vec::new();
+    for font in &config.charts.fonts {
+        let path = config.path(font);
+        fonts.push(
+            std::fs::read(&path)
+                .with_context(|| format!("[charts] fonts: cannot read {}", path.display()))?,
+        );
+    }
+    let charts = okbot_chart::PngCharts::with_fonts(fonts)
+        .map_err(|e| anyhow::anyhow!("[charts] fonts: {e}"))?;
+    Ok(Some(Arc::new(charts)))
 }

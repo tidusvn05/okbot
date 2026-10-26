@@ -48,6 +48,11 @@ allow = [
     "MPL-2.0",
 ]
 
+[[licenses.exceptions]]
+# The embedded chart fonts are Noto Sans and Noto Sans JP (ADR 0016).
+crate = "okbot-chart"
+allow = ["OFL-1.1"]
+
 [licenses.private]
 ignore = true
 

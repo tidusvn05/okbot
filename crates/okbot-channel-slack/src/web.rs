@@ -20,6 +20,14 @@ pub enum SlackError {
     Transport(String),
 }
 
+/// A request failure, without the URL (an upload URL carries a signed query).
+fn transport(error: reqwest::Error) -> SlackError {
+    SlackError::Transport(error.without_url().to_string())
+}
+
+/// The most characters of an image's alt text `files.getUploadURLExternal` takes.
+const MAX_ALT_TEXT: usize = 1000;
+
 /// Web API client with the app and bot tokens.
 #[derive(Clone)]
 pub struct SlackWeb {
@@ -56,18 +64,24 @@ impl SlackWeb {
         token: &Secret<String>,
         body: &Value,
     ) -> Result<Value, SlackError> {
-        let answer: Value = self
+        let request = self
             .http
             .post(format!("{}/{method}", self.base))
             .bearer_auth(token.expose())
+            .json(body);
+        Self::answer(request).await
+    }
+
+    /// Sends a Web API request and checks Slack's `ok`.
+    async fn answer(request: reqwest::RequestBuilder) -> Result<Value, SlackError> {
+        let answer: Value = request
             .timeout(Duration::from_secs(20))
-            .json(body)
             .send()
             .await
-            .map_err(|e| SlackError::Transport(e.to_string()))?
+            .map_err(transport)?
             .json()
             .await
-            .map_err(|e| SlackError::Transport(e.to_string()))?;
+            .map_err(transport)?;
         if answer["ok"].as_bool() == Some(true) {
             Ok(answer)
         } else {
@@ -136,6 +150,14 @@ impl SlackWeb {
             .map(drop)
     }
 
+    /// `views.open`: shows a modal for an interaction's `trigger_id` (valid for 3 seconds).
+    pub async fn views_open(&self, trigger_id: &str, view: &Value) -> Result<(), SlackError> {
+        let body = json!({ "trigger_id": trigger_id, "view": view });
+        self.call("views.open", &self.bot_token, &body)
+            .await
+            .map(drop)
+    }
+
     /// `chat.postEphemeral`: a message only `user` sees.
     pub async fn post_ephemeral(
         &self,
@@ -152,4 +174,78 @@ impl SlackWeb {
             .await
             .map(drop)
     }
+
+    /// Uploads a file and shares it in `channel` (in the thread `thread_ts`) as its own message:
+    /// `files.getUploadURLExternal`, the bytes to the returned URL, then
+    /// `files.completeUploadExternal`. Needs the `files:write` scope.
+    pub async fn upload_file(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        file: &Upload<'_>,
+    ) -> Result<(), SlackError> {
+        let alt: String = file.alt.chars().take(MAX_ALT_TEXT).collect();
+        let length = file.bytes.len().to_string();
+        // A form, as Slack's own SDKs send it; `length` must be a number in the form.
+        let ticket = Self::answer(
+            self.http
+                .post(format!("{}/files.getUploadURLExternal", self.base))
+                .bearer_auth(self.bot_token.expose())
+                .form(&[
+                    ("filename", file.name),
+                    ("length", length.as_str()),
+                    ("alt_txt", alt.as_str()),
+                ]),
+        )
+        .await?;
+        let (Some(upload_url), Some(file_id)) =
+            (ticket["upload_url"].as_str(), ticket["file_id"].as_str())
+        else {
+            return Err(SlackError::Api("no_upload_url".into()));
+        };
+        // The upload URL is signed: it gets no token, and it is never logged.
+        let part = reqwest::multipart::Part::bytes(file.bytes.to_vec())
+            .file_name(file.name.to_string())
+            .mime_str(file.mime)
+            .map_err(transport)?;
+        let status = self
+            .http
+            .post(upload_url)
+            .timeout(Duration::from_secs(60))
+            .multipart(reqwest::multipart::Form::new().part("file", part))
+            .send()
+            .await
+            .map_err(transport)?
+            .status();
+        if !status.is_success() {
+            return Err(SlackError::Transport(format!(
+                "file upload answered HTTP {status}"
+            )));
+        }
+        let mut body = json!({
+            "files": [{ "id": file_id, "title": file.title }],
+            "channel_id": channel,
+        });
+        if let Some(ts) = thread_ts {
+            body["thread_ts"] = json!(ts);
+        }
+        self.call("files.completeUploadExternal", &self.bot_token, &body)
+            .await
+            .map(drop)
+    }
+}
+
+/// A file to share with [`SlackWeb::upload_file`].
+#[derive(Debug, Clone, Copy)]
+pub struct Upload<'a> {
+    /// File name (`chart.png`).
+    pub name: &'a str,
+    /// Title shown above the file.
+    pub title: &'a str,
+    /// Alt text for an image (cut to 1,000 characters).
+    pub alt: &'a str,
+    /// Media type (`image/png`).
+    pub mime: &'a str,
+    /// The contents.
+    pub bytes: &'a [u8],
 }

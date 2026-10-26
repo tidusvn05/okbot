@@ -19,6 +19,7 @@ use twilight_http::Client;
 use twilight_model::application::interaction::{Interaction, InteractionData};
 use twilight_model::channel::Message;
 use twilight_model::channel::message::{AllowedMentions, MessageFlags};
+use twilight_model::http::attachment::Attachment;
 use twilight_model::id::Id;
 use twilight_model::id::marker::{ApplicationMarker, RoleMarker, UserMarker};
 
@@ -36,9 +37,9 @@ pub struct DiscordConfig {
     pub http_proxy: Option<String>,
 }
 
-/// Permissions okbot needs in a server: View Channels, Send Messages, Read Message History and
-/// Send Messages in Threads.
-pub const BOT_PERMISSIONS: u64 = (1 << 10) | (1 << 11) | (1 << 16) | (1 << 38);
+/// Permissions okbot needs in a server: View Channels, Send Messages, Attach Files (chart images,
+/// ADR 0016), Read Message History and Send Messages in Threads.
+pub const BOT_PERMISSIONS: u64 = (1 << 10) | (1 << 11) | (1 << 15) | (1 << 16) | (1 << 38);
 
 /// The link that adds the bot with `application_id` to a server, with [`BOT_PERMISSIONS`].
 pub fn install_url(application_id: u64) -> String {
@@ -56,8 +57,12 @@ pub struct DiscordChannel {
     caps: ChannelCaps,
     me: OnceLock<Id<UserMarker>>,
     app: OnceLock<Id<ApplicationMarker>>,
-    /// Prompts shown and not closed, by id (lost on restart: their buttons then say so).
+    /// Prompts shown and not closed, by id (lost on restart: clicks then ask the runtime, and
+    /// say the prompt expired when it does not know it either).
     prompts: Mutex<HashMap<String, okbot_core::Prompt>>,
+    /// Prompt messages sent with Components V2 (cards), by message id, with their prompt id.
+    /// Such a message cannot go back to plain content.
+    v2: Mutex<HashMap<String, String>>,
     /// Commands for the `/` menu, registered when the gateway connects.
     commands: Mutex<Vec<okbot_core::CommandInfo>>,
 }
@@ -79,6 +84,22 @@ fn failed(e: impl std::error::Error + Send + Sync + 'static) -> ChannelError {
     } else {
         ChannelError::Transient(Box::new(e))
     }
+}
+
+/// Discord refused the request as malformed (for example plain content on a V2 message).
+fn bad_request(e: &twilight_http::Error) -> bool {
+    matches!(e.kind(), twilight_http::error::ErrorType::Response { status, .. } if status.get() == 400)
+}
+
+/// Whether a failed edit was refused as malformed, so a V2 edit may still succeed.
+fn refused(e: &ChannelError) -> bool {
+    matches!(e, ChannelError::Failed(source)
+        if source.downcast_ref::<twilight_http::Error>().is_some_and(bad_request))
+}
+
+/// The picture of a prompt's cards (at most one carries an image).
+fn card_image(prompt: &okbot_core::Prompt) -> Option<&okbot_core::Image> {
+    prompt.cards.iter().find_map(|c| c.image.as_ref())
 }
 
 fn parse_id<T>(value: &str) -> Result<Id<T>, ChannelError> {
@@ -207,10 +228,12 @@ impl DiscordChannel {
                 threads: true,
                 edit: true,
                 typing: true,
+                ui: okbot_core::UiCaps::all(),
             },
             me: OnceLock::new(),
             app: OnceLock::new(),
             prompts: Mutex::new(HashMap::new()),
+            v2: Mutex::new(HashMap::new()),
             commands: Mutex::new(Vec::new()),
         }
     }
@@ -221,6 +244,194 @@ impl DiscordChannel {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(id)
             .cloned()
+    }
+
+    /// The open prompt `id`, from memory or, when it was shown before a restart, from the runtime
+    /// (which may still wait on it).
+    async fn known_prompt(
+        &self,
+        sink: &Arc<dyn InboundSink>,
+        id: &str,
+    ) -> Option<okbot_core::Prompt> {
+        if let Some(open) = self.open_prompt(id) {
+            return Some(open);
+        }
+        let recovered = sink.prompt(id).await.filter(|p| p.id == id)?;
+        self.remember(&recovered);
+        Some(recovered)
+    }
+
+    /// Keeps `prompt` open (it can be answered) or forgets it.
+    fn remember(&self, prompt: &okbot_core::Prompt) {
+        let mut prompts = self
+            .prompts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if prompt.is_answerable() {
+            prompts.insert(prompt.id.clone(), prompt.clone());
+        } else {
+            prompts.remove(&prompt.id);
+        }
+    }
+
+    fn mark_v2(&self, message: &MessageId, prompt: &str) {
+        self.v2
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(message.as_str().to_string(), prompt.to_string());
+    }
+
+    /// The prompt id of a V2 message this process sent or edited.
+    fn v2_prompt(&self, message: &MessageId) -> Option<String> {
+        self.v2
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(message.as_str())
+            .cloned()
+    }
+
+    /// Replaces a prompt message with Components V2 `components` (no content, no embeds).
+    ///
+    /// Without `upload` the message keeps its attachments: twilight then leaves `attachments`
+    /// out of the request, and Discord's *Edit Message* documentation says omitted fields are
+    /// unchanged. With `upload` those files become the message's only attachments (in API v10
+    /// the `attachments` array lists every file the message keeps).
+    async fn edit_v2(
+        &self,
+        sent: &SentRef,
+        components: &[twilight_model::channel::message::Component],
+        upload: Option<&[Attachment]>,
+    ) -> Result<(), ChannelError> {
+        let channel = parse_id(&sent.target.conversation.room)?;
+        let none = AllowedMentions::default();
+        let mut request = self
+            .http
+            .update_message(channel, parse_id(sent.message_id.as_str())?)
+            .content(None)
+            .embeds(None)
+            .components(Some(components))
+            .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::SUPPRESS_EMBEDS)
+            .allowed_mentions(Some(&none));
+        if let Some(upload) = upload {
+            request = request.attachments(upload);
+        }
+        match request.await {
+            Ok(_) => Ok(()),
+            Err(e) if bad_request(&e) => Err(ChannelError::Failed(Box::new(e))),
+            Err(e) => Err(failed(e)),
+        }
+    }
+
+    /// Edits a prompt message to show `prompt` with cards (Components V2), keeping, replacing or
+    /// dropping its picture.
+    ///
+    /// - An image with PNG data is uploaded with the edit and replaces the old file.
+    /// - An image without data (a prompt read back from the store) means "keep the picture the
+    ///   message was sent with". The message is read once to find that file, and the gallery
+    ///   refers to it as `attachment://<file name>` while the edit leaves the attachments alone.
+    ///   Verified from Discord's docs: omitted `attachments` keep the existing files, and V2
+    ///   messages show files only through components. Assumed (not stated by the docs for
+    ///   edits): an `attachment://` reference resolves against the files the message keeps.
+    ///   If Discord refuses that edit, it is sent again without the gallery, so a click never
+    ///   fails because of the picture.
+    async fn update_v2(
+        &self,
+        sent: &SentRef,
+        prompt: &okbot_core::Prompt,
+    ) -> Result<(), ChannelError> {
+        let Some(image) = card_image(prompt) else {
+            return self
+                .edit_v2(sent, &prompt::components_v2(prompt, None), None)
+                .await;
+        };
+        if !image.png.is_empty() {
+            let file = prompt::file_name(image);
+            let upload = [Attachment::from_bytes(file.clone(), image.png.clone(), 0)];
+            return self
+                .edit_v2(
+                    sent,
+                    &prompt::components_v2(prompt, Some(&file)),
+                    Some(&upload),
+                )
+                .await;
+        }
+        let Some(file) = self.kept_picture(sent, image).await else {
+            return self
+                .edit_v2(sent, &prompt::components_v2(prompt, None), None)
+                .await;
+        };
+        match self
+            .edit_v2(sent, &prompt::components_v2(prompt, Some(&file)), None)
+            .await
+        {
+            Err(e) if refused(&e) => {
+                tracing::warn!(channel = %self.id, "Discord refused the kept chart image; updating without it");
+                self.edit_v2(sent, &prompt::components_v2(prompt, None), None)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    /// The file name of the picture a prompt message was sent with: the attachment named like
+    /// the image, else its only attachment. `None` when the message has no such file. When the
+    /// message cannot be read, the image's own name is tried (the edit falls back without it).
+    async fn kept_picture(&self, sent: &SentRef, image: &okbot_core::Image) -> Option<String> {
+        let wanted = prompt::file_name(image);
+        let read = async {
+            let channel = parse_id(&sent.target.conversation.room)?;
+            let message = parse_id(sent.message_id.as_str())?;
+            self.http
+                .message(channel, message)
+                .await
+                .map_err(failed)?
+                .model()
+                .await
+                .map_err(failed)
+        };
+        match read.await {
+            Ok(message) => {
+                let files = &message.attachments;
+                files
+                    .iter()
+                    .find(|a| a.filename == wanted)
+                    .or(match files.as_slice() {
+                        [only] => Some(only),
+                        _ => None,
+                    })
+                    .map(|a| a.filename.clone())
+            }
+            Err(error) => {
+                tracing::debug!(channel = %self.id, %error, "cannot read a prompt message");
+                Some(wanted)
+            }
+        }
+    }
+
+    /// Replaces a classic prompt message's content and, unless `components` is `None`, its
+    /// components (`Some(&[])` removes them).
+    async fn edit_classic(
+        &self,
+        sent: &SentRef,
+        text: &str,
+        components: Option<&[twilight_model::channel::message::Component]>,
+    ) -> Result<(), ChannelError> {
+        let channel = parse_id(&sent.target.conversation.room)?;
+        let none = AllowedMentions::default();
+        let mut request = self
+            .http
+            .update_message(channel, parse_id(sent.message_id.as_str())?)
+            .content(Some(text))
+            .flags(MessageFlags::SUPPRESS_EMBEDS)
+            .allowed_mentions(Some(&none));
+        if let Some(components) = components {
+            request = request.components(Some(components));
+        }
+        match request.await {
+            Ok(_) => Ok(()),
+            Err(e) if bad_request(&e) => Err(ChannelError::Failed(Box::new(e))),
+            Err(e) => Err(failed(e)),
+        }
     }
 
     async fn respond(
@@ -261,9 +472,15 @@ impl DiscordChannel {
             return Ok(());
         };
         let (ids, values) = match &interaction.data {
-            Some(InteractionData::MessageComponent(d)) => {
-                (prompt::parse_id(&d.custom_id, false), None)
-            }
+            Some(InteractionData::MessageComponent(d)) => match prompt::parse_menu_id(&d.custom_id)
+            {
+                // The picked option is the answer's button.
+                Some(prompt_id) => (
+                    d.values.first().map(|option| (prompt_id, option.as_str())),
+                    None,
+                ),
+                None => (prompt::parse_id(&d.custom_id, false), None),
+            },
             Some(InteractionData::ModalSubmit(d)) => (
                 prompt::parse_id(&d.custom_id, true),
                 Some(prompt::values(d)),
@@ -273,7 +490,7 @@ impl DiscordChannel {
         let Some((prompt_id, button_id)) = ids else {
             return Ok(());
         };
-        let Some(open) = self.open_prompt(prompt_id) else {
+        let Some(open) = self.known_prompt(sink, prompt_id).await else {
             self.respond(
                 interaction,
                 &prompt::private_note("⌛ This prompt has expired."),
@@ -297,10 +514,15 @@ impl DiscordChannel {
             .await;
             return Ok(());
         }
-        let Some(button) = open.button(button_id) else {
+        // Link buttons send nothing; anything else unknown is stale.
+        if !open.answers_with(button_id) {
+            self.respond(interaction, &prompt::deferred()).await;
             return Ok(());
-        };
-        if let (None, Some(form)) = (&values, &button.form) {
+        }
+        if let (None, Some(form)) = (
+            &values,
+            open.button(button_id).and_then(|b| b.form.as_ref()),
+        ) {
             self.respond(interaction, &prompt::modal(prompt_id, button_id, form))
                 .await;
             return Ok(());
@@ -574,27 +796,51 @@ impl Channel for DiscordChannel {
     ) -> Result<SentRef, ChannelError> {
         let channel = parse_id(&to.conversation.room)?;
         let none = AllowedMentions::default();
-        let components = prompt::components(prompt);
-        let sent = self
+        let cards = !prompt.cards.is_empty();
+        let request = self
             .http
             .create_message(channel)
-            .content(&prompt.text)
-            .components(&components)
-            .allowed_mentions(Some(&none))
-            // A prompt asks for a decision: a link preview would push its buttons out of view.
-            .flags(MessageFlags::SUPPRESS_EMBEDS)
-            .await
-            .map_err(failed)?
-            .model()
-            .await
-            .map_err(failed)?;
-        self.prompts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(prompt.id.clone(), prompt.clone());
+            .allowed_mentions(Some(&none));
+        let sent = if cards {
+            // A card's picture goes out as a file the card's media gallery shows.
+            let image = card_image(prompt).filter(|i| !i.png.is_empty());
+            let file = image.map(prompt::file_name);
+            let upload: Vec<Attachment> = image
+                .zip(file.clone())
+                .map(|(i, f)| Attachment::from_bytes(f, i.png.clone(), 0))
+                .into_iter()
+                .collect();
+            let components = prompt::components_v2(prompt, file.as_deref());
+            // The flag first: twilight validates the components by it.
+            let mut request = request
+                .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::SUPPRESS_EMBEDS)
+                .components(&components);
+            if !upload.is_empty() {
+                // A failed upload fails the prompt: the runtime then sends the view as text.
+                request = request.attachments(&upload);
+            }
+            request.await
+        } else {
+            let components = prompt::components(prompt);
+            request
+                .content(&prompt.text)
+                .components(&components)
+                // A prompt asks for a decision: a link preview would push its buttons out of view.
+                .flags(MessageFlags::SUPPRESS_EMBEDS)
+                .await
+        }
+        .map_err(failed)?
+        .model()
+        .await
+        .map_err(failed)?;
+        let message_id = MessageId::new(sent.id.to_string());
+        if cards {
+            self.mark_v2(&message_id, &prompt.id);
+        }
+        self.remember(prompt);
         Ok(SentRef {
             target: to.clone(),
-            message_id: MessageId::new(sent.id.to_string()),
+            message_id,
         })
     }
 
@@ -604,18 +850,47 @@ impl Channel for DiscordChannel {
         message: &RenderedMessage,
         keep_buttons: bool,
     ) -> Result<(), ChannelError> {
-        let channel = parse_id(&sent.target.conversation.room)?;
-        let none = AllowedMentions::default();
-        let mut request = self
-            .http
-            .update_message(channel, parse_id(sent.message_id.as_str())?)
-            .content(Some(&message.text))
-            .flags(MessageFlags::SUPPRESS_EMBEDS)
-            .allowed_mentions(Some(&none));
-        if !keep_buttons {
-            request = request.components(Some(&[]));
+        let v2_prompt = self.v2_prompt(&sent.message_id);
+        let v2 = |prompt_id: Option<&str>| {
+            let mut components = prompt::text_v2(&message.text);
+            if keep_buttons && let Some(open) = prompt_id.and_then(|id| self.open_prompt(id)) {
+                components.extend(prompt::components(&open));
+            }
+            components
+        };
+        if v2_prompt.is_some() {
+            return self.edit_v2(sent, &v2(v2_prompt.as_deref()), None).await;
         }
-        request.await.map(drop).map_err(failed)
+        let rows: Option<&[_]> = if keep_buttons { None } else { Some(&[]) };
+        match self.edit_classic(sent, &message.text, rows).await {
+            // Sent with cards before a restart: it only takes V2 components.
+            Err(e) if refused(&e) => self.edit_v2(sent, &v2(None), None).await,
+            other => other,
+        }
+    }
+
+    async fn update_prompt(
+        &self,
+        sent: &SentRef,
+        prompt: &okbot_core::Prompt,
+    ) -> Result<(), ChannelError> {
+        let v2 = !prompt.cards.is_empty() || self.v2_prompt(&sent.message_id).is_some();
+        let result = if v2 {
+            self.update_v2(sent, prompt).await
+        } else {
+            let rows = prompt::components(prompt);
+            match self.edit_classic(sent, &prompt.text, Some(&rows)).await {
+                // Sent with cards before a restart.
+                Err(e) if refused(&e) => self.update_v2(sent, prompt).await,
+                other => other,
+            }
+        };
+        result?;
+        if v2 {
+            self.mark_v2(&sent.message_id, &prompt.id);
+        }
+        self.remember(prompt);
+        Ok(())
     }
 
     async fn typing(&self, to: &ReplyTarget) -> Result<(), ChannelError> {
