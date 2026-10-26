@@ -620,6 +620,8 @@ async fn closing_an_unknown_v2_prompt_retries_with_components() {
 struct ImageApi {
     calls: Mutex<Vec<(String, String, String)>>,
     attachments: Value,
+    /// The message's components, as `GET` returns them.
+    components: Value,
     refuse_gallery: bool,
 }
 
@@ -647,7 +649,7 @@ async fn image_handler(
         "author": {"id": "42", "username": "okbot", "discriminator": "0", "avatar": null, "bot": true},
         "timestamp": "2026-10-12T10:00:00.000000+00:00", "edited_timestamp": null, "tts": false,
         "mention_everyone": false, "mentions": [], "mention_roles": [],
-        "attachments": api.attachments, "embeds": [], "pinned": false, "type": 0, "flags": 32768
+        "attachments": api.attachments, "components": api.components, "embeds": [], "pinned": false, "type": 0, "flags": 32768
     }))
     .into_response()
 }
@@ -669,6 +671,7 @@ fn image_api(attachments: Value, refuse_gallery: bool) -> Arc<ImageApi> {
     Arc::new(ImageApi {
         calls: Mutex::new(Vec::new()),
         attachments,
+        components: json!([]),
         refuse_gallery,
     })
 }
@@ -760,6 +763,37 @@ async fn an_update_keeps_the_picture_the_message_was_sent_with() {
     );
     let patch = calls.iter().find(|c| c.0 == "PATCH").unwrap();
     let json: Value = serde_json::from_str(&patch.2).expect("no multipart: nothing uploaded");
+    assert!(json.get("attachments").is_none(), "existing files are kept");
+    assert_eq!(
+        json["components"][1]["components"][3]["items"][0]["media"]["url"],
+        "attachment://chart.png"
+    );
+}
+
+#[tokio::test]
+async fn an_update_finds_the_picture_in_the_gallery_of_a_v2_message() {
+    // Discord lists no `attachments` for a Components V2 message; its gallery shows the file.
+    let api = Arc::new(ImageApi {
+        calls: Mutex::new(Vec::new()),
+        attachments: json!([]),
+        components: json!([{"type": 17, "id": 1, "components": [{"type": 12, "id": 2, "items": [{
+            "media": {
+                "url": "https://cdn.discordapp.com/attachments/500/77/chart.png?ex=1&is=2&hm=3",
+                "proxy_url": "https://media.discordapp.net/attachments/500/77/chart.png",
+                "width": 1200, "height": 300, "content_type": "image/png", "attachment_id": "77"
+            },
+            "description": null, "spoiler": false
+        }]}]}]),
+        refuse_gallery: false,
+    });
+    let channel = serve_images(api.clone()).await;
+    channel
+        .update_prompt(&sent_901(), &chart_prompt(&[]))
+        .await
+        .unwrap();
+    let calls = api.calls.lock().unwrap().clone();
+    let patch = calls.iter().find(|c| c.0 == "PATCH").unwrap();
+    let json: Value = serde_json::from_str(&patch.2).unwrap();
     assert!(json.get("attachments").is_none(), "existing files are kept");
     assert_eq!(
         json["components"][1]["components"][3]["items"][0]["media"]["url"],

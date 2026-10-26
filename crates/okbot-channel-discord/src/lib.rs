@@ -374,8 +374,10 @@ impl DiscordChannel {
     }
 
     /// The file name of the picture a prompt message was sent with: the attachment named like
-    /// the image, else its only attachment. `None` when the message has no such file. When the
-    /// message cannot be read, the image's own name is tried (the edit falls back without it).
+    /// the image, else its only attachment, else the file a media gallery of the message shows
+    /// (Discord lists no `attachments` for Components V2 messages; checked live on 2026-10-27).
+    /// `None` when the message has no such file. When the message cannot be read, the image's own
+    /// name is tried (the edit falls back without it).
     async fn kept_picture(&self, sent: &SentRef, image: &okbot_core::Image) -> Option<String> {
         let wanted = prompt::file_name(image);
         let read = async {
@@ -400,6 +402,7 @@ impl DiscordChannel {
                         _ => None,
                     })
                     .map(|a| a.filename.clone())
+                    .or_else(|| gallery_file(&message.components))
             }
             Err(error) => {
                 tracing::debug!(channel = %self.id, %error, "cannot read a prompt message");
@@ -900,6 +903,28 @@ impl Channel for DiscordChannel {
             .await
             .map(drop)
             .map_err(failed)
+    }
+}
+
+/// The file name a media gallery among `components` shows (the last path segment of its first
+/// item's URL), searching containers and sections.
+fn gallery_file(components: &[twilight_model::channel::message::Component]) -> Option<String> {
+    find_gallery_file(&serde_json::to_value(components).ok()?)
+}
+
+fn find_gallery_file(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Array(items) => items.iter().find_map(find_gallery_file),
+        serde_json::Value::Object(o) => {
+            if o.get("type").and_then(serde_json::Value::as_u64) == Some(12) {
+                let url = o.get("items")?.get(0)?.get("media")?.get("url")?.as_str()?;
+                let path = url.split(['?', '#']).next()?;
+                let name = path.rsplit('/').next()?;
+                return (!name.is_empty()).then(|| name.to_string());
+            }
+            o.get("components").and_then(find_gallery_file)
+        }
+        _ => None,
     }
 }
 
