@@ -4,3 +4,7 @@
 *.db-shm
 *.db-wal
 .env
+
+# insta temporary files
+*.pending-snap
+*.snap.new
