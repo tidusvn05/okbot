@@ -81,9 +81,10 @@ pub trait InboundSink: Send + Sync {
         Ok(())
     }
 
-    /// A prompt the runtime still waits on, for channels that no longer hold it (they restarted
-    /// since showing it). Interactive replies (ADR 0015) outlive restarts; other prompts do not.
-    async fn prompt(&self, _id: &str) -> Option<Prompt> {
+    /// A prompt the runtime still waits on in `conversation` (its channel and room), for channels
+    /// that no longer hold it (they restarted since showing it). Interactive replies (ADR 0015)
+    /// outlive restarts; other prompts do not.
+    async fn prompt(&self, _id: &str, _conversation: &ConversationKey) -> Option<Prompt> {
         None
     }
 }

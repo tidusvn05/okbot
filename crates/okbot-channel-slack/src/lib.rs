@@ -47,6 +47,9 @@ pub struct SlackChannel {
     prompts: std::sync::Mutex<std::collections::HashMap<String, prompt::Open>>,
 }
 
+/// How long this process remembers a prompt: as long as the runtime keeps its view (ADR 0015).
+const REMEMBER: Duration = Duration::from_secs(7 * 24 * 3600);
+
 fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -209,16 +212,31 @@ impl SlackChannel {
             return Some((open.prompt.clone(), open.target.clone(), open.ts.clone()));
         }
         let (target, ts) = found?;
-        let prompt = sink.prompt(id).await?;
-        lock(&self.prompts).insert(
-            id.to_string(),
+        let prompt = sink.prompt(id, &target.conversation).await?;
+        self.remember(&prompt, target.clone(), ts.clone());
+        Some((prompt, target, ts))
+    }
+
+    /// Keeps `prompt` open, without its chart pictures (the message keeps them), and forgets
+    /// prompts this process showed longer ago than the runtime keeps their views.
+    fn remember(&self, prompt: &Prompt, target: ReplyTarget, ts: String) {
+        let mut kept = prompt.clone();
+        for card in &mut kept.cards {
+            if let Some(image) = &mut card.image {
+                image.png = Vec::new();
+            }
+        }
+        let mut prompts = lock(&self.prompts);
+        prompts.retain(|_, p| p.at.elapsed() < REMEMBER);
+        prompts.insert(
+            prompt.id.clone(),
             prompt::Open {
-                prompt: prompt.clone(),
-                target: target.clone(),
-                ts: ts.clone(),
+                prompt: kept,
+                target,
+                ts,
+                at: std::time::Instant::now(),
             },
         );
-        Some((prompt, target, ts))
     }
 
     /// Tells `user` privately why their press does nothing.
@@ -452,14 +470,7 @@ impl Channel for SlackChannel {
             )
             .await
             .map_err(channel_error)?;
-        lock(&self.prompts).insert(
-            prompt.id.clone(),
-            prompt::Open {
-                prompt: prompt.clone(),
-                target: to.clone(),
-                ts: ts.clone(),
-            },
-        );
+        self.remember(prompt, to.clone(), ts.clone());
         Ok(SentRef {
             target: to.clone(),
             message_id: MessageId::new(ts),
@@ -509,13 +520,11 @@ impl Channel for SlackChannel {
         {
             let mut prompts = lock(&self.prompts);
             if open {
-                prompts.insert(
-                    prompt.id.clone(),
-                    prompt::Open {
-                        prompt: prompt.clone(),
-                        target: sent.target.clone(),
-                        ts: sent.message_id.as_str().to_string(),
-                    },
+                drop(prompts);
+                self.remember(
+                    prompt,
+                    sent.target.clone(),
+                    sent.message_id.as_str().to_string(),
                 );
             } else {
                 prompts.remove(&prompt.id);

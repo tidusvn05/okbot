@@ -266,6 +266,16 @@ impl Prompt {
                     if f.label.trim().is_empty() || f.label.chars().count() > 45 {
                         return Err(format!("field {:?}: label of 1-45 characters", f.id));
                     }
+                    let max = f.max_len.map_or(4000, |m| m.min(4000));
+                    if f.value
+                        .as_ref()
+                        .is_some_and(|v| v.chars().count() > usize::from(max))
+                    {
+                        return Err(format!(
+                            "field {:?}: value of at most {max} characters",
+                            f.id
+                        ));
+                    }
                 }
             }
         }
@@ -455,6 +465,21 @@ mod tests {
                 .validate()
                 .is_ok(),
             "variable names make natural field ids"
+        );
+        let filled = |value: &str, max_len| FormField {
+            value: Some(value.into()),
+            max_len,
+            ..field("note")
+        };
+        let ok = |f: FormField| prompt(vec![button("ok", Some(form(vec![f])))]).validate();
+        assert!(ok(filled("abc", Some(3))).is_ok());
+        assert!(
+            ok(filled("abcd", Some(3))).is_err(),
+            "longer than the field"
+        );
+        assert!(
+            ok(filled(&"x".repeat(4001), None)).is_err(),
+            "Discord's limit"
         );
     }
 

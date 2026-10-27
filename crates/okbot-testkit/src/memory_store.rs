@@ -549,8 +549,15 @@ impl ConversationStore for MemoryStore {
     }
 
     async fn put_view(&self, id: &str, data: String, expires: Timestamp) -> Result<(), StoreError> {
-        self.lock().views.insert(id.to_string(), (data, expires));
-        Ok(())
+        match self.lock().views.entry(id.to_string()) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                Err(StoreError::Backend(format!("view {id} exists").into()))
+            }
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert((data, expires));
+                Ok(())
+            }
+        }
     }
 
     async fn view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {

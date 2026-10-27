@@ -664,7 +664,7 @@ impl Config {
                     m.name
                 ));
             }
-            if matches!(m.name.as_str(), "kb" | "bot" | "team") {
+            if matches!(m.name.as_str(), "kb" | "bot" | "team" | "ui") {
                 return invalid(format!("[[mcp]] name `{}` is reserved", m.name));
             }
             if !seen.insert(m.name.as_str()) {

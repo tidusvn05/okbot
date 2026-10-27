@@ -42,9 +42,10 @@ impl Gate {
             .contains(&(event.conversation.channel.clone(), event.author.id.clone()))
     }
 
-    /// Whether the author may be answered here at all: the checks of [`Gate::check`] that have
-    /// no side effects (no rate limit). For presses on interactive replies (ADR 0015).
-    pub(crate) fn admits(&self, event: &InboundEvent) -> bool {
+    /// Whether [`Gate::check`] would answer `event` whatever its addressing, without counting it
+    /// against the rate limit. For presses on interactive replies (ADR 0015): a press that
+    /// `check` would then drop must not use up the view.
+    pub(crate) fn admits(&self, event: &InboundEvent, now: Timestamp) -> bool {
         let p = &self.policy;
         let channel = &event.conversation.channel;
         let user = (channel.clone(), event.author.id.clone());
@@ -56,6 +57,28 @@ impl Gate {
             && p.allow_rooms.as_ref().is_none_or(|rooms| {
                 rooms.contains(&(channel.clone(), event.conversation.room.clone()))
             })
+            && (p.max_input_chars == 0 || event.text.chars().count() <= p.max_input_chars)
+            && !self.at_rate_limit(&user, now)
+    }
+
+    /// Whether `user` has used up the rate limit at `now`, counting nothing.
+    fn at_rate_limit(&self, user: &(ChannelId, UserId), now: Timestamp) -> bool {
+        let limit = self.policy.rate_limit;
+        if limit.messages == 0 {
+            return false;
+        }
+        let window = SignedDuration::try_from(limit.window).unwrap_or(SignedDuration::MAX);
+        let recent = self
+            .recent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        recent.get(user).is_some_and(|times| {
+            times
+                .iter()
+                .filter(|t| now.duration_since(**t) < window)
+                .count()
+                >= limit.messages as usize
+        })
     }
 
     /// Decides what to do with `event` at time `now`.
@@ -213,5 +236,31 @@ mod tests {
         assert_eq!(g.check(&event("c", true, false), t0), Verdict::RateLimited);
         let later = t0 + SignedDuration::from_secs(61);
         assert_eq!(g.check(&event("d", true, false), later), Verdict::Answer);
+    }
+
+    #[test]
+    fn admits_counts_nothing_and_refuses_what_check_would_drop() {
+        let g = gate(AccessPolicy {
+            max_input_chars: 5,
+            rate_limit: RateLimit {
+                messages: 1,
+                window: Duration::from_secs(60),
+            },
+            ..AccessPolicy::default()
+        });
+        let t0 = Timestamp::UNIX_EPOCH;
+        assert!(!g.admits(&event("123456", true, false), t0), "too long");
+        assert!(g.admits(&event("a", true, false), t0));
+        assert!(
+            g.admits(&event("a", true, false), t0),
+            "admits counts nothing"
+        );
+        assert_eq!(g.check(&event("a", true, false), t0), Verdict::Answer);
+        assert!(
+            !g.admits(&event("b", true, false), t0),
+            "over the rate limit"
+        );
+        let later = t0 + SignedDuration::from_secs(61);
+        assert!(g.admits(&event("c", true, false), later));
     }
 }

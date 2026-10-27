@@ -466,7 +466,11 @@ impl InboundSink for Answers {
         Ok(())
     }
 
-    async fn prompt(&self, id: &str) -> Option<okbot_core::Prompt> {
+    async fn prompt(
+        &self,
+        id: &str,
+        _conversation: &okbot_core::ConversationKey,
+    ) -> Option<okbot_core::Prompt> {
         self.known.clone().filter(|p| p.id == id)
     }
 }

@@ -986,7 +986,7 @@ impl ConversationStore for SqliteStore {
         let id = id.to_string();
         self.with(move |conn, _| {
             conn.execute(
-                "INSERT OR REPLACE INTO views (id, data, expires_at) VALUES (?1, ?2, ?3)",
+                "INSERT INTO views (id, data, expires_at) VALUES (?1, ?2, ?3)",
                 params![id, data, millis(expires)],
             )?;
             Ok(())
