@@ -4,6 +4,20 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.11.0] - 2026-10-27
+
+### Features
+
+- interactive replies and chart images (ADR 0015, ADR 0016) (#54) (77a0692)
+
+### Bug fixes
+
+- **ui:** security review findings before v0.11.0 (#56) (d06b8cd)
+
+### Other
+
+- reopen development as 0.11.0-dev; v0.10.1 checklist done (#52) (7a97a9a)
+
 ## [0.10.1] - 2026-10-25
 
 ### Features
