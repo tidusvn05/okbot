@@ -87,7 +87,7 @@ fonts = ["fonts/NotoSansSC-Regular.otf"]   # optional: Chinese, Korean…
 
 - What people type into a form reaches the agent and the chat history. The agent is told never to
   ask for passwords, codes, tokens or card numbers, and okbot refuses form fields named like
-  them. To collect a secret, use a prompt of your own MCP server ([Your own tools](own-tools.md)):
+  them in English, Vietnamese or Japanese. To collect a secret, use a prompt of your own MCP server ([Your own tools](own-tools.md)):
   its values never reach the agent.
 - Buttons from the agent are not approvals. Tools that change real data still need
   `confirm` on their `[[mcp]]` server ([Permissions](permissions.md)).

@@ -302,12 +302,15 @@ struct Link {
     url: String,
 }
 
-/// Field labels that ask for a secret: a form's values reach the agent and the history.
-const SECRET_WORDS: [&str; 14] = [
+/// Field labels that ask for a secret: a form's values reach the agent and the history. Words
+/// in scripts with spaces match whole words; Japanese, written without spaces, matches anywhere
+/// ([`JA_SECRET_WORDS`]). A backstop only: the agent is told never to ask.
+const SECRET_WORDS: [&str; 22] = [
     "password",
     "passcode",
     "passphrase",
     "mật khẩu",
+    "mật mã",
     "otp",
     "token",
     "api key",
@@ -318,17 +321,37 @@ const SECRET_WORDS: [&str; 14] = [
     "card number",
     "số thẻ",
     "mã xác",
+    "private key",
+    "seed phrase",
+    "recovery phrase",
+    "mnemonic",
+    "security code",
+    "khóa bí mật",
+    "khoá bí mật",
+];
+
+const JA_SECRET_WORDS: [&str; 9] = [
+    "パスワード",
+    "暗証番号",
+    "パスコード",
+    "ワンタイム",
+    "認証コード",
+    "セキュリティコード",
+    "秘密鍵",
+    "トークン",
+    "カード番号",
 ];
 
 fn asks_secret(label: &str) -> bool {
     let label = label.to_lowercase();
-    SECRET_WORDS.iter().any(|w| {
-        label
-            .split(|c: char| !c.is_alphanumeric() && c != ' ')
-            .any(|part| part.trim() == *w)
-            || (w.contains(' ') && label.contains(w))
-            || label.split_whitespace().any(|word| word == *w)
-    })
+    JA_SECRET_WORDS.iter().any(|w| label.contains(w))
+        || SECRET_WORDS.iter().any(|w| {
+            label
+                .split(|c: char| !c.is_alphanumeric() && c != ' ')
+                .any(|part| part.trim() == *w)
+                || (w.contains(' ') && label.contains(w))
+                || label.split_whitespace().any(|word| word == *w)
+        })
 }
 
 fn too_long(what: &str, text: &str, max: usize) -> Result<(), String> {
@@ -696,8 +719,9 @@ struct Built {
     prompt: Option<Prompt>,
 }
 
+/// The id of a view: the key of its row and the only unguessable part of a button's id.
 fn short_id() -> String {
-    format!("v{}", hex::encode(rand::random::<[u8; 4]>()))
+    format!("v{}", hex::encode(rand::random::<[u8; 16]>()))
 }
 
 /// What of a view a platform shows natively.
@@ -968,15 +992,26 @@ async fn show(
     Ok(())
 }
 
-/// The prompt of a view still waiting, for a channel that restarted since it showed it.
-pub(crate) async fn lookup(shared: &Shared, id: &str) -> Option<Prompt> {
+/// The prompt of a view still waiting in `conversation`'s room, for a channel that restarted
+/// since it showed it.
+pub(crate) async fn lookup(
+    shared: &Shared,
+    id: &str,
+    conversation: &ConversationKey,
+) -> Option<Prompt> {
     let data = shared
         .store
         .view(id, shared.clock.now())
         .await
         .ok()
         .flatten()?;
-    serde_json::from_str::<State>(&data).ok().map(|s| s.prompt)
+    serde_json::from_str::<State>(&data)
+        .ok()
+        .filter(|s| {
+            s.conversation.channel == conversation.channel
+                && s.conversation.room == conversation.room
+        })
+        .map(|s| s.prompt)
 }
 
 /// The clicker's next message: `→ ` and the choice, or the form's title and values. The arrow
@@ -1037,7 +1072,10 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
         sent_at: now,
         locale: None,
     };
-    if !shared.gate.admits(&event) {
+    // The checks dispatch makes, so that a press it would drop does not use up the view.
+    if !shared.gate.admits(&event, now)
+        || (shared.config.personal && shared.person_of(&event).await.is_none())
+    {
         tracing::info!(prompt = %answer.prompt, user = %answer.user.id, "view answer ignored: not answered here");
         return;
     }
@@ -1064,7 +1102,10 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     close(
         &shared,
         &state,
-        &format!("→ ✅ {}: {chosen}", answer.user.display_name),
+        &format!(
+            "→ ✅ {}: {chosen}",
+            crate::interact::literal(&answer.user.display_name)
+        ),
     )
     .await;
     tracing::info!(prompt = %answer.prompt, user = %answer.user.id, "view answered");
@@ -1317,10 +1358,23 @@ mod tests {
         assert!(
             args(json!({"form": {"title": "Card", "fields": [{"label": "OTP code"}]}})).is_err()
         );
-        assert!(
-            args(json!({"form": {"title": "Trip", "fields": [{"label": "Departure point"}]}}))
-                .is_ok()
-        );
+        for label in [
+            "パスワードを入力",
+            "暗証番号（4桁）",
+            "Seed phrase",
+            "Mật mã",
+        ] {
+            assert!(
+                args(json!({"form": {"title": "x", "fields": [{"label": label}]}})).is_err(),
+                "{label}"
+            );
+        }
+        for label in ["Departure point", "お名前", "Mã đơn hàng", "Opinion"] {
+            assert!(
+                args(json!({"form": {"title": "x", "fields": [{"label": label}]}})).is_ok(),
+                "{label}"
+            );
+        }
         assert!(
             args(json!({"bogus": 1})).is_err(),
             "unknown fields are refused"

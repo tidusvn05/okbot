@@ -506,6 +506,10 @@ async fn views(store: &dyn ConversationStore, clock: &ManualClock) {
     let later = now + jiff::SignedDuration::from_secs(60);
     store.put_view("v1", "{}".into(), later).await.expect("put");
     store.put_view("v2", "[]".into(), later).await.expect("put");
+    assert!(
+        store.put_view("v2", "{}".into(), later).await.is_err(),
+        "a view never replaces another"
+    );
     assert_eq!(
         store.view("v1", now).await.expect("view").as_deref(),
         Some("{}")

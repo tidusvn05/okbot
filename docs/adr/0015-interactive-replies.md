@@ -23,10 +23,12 @@ payloads.
   link buttons; `FormField.value` pre-fills. `ChannelCaps.ui` (`buttons`, `select`, `forms`, `cards`)
   says what a platform shows natively; the runtime puts everything else into the text (choices as a
   numbered list, a form as a list of fields). `Channel::update_prompt` replaces a prompt statelessly;
-  `InboundSink::prompt` gives an adapter that restarted the prompt behind a click.
+  `InboundSink::prompt` gives an adapter that restarted the prompt behind a click in the same room.
 - **A click is a message.** The first answer to a view becomes the clicker's next message
-  (`→ <label>`, or the form's title and values), after the same access checks as typed text; the
-  arrow also keeps a label from running as a `/command`. The view then shows who chose what and
+  (`→ <label>`, or the form's title and values), after the same access checks as typed text,
+  made before the view is used up: a press the bot would drop (rate limit, length, someone other
+  than a personal bot's owner) leaves the view open for others. The arrow also keeps a label from
+  running as a `/command`. The view then shows who chose what and
   loses its buttons (links stay). The history keeps every view as text, so later turns know what
   was offered and typing works as well as clicking.
 - **Views outlive restarts.** Answerable views are kept in the store (`views` table, operational
@@ -35,7 +37,7 @@ payloads.
 ## Consequences
 - Unlike ADR 0007 forms, values typed into the agent's forms reach the agent, its provider and the
   history. The agent is told never to ask for secrets and fields named like passwords, codes, tokens
-  or card numbers are refused; collecting secrets stays the job of an MCP server's prompt.
+  or card numbers (in English, Vietnamese and Japanese) are refused; collecting secrets stays the job of an MCP server's prompt.
 - Buttons from the agent are not approvals: `[[mcp]] confirm` still guards actions with effects.
 - Clicks cost agent turns and count for `[limits]` and the rate limit.
 - Platform limits differ (Slack cuts labels to 75 characters, Google Chat dialogs need HTTP delivery,

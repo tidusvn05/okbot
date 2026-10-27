@@ -614,8 +614,9 @@ async fn prints_cards_and_writes_charts_to_files() {
         !channel.caps().ui.buttons,
         "views keep their choices as text"
     );
-    let dir = tempfile::tempdir().unwrap();
-    channel.set_chart_dir(dir.path().to_path_buf());
+    let base = tempfile::tempdir().unwrap();
+    let dir = base.path().join("charts");
+    channel.set_chart_dir(dir.clone());
     let to = ReplyTarget {
         conversation: channel.open_direct(&UserId::new("me")).await.unwrap(),
         in_reply_to: None,
@@ -648,7 +649,7 @@ async fn prints_cards_and_writes_charts_to_files() {
         ..Prompt::default()
     };
     channel.prompt(&to, &prompt).await.unwrap();
-    let path = dir.path().join("v1a2b-chart.png");
+    let path = dir.join("v1a2b-chart.png");
     assert_eq!(std::fs::read(&path).unwrap(), b"\x89PNG fake");
     // Read back from the store: no bytes, so nothing is written and no path is shown.
     let stored = Prompt {
@@ -660,15 +661,13 @@ async fn prints_cards_and_writes_charts_to_files() {
         ..Prompt::default()
     };
     channel.prompt(&to, &stored).await.unwrap();
-    assert!(!dir.path().join("v9-chart.png").exists());
+    assert!(!dir.join("v9-chart.png").exists());
     assert!(
         channel.state().prompts.is_empty(),
         "cards alone are not answerable"
     );
 
-    let shown = out
-        .text()
-        .replace(&dir.path().display().to_string(), "<dir>");
+    let shown = out.text().replace(&dir.display().to_string(), "<dir>");
     insta::assert_snapshot!(shown, @r"
     [prompt out-1]
     This week:
@@ -684,4 +683,28 @@ async fn prints_cards_and_writes_charts_to_files() {
     Top: Phở bò
 
     ");
+}
+
+#[cfg(unix)]
+#[test]
+fn charts_go_only_to_a_private_folder() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let base = tempfile::tempdir().unwrap();
+    let dir = base.path().join("charts");
+    let file = dir.join("v1-chart.png");
+    super::write_private(&dir, &file, b"png").unwrap();
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!((mode(&dir), mode(&file)), (0o700, 0o600));
+    assert!(
+        super::write_private(&dir, &file, b"other").is_err(),
+        "a file is never replaced"
+    );
+
+    let open = base.path().join("open");
+    std::fs::create_dir(&open).unwrap();
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(super::write_private(&open, &open.join("v2-chart.png"), b"png").is_err());
+    let link = base.path().join("link");
+    std::os::unix::fs::symlink(&dir, &link).unwrap();
+    assert!(super::write_private(&link, &link.join("v3-chart.png"), b"png").is_err());
 }

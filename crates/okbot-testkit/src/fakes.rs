@@ -318,6 +318,21 @@ impl FakeChannel {
         sink.answer(answer).await.expect("runtime accepts answers");
     }
 
+    /// Asks the runtime for an open prompt, as a channel that restarted would.
+    pub async fn recover(
+        &self,
+        id: &str,
+        conversation: &okbot_core::ConversationKey,
+    ) -> Option<okbot_core::Prompt> {
+        let sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("the runtime started this channel");
+        sink.prompt(id, conversation).await
+    }
+
     /// Typing indicators shown so far.
     pub fn typing_count(&self) -> usize {
         self.typing.load(Ordering::SeqCst)

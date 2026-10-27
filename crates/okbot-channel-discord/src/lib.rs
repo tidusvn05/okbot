@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use okbot_core::{
     CancellationToken, Channel, ChannelCaps, ChannelError, ChannelId, ConversationKey,
@@ -59,12 +60,20 @@ pub struct DiscordChannel {
     app: OnceLock<Id<ApplicationMarker>>,
     /// Prompts shown and not closed, by id (lost on restart: clicks then ask the runtime, and
     /// say the prompt expired when it does not know it either).
-    prompts: Mutex<HashMap<String, okbot_core::Prompt>>,
+    prompts: Mutex<HashMap<String, (Instant, okbot_core::Prompt)>>,
     /// Prompt messages sent with Components V2 (cards), by message id, with their prompt id.
     /// Such a message cannot go back to plain content.
-    v2: Mutex<HashMap<String, String>>,
+    v2: Mutex<HashMap<String, (Instant, String)>>,
     /// Commands for the `/` menu, registered when the gateway connects.
     commands: Mutex<Vec<okbot_core::CommandInfo>>,
+}
+
+/// How long this process remembers a prompt: as long as the runtime keeps its view (ADR 0015).
+const REMEMBER: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// Drops what was remembered longer than [`REMEMBER`] ago.
+fn forget_old<V>(map: &mut HashMap<String, (Instant, V)>) {
+    map.retain(|_, (at, _)| at.elapsed() < REMEMBER);
 }
 
 impl std::fmt::Debug for DiscordChannel {
@@ -243,20 +252,21 @@ impl DiscordChannel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(id)
-            .cloned()
+            .map(|(_, p)| p.clone())
     }
 
-    /// The open prompt `id`, from memory or, when it was shown before a restart, from the runtime
-    /// (which may still wait on it).
+    /// The open prompt `id`, from memory or, when it was shown in `conversation` before a
+    /// restart, from the runtime (which may still wait on it).
     async fn known_prompt(
         &self,
         sink: &Arc<dyn InboundSink>,
         id: &str,
+        conversation: &ConversationKey,
     ) -> Option<okbot_core::Prompt> {
         if let Some(open) = self.open_prompt(id) {
             return Some(open);
         }
-        let recovered = sink.prompt(id).await.filter(|p| p.id == id)?;
+        let recovered = sink.prompt(id, conversation).await.filter(|p| p.id == id)?;
         self.remember(&recovered);
         Some(recovered)
     }
@@ -268,17 +278,30 @@ impl DiscordChannel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if prompt.is_answerable() {
-            prompts.insert(prompt.id.clone(), prompt.clone());
+            forget_old(&mut prompts);
+            let mut kept = prompt.clone();
+            // An empty picture keeps the one the message has: no need to hold the PNG.
+            for card in &mut kept.cards {
+                if let Some(image) = &mut card.image {
+                    image.png = Vec::new();
+                }
+            }
+            prompts.insert(prompt.id.clone(), (Instant::now(), kept));
         } else {
             prompts.remove(&prompt.id);
         }
     }
 
     fn mark_v2(&self, message: &MessageId, prompt: &str) {
-        self.v2
+        let mut v2 = self
+            .v2
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(message.as_str().to_string(), prompt.to_string());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        forget_old(&mut v2);
+        v2.insert(
+            message.as_str().to_string(),
+            (Instant::now(), prompt.to_string()),
+        );
     }
 
     /// The prompt id of a V2 message this process sent or edited.
@@ -287,7 +310,7 @@ impl DiscordChannel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(message.as_str())
-            .cloned()
+            .map(|(_, id)| id.clone())
     }
 
     /// Replaces a prompt message with Components V2 `components` (no content, no embeds).
@@ -493,7 +516,13 @@ impl DiscordChannel {
         let Some((prompt_id, button_id)) = ids else {
             return Ok(());
         };
-        let Some(open) = self.known_prompt(sink, prompt_id).await else {
+        let conversation = ConversationKey {
+            channel: self.id.clone(),
+            space: interaction.guild_id.map(|g| g.to_string()),
+            room: channel_id.to_string(),
+            thread: None,
+        };
+        let Some(open) = self.known_prompt(sink, prompt_id, &conversation).await else {
             self.respond(
                 interaction,
                 &prompt::private_note("⌛ This prompt has expired."),
@@ -531,12 +560,6 @@ impl DiscordChannel {
             return Ok(());
         }
         self.respond(interaction, &prompt::deferred()).await;
-        let conversation = ConversationKey {
-            channel: self.id.clone(),
-            space: interaction.guild_id.map(|g| g.to_string()),
-            room: channel_id.to_string(),
-            thread: None,
-        };
         sink.answer(okbot_core::PromptAnswer {
             prompt: prompt_id.to_string(),
             button: button_id.to_string(),

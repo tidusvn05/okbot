@@ -517,7 +517,8 @@ pub trait ConversationStore: Send + Sync {
     }
 
     /// Keeps the state of an interactive reply waiting for an answer (ADR 0015) until `expires`.
-    /// The runtime defines `data`; the store only keeps it.
+    /// The runtime defines `data`; the store only keeps it. An `id` already kept is an error:
+    /// a view never replaces another.
     async fn put_view(&self, id: &str, data: String, expires: Timestamp) -> Result<(), StoreError> {
         let _ = (id, data, expires);
         Err(unsupported())

@@ -429,8 +429,12 @@ impl InboundSink for EventSink {
         Ok(())
     }
 
-    async fn prompt(&self, id: &str) -> Option<okbot_core::Prompt> {
-        ui::lookup(&self.shared, id).await
+    async fn prompt(
+        &self,
+        id: &str,
+        conversation: &okbot_core::ConversationKey,
+    ) -> Option<okbot_core::Prompt> {
+        ui::lookup(&self.shared, id, conversation).await
     }
 }
 

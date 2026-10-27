@@ -132,8 +132,10 @@ The locale comes from the first of these that is set:
   - Without the scope the prompt fails, the view is sent as text, and a warning names the scope.
   - An image block that refers to the file was left out, because the image block's support for
     uploaded files is less certain than file messages.
-- **Console.** The PNG is written to `<temp dir>/okbot-console/<prompt id>-chart.png` and the
-  console prints its path and description, so charts can be checked without a chat platform.
+- **Console.** The PNG is written to `$XDG_RUNTIME_DIR/okbot-console/<prompt id>-chart.png` (the
+  temp folder when `XDG_RUNTIME_DIR` is unset) and the console prints its path and description, so
+  charts can be checked without a chat platform. Charts hold chat data: the folder must be the
+  user's own (mode 0700) and a file is never replaced.
 - **Google Chat and Zalo** show only images at a public URL. They keep text until a later decision
   on serving charts from `[http] public_url`, because that would put chat data behind a
   public link.

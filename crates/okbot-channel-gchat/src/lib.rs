@@ -101,10 +101,6 @@ impl Shared {
         }
         // Recovering needs to know where the prompt is, which the event tells.
         let place = click.place.as_ref()?;
-        let recovered = sink.prompt(&click.prompt).await?;
-        if !recovered.is_answerable() {
-            return None;
-        }
         let target = ReplyTarget {
             conversation: ConversationKey {
                 channel: self.id.clone(),
@@ -114,6 +110,10 @@ impl Shared {
             },
             in_reply_to: None,
         };
+        let recovered = sink.prompt(&click.prompt, &target.conversation).await?;
+        if !recovered.is_answerable() {
+            return None;
+        }
         let open = prompt::Open::new(&recovered, target, place.message.clone());
         lock(&self.prompts).insert(click.prompt.clone(), open.clone());
         Some(open)

@@ -308,6 +308,10 @@ fn rejects_bad_configs() {
             "reserved",
         ),
         (
+            "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ui\"\nurl = \"http://x\"\ntoken_env = \"T\"\n",
+            "reserved",
+        ),
+        (
             "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"ftp://x\"\ntoken_env = \"T\"\n",
             "url",
         ),

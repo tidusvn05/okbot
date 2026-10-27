@@ -171,6 +171,11 @@ async fn a_press_becomes_the_next_message() {
         history[1].text
     );
 
+    // A channel that restarted gets the view back, in its own room only.
+    let elsewhere = okbot_testkit::conversation("fake:test", "other");
+    assert!(bot.channel.recover(&prompt.id, &key).await.is_some());
+    assert!(bot.channel.recover(&prompt.id, &elsewhere).await.is_none());
+
     // Someone else presses first: the first press wins, the second finds nothing.
     bot.press("room", "bob", &prompt.id, "b2").await;
     bot.idle().await;
@@ -213,6 +218,31 @@ async fn text_rooms_and_unknown_views() {
     bot.idle().await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(bot.agent.turns().len(), 1);
+    bot.finish().await;
+}
+
+#[tokio::test]
+async fn a_press_the_bot_would_not_answer_leaves_the_view_open() {
+    let bot = Bot::start(vec![show()], UiCaps::all(), |c| {
+        c.access.rate_limit = okbot_runtime::config::RateLimit {
+            messages: 1,
+            window: Duration::from_secs(60),
+        };
+    });
+    bot.say("room", "ana", "my order?").await;
+    bot.idle().await;
+    let prompt = bot.channel.prompts()[0].clone();
+
+    // Ana used up her rate limit: her press would be dropped, so it must not take the view.
+    bot.press("room", "ana", &prompt.id, "b1").await;
+    bot.idle().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(bot.agent.turns().len(), 1);
+    assert_eq!(bot.channel.prompt_updates().len(), 0, "the view stays open");
+
+    bot.press("room", "bob", &prompt.id, "b1").await;
+    bot.idle().await;
+    eventually(|| bot.agent.turns().len() == 2).await;
     bot.finish().await;
 }
 

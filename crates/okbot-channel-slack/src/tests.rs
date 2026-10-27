@@ -80,7 +80,11 @@ impl InboundSink for Collect {
         Ok(())
     }
 
-    async fn prompt(&self, id: &str) -> Option<Prompt> {
+    async fn prompt(
+        &self,
+        id: &str,
+        _conversation: &okbot_core::ConversationKey,
+    ) -> Option<Prompt> {
         self.2.lock().unwrap().iter().find(|p| p.id == id).cloned()
     }
 }

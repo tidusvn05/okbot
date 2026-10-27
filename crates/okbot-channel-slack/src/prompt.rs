@@ -32,6 +32,8 @@ pub(crate) struct Open {
     pub(crate) target: ReplyTarget,
     /// Its message.
     pub(crate) ts: String,
+    /// When this process last showed it.
+    pub(crate) at: std::time::Instant,
 }
 
 /// The first `max` characters of `s`, with an ellipsis when cut.
@@ -144,11 +146,14 @@ pub(crate) fn blocks(prompt: &Prompt, actions: bool) -> Value {
     Value::Array(blocks)
 }
 
-/// The plain `text` of a message with blocks (notifications, screen readers).
+/// The plain `text` of a message with blocks (notifications, screen readers). Slack reads it
+/// as mrkdwn: texts come rendered, but a card's title is shown as plain text in the blocks and
+/// is escaped here so it cannot become a mention or a link.
 pub(crate) fn fallback(prompt: &Prompt) -> String {
     let mut text = prompt.text.trim().to_string();
     for card in &prompt.cards {
-        for part in [card.title.as_deref().unwrap_or_default(), &card.text] {
+        let title = card.title.as_deref().map(escape).unwrap_or_default();
+        for part in [title.as_str(), &card.text] {
             if !part.trim().is_empty() {
                 if !text.is_empty() {
                     text.push_str("\n\n");
@@ -158,6 +163,13 @@ pub(crate) fn fallback(prompt: &Prompt) -> String {
         }
     }
     if text.is_empty() { " ".into() } else { text }
+}
+
+/// Escapes the three characters Slack treats as control characters in mrkdwn.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// What a `block_actions` press means.
@@ -457,6 +469,13 @@ mod tests {
         assert_eq!(
             fallback(&prompt),
             "Here is the stock:\n\nWarehouse A\n\n• *Rice* · 30\n\nLow on salt"
+        );
+        let mut loud = prompt.clone();
+        loud.cards[0].title = Some("<!channel> <https://x.test|Invoice> & co".into());
+        assert!(
+            fallback(&loud).contains("&lt;!channel&gt; &lt;https://x.test|Invoice&gt; &amp; co"),
+            "{}",
+            fallback(&loud)
         );
 
         let pick = json!({"action_id": "oks:v1a2b3c4d", "selected_option": {"value": "o2"}});

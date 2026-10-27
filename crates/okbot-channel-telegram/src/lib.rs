@@ -202,7 +202,7 @@ impl Shared {
         // Recovering needs the message and its chat, which very old messages no longer carry.
         let message = query.message.as_ref()?;
         let conversation = message.conversation(&self.id)?;
-        let prompt = sink.prompt(id).await?;
+        let prompt = sink.prompt(id, &conversation).await?;
         if !prompt.is_answerable() {
             return None;
         }

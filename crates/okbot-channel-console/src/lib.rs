@@ -16,7 +16,7 @@ mod line;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -286,18 +286,21 @@ impl ConsoleChannel {
         let _ = self.charts.set(dir);
     }
 
-    /// Writes a card's chart to `<chart dir>/<prompt id>-chart.png`; returns its path.
+    /// Writes a card's chart to `<chart dir>/<prompt id>-chart.png`; returns its path. Charts
+    /// hold chat data: the folder is the user's own (mode 0700) and a file is never replaced.
     async fn save_chart(&self, prompt: &str, png: &[u8]) -> Result<PathBuf, ChannelError> {
         let dir = self.charts.get().cloned().unwrap_or_else(chart_dir);
-        tokio::fs::create_dir_all(&dir).await.map_err(io_error)?;
         // Prompt ids are the runtime's short ids; anything else is kept out of the path.
         let id: String = prompt
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
             .collect();
         let path = dir.join(format!("{id}-chart.png"));
-        tokio::fs::write(&path, png).await.map_err(io_error)?;
-        Ok(path)
+        let png = png.to_vec();
+        tokio::task::spawn_blocking(move || write_private(&dir, &path, &png).map(|()| path))
+            .await
+            .map_err(|e| ChannelError::Failed(Box::new(e)))?
+            .map_err(io_error)
     }
 
     /// How many `:expect` and `:expect-not` checks failed.
@@ -646,8 +649,41 @@ impl ConsoleChannel {
 }
 
 /// Where chart images go by default.
+/// The user's runtime folder when there is one (private by design), else the temp folder.
 fn chart_dir() -> PathBuf {
-    std::env::temp_dir().join("okbot-console")
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|d| d.is_absolute())
+        .unwrap_or_else(std::env::temp_dir)
+        .join("okbot-console")
+}
+
+/// Writes `data` to a new file `path` in `dir`, creating `dir` for this user only. Refuses a
+/// `dir` that is a symlink or open to others (another user may have made it in a shared temp
+/// folder).
+fn write_private(dir: &Path, path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)?;
+    let meta = std::fs::symlink_metadata(dir)?;
+    #[cfg(unix)]
+    let open_to_others = std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o077 != 0;
+    #[cfg(not(unix))]
+    let open_to_others = false;
+    if !meta.is_dir() || open_to_others {
+        return Err(std::io::Error::other(format!(
+            "{} is not a private folder",
+            dir.display()
+        )));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(data)
 }
 
 /// A card as Markdown: a bold title with the tone's emoji, then the text (as the runtime prints

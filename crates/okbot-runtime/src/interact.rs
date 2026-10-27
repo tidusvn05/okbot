@@ -616,9 +616,13 @@ async fn release(shared: &Shared, p: Pending, answer: &PromptAnswer) {
     };
     let outcome = match (waiting, allow) {
         (false, _) => "⌛ No longer waiting; nothing was done.".to_string(),
-        (true, _) if choice => format!("➡️ {} chose `{}`", answer.user.display_name, answer.button),
-        (true, true) => format!("✅ Allowed by {}", answer.user.display_name),
-        (true, false) => format!("❌ Declined by {}", answer.user.display_name),
+        (true, _) if choice => format!(
+            "➡️ {} chose `{}`",
+            literal(&answer.user.display_name),
+            answer.button
+        ),
+        (true, true) => format!("✅ Allowed by {}", literal(&answer.user.display_name)),
+        (true, false) => format!("❌ Declined by {}", literal(&answer.user.display_name)),
     };
     tracing::info!(prompt = %answer.prompt, user = %answer.user.id, allow, waiting, "tool call answered");
     update(shared, &p.sent, p.text, &p.markdown, &outcome, false).await;
@@ -699,9 +703,31 @@ pub(crate) async fn sweep(shared: Arc<Shared>, stop: okbot_core::CancellationTok
     }
 }
 
+/// `text` as Markdown that shows it as written: a person's display name cannot become a link,
+/// emphasis or a heading in the bot's own message.
+pub(crate) fn literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(
+            c,
+            '\\' | '`' | '*' | '_' | '[' | ']' | '(' | ')' | '<' | '>' | '#' | '~' | '|' | '!'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_stay_literal() {
+        assert_eq!(literal("[Login](https://x)"), r"\[Login\]\(https://x\)");
+        assert_eq!(literal("Lê Văn *An*_"), r"Lê Văn \*An\*\_");
+    }
 
     #[test]
     fn callbacks_stay_on_the_server_origin() {
