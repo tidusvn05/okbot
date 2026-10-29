@@ -16,7 +16,9 @@ which cuts the platform connections and interrupts answers in progress (#61).
   `RuntimeHandle::reload_access` swaps it. Other settings (channels, agents, `[[mcp]]`, commands,
   limits) still apply at start only: changing them safely means rebuilding connections.
 - **Triggers.** `okbot run` checks `okbot.toml` every two seconds (modification time and size) and
-  reloads on SIGHUP. `okbot reload <bot>` validates the file, then sends SIGHUP to the service's main
+  reloads a change once it has stayed the same for one more check, so a file still being written is
+  not read; okbot's own edits (`okbot people link`, `okbot role`, …) replace the file with a rename.
+  It also reloads on SIGHUP. `okbot reload <bot>` validates the file, then sends SIGHUP to the service's main
   process only (`systemctl kill --kill-whom=main`), so agent CLIs it runs are not signalled. A file that
   does not load is logged and changes nothing.
 - **Snapshots, not locks.** A turn takes the lists it needs when it checks them. A turn already

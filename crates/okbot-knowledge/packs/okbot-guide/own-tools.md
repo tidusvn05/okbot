@@ -41,7 +41,9 @@ request, then authorize by `user` and `admin`; the agent cannot change them.
 the token it received: `OKBOT_RUN_TOKEN=<token> okbot task add "Renew cert" --remind "…" --json`
 (or `--run-token`). okbot checks the signature, expiry and bot, and the task belongs to the person
 linked to the token's `user` in `[people]` (the owner on a personal bot), so no `--person` is
-needed. `--person` still wins when given.
+needed. `--person` still wins when given. This picks the owner; it is not a permission check
+(whoever can run `okbot task` can pass `--person`), so keep authorizing in your server. Prefer the
+variable to the flag: arguments show up in `ps`.
 
 With the signature, a server can keep **per-person OAuth tokens** for services that have no MCP
 server of their own: see `docs/extending/accounts.md` and `examples/mcp/accounts-server.mjs` in the

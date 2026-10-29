@@ -42,7 +42,7 @@ support = []                                 # filled by temporary grants only
 
 - `admins` and `everyone` are built-in roles. On a personal bot the owner is an admin.
 - **No restart for access changes.** A running bot re-reads `[bot] admins`, `allow_users`,
-  `blocked_users`, `[people]` and `[roles]` within two seconds of a change to `okbot.toml`
+  `blocked_users`, `[people]` and `[roles]` about four seconds after a change to `okbot.toml`
   (`okbot people link` included); `okbot reload <bot>` applies them at once. Conversations keep
   going; a turn already running finishes with the old lists. A file with a mistake changes nothing
   (the log says why). Other settings still need `okbot restart`.

@@ -68,10 +68,13 @@ fn reload(dir: &Path, runtime: &RuntimeHandle, why: &str) {
     }
 }
 
-/// Reloads the access lists when `okbot.toml` changes, and on SIGHUP, until `stop`.
+/// Reloads the access lists when `okbot.toml` changes, and on SIGHUP, until `stop`. A change is
+/// applied once the file has stayed the same for one more check, so an editor that is still
+/// writing it is not read half way.
 async fn watch(dir: PathBuf, runtime: RuntimeHandle, stop: CancellationToken) {
     let file = dir.join(okbot_config::CONFIG_FILE);
     let mut last = stamp(&file);
+    let mut pending = None;
     let mut tick = tokio::time::interval(WATCH_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     #[cfg(unix)]
@@ -90,13 +93,19 @@ async fn watch(dir: PathBuf, runtime: RuntimeHandle, stop: CancellationToken) {
             () = stop.cancelled() => return,
             Some(()) = signalled => {
                 last = stamp(&file);
+                pending = None;
                 reload(&dir, &runtime, "SIGHUP");
             }
             _ = tick.tick() => {
                 let now = stamp(&file);
-                if now.is_some() && now != last {
+                if now.is_none() || now == last {
+                    pending = None;
+                } else if pending == Some(now) {
                     last = now;
+                    pending = None;
                     reload(&dir, &runtime, "okbot.toml changed");
+                } else {
+                    pending = Some(now);
                 }
             }
         }
