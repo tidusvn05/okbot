@@ -4,6 +4,9 @@
 //!
 //! Views are sent after the answer text. Those with something to answer are kept in the store
 //! until [`TTL`], so their buttons outlive restarts; the first answer wins and closes them.
+//!
+//! `[[command]]` results and notifications carry views too (ADR 0017): the same cards and links,
+//! without choices or forms, plus buttons that run a `[[command]]` as the person who presses.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -15,12 +18,13 @@ use axum::response::{IntoResponse, Response};
 use okbot_core::{
     ButtonStyle, Card, ChannelCaps, Chart, ChartKind, ConversationKey, FieldStyle, Form, FormField,
     Image, InboundEvent, InboundSink as _, Prompt, PromptAnswer, PromptButton, ReplyMode,
-    ReplyTarget, Select, SelectOption, SentRef, Series, Tone, ToolCallRecord, ToolDecision,
+    ReplyTarget, Select, SelectOption, SentRef, Series, Tone, ToolCallRecord, ToolDecision, UserId,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::Shared;
+use crate::config::McpCommand;
 use crate::gateway::Grant;
 
 /// The gateway path and the server name the agent sees.
@@ -44,8 +48,16 @@ const MAX_CARD_TEXT: usize = 1500;
 const BAR_WIDTH: usize = 12;
 /// How long drawing a chart may take before it is shown as text (ADR 0016).
 const CHART_TIMEOUT: Duration = Duration::from_secs(2);
-/// The id of a form button (choices are `b1`…, options `o1`…, links `l1`…).
+/// The id of a form button (choices are `b1`…, options `o1`…, links `l1`…, commands `c1`…).
 const FORM: &str = "form";
+/// The key of a view in a `[[command]]` result: `structuredContent.okbot_view`, or a text that is
+/// only `{"okbot_view": …}` (ADR 0017).
+pub(crate) const ENVELOPE: &str = "okbot_view";
+/// Characters of a button's command line.
+const MAX_COMMAND_LINE: usize = 200;
+/// How a press's event id starts; a press that confirmed a command starts with [`CONFIRMED`].
+const PRESSED: &str = "ui:";
+const CONFIRMED: &str = "ui+:";
 
 /// The views one turn's agent asked to show, sent after its answer.
 pub(crate) type Shown = Arc<Mutex<Vec<View>>>;
@@ -83,6 +95,31 @@ struct ShowArgs {
     form: Option<FormArgs>,
     #[serde(default)]
     links: Vec<Link>,
+}
+
+/// A view from a program (ADR 0017): a `[[command]]`'s tool or a notification's caller. No
+/// choices or forms (their answers would go to the agent); buttons run `[[command]]`s.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ViewArgs {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    cards: Vec<CardArgs>,
+    #[serde(default)]
+    buttons: Vec<ButtonArgs>,
+    #[serde(default)]
+    links: Vec<Link>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ButtonArgs {
+    label: String,
+    /// `/name args…` of a `[[command]]`.
+    command: String,
+    #[serde(default)]
+    style: Option<ButtonStyle>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,6 +291,24 @@ pub(crate) struct View {
     placeholder: Option<String>,
     form: Option<ViewForm>,
     links: Vec<Link>,
+    /// Buttons that run a `[[command]]` (never from the agent).
+    #[serde(default)]
+    commands: Vec<CommandButton>,
+    /// Who may press; anyone when empty.
+    #[serde(default)]
+    allowed: Vec<UserId>,
+}
+
+/// A button that runs a `[[command]]` as the person who presses it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct CommandButton {
+    label: String,
+    /// The command line, `/name args…`.
+    command: String,
+    style: ButtonStyle,
+    /// The press is the approval `[[mcp]] confirm` asks for: it runs as if typed.
+    #[serde(default)]
+    confirmed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -480,9 +535,134 @@ fn chart_markdown(chart: &Chart) -> String {
     lines.join("\n")
 }
 
+/// The command line a button runs: one line, `/name …` of one of `commands`.
+fn command_line(line: &str, commands: &[McpCommand]) -> Result<String, String> {
+    let line = line.trim();
+    if line.contains(['\n', '\r']) || line.chars().count() > MAX_COMMAND_LINE {
+        return Err(format!(
+            "a button's command is one line of at most {MAX_COMMAND_LINE} characters"
+        ));
+    }
+    // A built-in always wins over a `[[command]]` of the same name, so it is refused too.
+    if crate::mcp_command::find_in(commands, line).is_none()
+        || crate::command::Command::parse(line).is_some()
+    {
+        return Err(format!(
+            "button command {line:?}: not a [[command]] of this bot"
+        ));
+    }
+    Ok(line.to_string())
+}
+
+/// What a `[[command]]`'s tool result carries.
+#[derive(Debug)]
+pub(crate) enum Carried {
+    /// No view: the text is the answer.
+    Nothing,
+    View(Box<View>),
+    /// A view okbot cannot show; `in_text` when it took the place of the text.
+    Invalid {
+        error: String,
+        in_text: bool,
+    },
+}
+
+/// The view of a tool's result (ADR 0017): `structuredContent.okbot_view`, else a text that is
+/// only `{"okbot_view": …}`.
+pub(crate) fn carried(structured: Option<&Value>, text: &str, commands: &[McpCommand]) -> Carried {
+    let (value, in_text) = match structured.and_then(|s| s.get(ENVELOPE)) {
+        Some(v) => (v.clone(), false),
+        None => {
+            let text = text.trim();
+            if !text.starts_with('{') || !text.contains(ENVELOPE) {
+                return Carried::Nothing;
+            }
+            match serde_json::from_str::<Value>(text) {
+                Ok(Value::Object(mut map)) if map.contains_key(ENVELOPE) => {
+                    if map.len() > 1 {
+                        return Carried::Invalid {
+                            error: format!("a text view holds only `{ENVELOPE}`"),
+                            in_text: true,
+                        };
+                    }
+                    (map.remove(ENVELOPE).unwrap_or_default(), true)
+                }
+                _ => return Carried::Nothing,
+            }
+        }
+    };
+    match View::from_json(value, commands) {
+        Ok(view) => Carried::View(Box::new(view)),
+        Err(error) => Carried::Invalid { error, in_text },
+    }
+}
+
 impl View {
+    /// A view a program sent (ADR 0017), checked as the agent's are; its buttons may run only
+    /// `commands`.
+    pub(crate) fn from_json(value: Value, commands: &[McpCommand]) -> Result<Self, String> {
+        let args: ViewArgs =
+            serde_json::from_value(value).map_err(|e| format!("invalid view: {e}"))?;
+        if args.buttons.len() + args.links.len() > okbot_core::MAX_BUTTONS {
+            return Err(format!(
+                "at most {} buttons and links together",
+                okbot_core::MAX_BUTTONS
+            ));
+        }
+        let mut buttons: Vec<CommandButton> = Vec::new();
+        for b in args.buttons {
+            if b.label.trim().is_empty() {
+                return Err("button labels must not be empty".into());
+            }
+            too_long("button label", &b.label, 80)?;
+            if buttons.iter().any(|c| c.label == b.label) {
+                return Err(format!("button {:?} is listed twice", b.label));
+            }
+            buttons.push(CommandButton {
+                command: command_line(&b.command, commands)?,
+                label: b.label,
+                style: b.style.unwrap_or(ButtonStyle::Secondary),
+                confirmed: false,
+            });
+        }
+        Self::checked(
+            ShowArgs {
+                text: args.text,
+                cards: args.cards,
+                choices: Vec::new(),
+                placeholder: None,
+                form: None,
+                links: args.links,
+            },
+            buttons,
+        )
+    }
+
+    /// Asks to confirm `line`: one button that runs it as typed, pressed only by `allowed`.
+    pub(crate) fn confirmation(text: String, line: &str, allowed: Vec<UserId>) -> Self {
+        Self {
+            text,
+            cards: Vec::new(),
+            choices: Vec::new(),
+            placeholder: None,
+            form: None,
+            links: Vec::new(),
+            commands: vec![CommandButton {
+                label: "Run".into(),
+                command: line.to_string(),
+                style: ButtonStyle::Danger,
+                confirmed: true,
+            }],
+            allowed,
+        }
+    }
+
     /// Checks the agent's arguments; the error tells it what to change.
     fn from_args(args: ShowArgs) -> Result<Self, String> {
+        Self::checked(args, Vec::new())
+    }
+
+    fn checked(args: ShowArgs, commands: Vec<CommandButton>) -> Result<Self, String> {
         too_long("text", &args.text, MAX_TEXT)?;
         if args.cards.len() > okbot_core::MAX_CARDS {
             return Err(format!("at most {} cards", okbot_core::MAX_CARDS));
@@ -565,12 +745,15 @@ impl View {
             placeholder: args.placeholder,
             form,
             links: args.links,
+            commands,
+            allowed: Vec::new(),
         };
         if view.text.is_empty()
             && view.cards.is_empty()
             && view.choices.is_empty()
             && view.form.is_none()
             && view.links.is_empty()
+            && view.commands.is_empty()
         {
             return Err("nothing to show".into());
         }
@@ -630,6 +813,22 @@ impl View {
             .join("\n")
     }
 
+    /// Command buttons as the commands to type.
+    fn commands_markdown(&self) -> String {
+        self.commands
+            .iter()
+            .map(|c| {
+                let line = c.command.replace('`', "'");
+                if c.confirmed {
+                    format!("Send `{line}` to run it.")
+                } else {
+                    format!("- {}: `{line}`", c.label)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn links_markdown(&self) -> String {
         self.links
             .iter()
@@ -644,6 +843,7 @@ impl View {
         blocks.extend(self.cards.iter().map(Self::card_markdown));
         blocks.push(self.choices_markdown());
         blocks.extend(self.form.iter().map(Self::form_markdown));
+        blocks.push(self.commands_markdown());
         blocks.push(self.links_markdown());
         join(blocks)
     }
@@ -732,14 +932,18 @@ struct Native {
     select: bool,
     form: bool,
     links: bool,
+    commands: bool,
 }
 
 impl Native {
     fn of(view: &View, ui: okbot_core::UiCaps) -> Self {
         let links = ui.buttons && !view.links.is_empty();
         let form = ui.buttons && ui.forms && view.form.is_some();
+        let commands = ui.buttons && !view.commands.is_empty();
         let n = view.choices.len();
-        let extra = if links { view.links.len() } else { 0 } + usize::from(form);
+        let extra = if links { view.links.len() } else { 0 }
+            + usize::from(form)
+            + if commands { view.commands.len() } else { 0 };
         let buttons = ui.buttons && n > 0 && n + extra <= okbot_core::MAX_BUTTONS;
         Self {
             cards: ui.cards && !view.cards.is_empty(),
@@ -747,11 +951,12 @@ impl Native {
             select: !buttons && ui.select && n >= 2,
             form,
             links,
+            commands,
         }
     }
 
     fn any(self) -> bool {
-        self.cards || self.buttons || self.select || self.form || self.links
+        self.cards || self.buttons || self.select || self.form || self.links || self.commands
     }
 }
 
@@ -774,6 +979,9 @@ fn build(
     if !native.form {
         text.extend(view.form.iter().map(View::form_markdown));
     }
+    if !native.commands {
+        text.push(view.commands_markdown());
+    }
     if !native.links {
         text.push(view.links_markdown());
     }
@@ -795,6 +1003,7 @@ fn build(
     let mut prompt = Prompt {
         id: short_id(),
         text,
+        allowed: view.allowed.clone(),
         ..Prompt::default()
     };
     if native.cards {
@@ -865,6 +1074,17 @@ fn actions(prompt: &mut Prompt, view: &View, native: Native) {
             url: None,
         });
     }
+    if native.commands {
+        prompt
+            .buttons
+            .extend(view.commands.iter().enumerate().map(|(i, c)| PromptButton {
+                id: format!("c{}", i + 1),
+                label: c.label.clone(),
+                style: c.style,
+                form: None,
+                url: None,
+            }));
+    }
     if native.links {
         prompt
             .buttons
@@ -887,6 +1107,9 @@ struct State {
     labels: BTreeMap<String, String>,
     /// The form behind the form button.
     form: Option<Form>,
+    /// What each command button runs.
+    #[serde(default)]
+    commands: BTreeMap<String, CommandButton>,
     conversation: ConversationKey,
     is_direct: bool,
     sent: SentRef,
@@ -901,20 +1124,44 @@ pub(crate) fn take(shown: Option<Shown>) -> Vec<View> {
 
 /// Sends the views of a turn after its answer. Failures fall back to text, then to a log line.
 pub(crate) async fn send(shared: &Shared, event: &InboundEvent, views: &[View]) {
-    let Some(channel) = shared.channels.get(&event.conversation.channel) else {
-        return;
-    };
     let to = crate::dispatch::target(event);
     for view in views {
-        let image = chart_image(shared, view, channel.caps()).await;
-        let built = build(shared.renderer.as_ref(), view, channel.caps(), image);
-        if let Err(error) = show(shared, event, &to, view, built).await {
-            tracing::warn!(%error, "an interactive view failed; sending it as text");
-            if let Err(error) = crate::turn::send_to(shared, &to, &view.markdown()).await {
-                tracing::error!(%error, "cannot send a view as text");
-            }
+        if let Err(error) = deliver(shared, &to, event.is_direct, view).await {
+            tracing::error!(%error, "cannot send a view as text");
         }
     }
+}
+
+/// Sends one view to `to` (a direct chat when `is_direct`), as text when the platform refuses
+/// it. Returns the messages sent.
+pub(crate) async fn deliver(
+    shared: &Shared,
+    to: &ReplyTarget,
+    is_direct: bool,
+    view: &View,
+) -> Result<Vec<okbot_core::MessageId>, okbot_core::ChannelError> {
+    let Some(channel) = shared.channels.get(&to.conversation.channel) else {
+        return Err(okbot_core::ChannelError::Unsupported("channel not running"));
+    };
+    let image = chart_image(shared, view, channel.caps()).await;
+    let built = build(shared.renderer.as_ref(), view, channel.caps(), image);
+    let checked = match &built.prompt {
+        Some(prompt) => prompt.validate(),
+        None => Ok(()),
+    };
+    let error = match checked {
+        Ok(()) => match show(shared, to, is_direct, view, built).await {
+            Ok(sent) => return Ok(sent),
+            Err(error) => error.to_string(),
+        },
+        Err(error) => error,
+    };
+    tracing::warn!(%error, "an interactive view failed; sending it as text");
+    let mut sent = Vec::new();
+    for part in shared.renderer.render(&view.markdown(), channel.caps()) {
+        sent.push(channel.send(to, &part).await?.message_id);
+    }
+    Ok(sent)
 }
 
 /// The first card chart of `view` drawn as a picture, when the bot draws charts and the channel
@@ -949,35 +1196,44 @@ async fn chart_image(shared: &Shared, view: &View, caps: &ChannelCaps) -> Option
 
 async fn show(
     shared: &Shared,
-    event: &InboundEvent,
     to: &ReplyTarget,
+    is_direct: bool,
     view: &View,
     built: Built,
-) -> Result<(), okbot_core::ChannelError> {
-    let Some(channel) = shared.channels.get(&event.conversation.channel) else {
-        return Ok(());
+) -> Result<Vec<okbot_core::MessageId>, okbot_core::ChannelError> {
+    let Some(channel) = shared.channels.get(&to.conversation.channel) else {
+        return Ok(Vec::new());
     };
+    let mut ids = Vec::new();
     for part in &built.lead {
-        channel.send(to, part).await?;
+        ids.push(channel.send(to, part).await?.message_id);
     }
     let Some(prompt) = built.prompt else {
-        return Ok(());
+        return Ok(ids);
     };
     let sent = channel.prompt(to, &prompt).await?;
+    ids.push(sent.message_id.clone());
     if !prompt.is_answerable() {
-        return Ok(());
+        return Ok(ids);
     }
     let mut labels: BTreeMap<String, String> = BTreeMap::new();
     for (i, c) in view.choices.iter().enumerate() {
         labels.insert(format!("b{}", i + 1), c.label.clone());
         labels.insert(format!("o{}", i + 1), c.label.clone());
     }
+    let commands = view
+        .commands
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (format!("c{}", i + 1), c.clone()))
+        .collect();
     let state = State {
         form: view.form.as_ref().map(|f| f.form.clone()),
         prompt,
         labels,
-        conversation: event.conversation.clone(),
-        is_direct: event.is_direct,
+        commands,
+        conversation: to.conversation.clone(),
+        is_direct,
         sent,
     };
     let expires = shared.clock.now()
@@ -989,7 +1245,7 @@ async fn show(
         tracing::error!(%error, "cannot keep an interactive view");
     }
     tracing::info!(prompt = %state.prompt.id, "interactive view shown");
-    Ok(())
+    Ok(ids)
 }
 
 /// The prompt of a view still waiting in `conversation`'s room, for a channel that restarted
@@ -1015,8 +1271,12 @@ pub(crate) async fn lookup(
 }
 
 /// The clicker's next message: `→ ` and the choice, or the form's title and values. The arrow
-/// also keeps a label from being read as a `/command`.
+/// also keeps a label from being read as a `/command`. A command button's message is its
+/// command line (only ever a `[[command]]`'s, ADR 0017).
 fn answer_text(state: &State, answer: &PromptAnswer) -> Option<String> {
+    if let Some(c) = state.commands.get(&answer.button) {
+        return Some(c.command.clone());
+    }
     if answer.button == FORM {
         let form = state.form.as_ref()?;
         let mut text = format!("→ {}", form.title);
@@ -1055,11 +1315,26 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     {
         return;
     }
+    if !state.prompt.may_answer(&answer.user.id) {
+        tracing::info!(prompt = %answer.prompt, user = %answer.user.id, "view answer ignored: not theirs");
+        return;
+    }
     let Some(text) = answer_text(&state, &answer) else {
         return;
     };
+    let command = state.commands.get(&answer.button);
+    // Still a `[[command]]` of this bot, never a built-in: the bot may have changed since.
+    if command.is_some() && command_line(&text, &shared.config.commands).is_err() {
+        tracing::warn!(prompt = %answer.prompt, "a button's command is no longer a [[command]]");
+        return;
+    }
+    let prefix = if command.is_some_and(|c| c.confirmed) {
+        CONFIRMED
+    } else {
+        PRESSED
+    };
     let event = InboundEvent {
-        event_id: format!("ui:{}:{}", answer.prompt, answer.user.id),
+        event_id: format!("{prefix}{}:{}", answer.prompt, answer.user.id),
         conversation: state.conversation.clone(),
         author: answer.user.clone(),
         text,
@@ -1086,7 +1361,9 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     ) {
         return;
     }
-    let chosen = if answer.button == FORM {
+    let chosen = if let Some(c) = command {
+        c.label.clone()
+    } else if answer.button == FORM {
         state
             .form
             .as_ref()
@@ -1115,6 +1392,13 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     if sink.deliver(event).await.is_err() {
         tracing::warn!("the runtime stopped before a view answer was handled");
     }
+}
+
+/// The message comes from a button press that did not confirm anything: a `[[command]]` it runs
+/// still asks for the approval `[[mcp]] confirm` wants, since the presser saw only a label. (An
+/// event id cannot make a typed command ask less: typed commands are never confirmed.)
+pub(crate) fn pressed(event: &InboundEvent) -> bool {
+    event.event_id.starts_with(PRESSED)
 }
 
 /// Shows the outcome under a view and removes what could be answered (links stay).
@@ -1552,6 +1836,15 @@ mod tests {
         let key = okbot_testkit::conversation("discord:main", "c1");
         let state = State {
             labels: BTreeMap::from([("b2".into(), "/reset".into())]),
+            commands: BTreeMap::from([(
+                "c1".into(),
+                CommandButton {
+                    label: "Refresh".into(),
+                    command: "/status freach".into(),
+                    style: ButtonStyle::Primary,
+                    confirmed: false,
+                },
+            )]),
             form: view.form.as_ref().map(|f| f.form.clone()),
             prompt,
             conversation: key.clone(),
@@ -1585,5 +1878,188 @@ mod tests {
             answer_text(&state, &answer).as_deref(),
             Some("→ Address\nStreet: 1 Main St\nNote: —")
         );
+        // A command button's press is its command line, without the arrow.
+        answer.button = "c1".into();
+        assert_eq!(
+            answer_text(&state, &answer).as_deref(),
+            Some("/status freach")
+        );
+    }
+
+    fn commands() -> Vec<McpCommand> {
+        ["status", "restart"]
+            .into_iter()
+            .map(|name| McpCommand {
+                name: name.into(),
+                description: String::new(),
+                descriptions: Vec::new(),
+                mcp: "ops".into(),
+                tool: name.into(),
+                args: Vec::new(),
+                with: serde_json::Map::new(),
+                admins_only: false,
+                roles: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn board() -> Value {
+        json!({
+            "text": "Services of **freach**",
+            "cards": [{"title": "channel-broker", "tone": "success",
+                       "fields": [{"label": "Uptime", "value": "3 d"}],
+                       "table": {"columns": ["Pod", "State"], "rows": [["cb-1", "running"]]}}],
+            "buttons": [
+                {"label": "Refresh", "command": "/status freach", "style": "primary"},
+                {"label": "Restart", "command": "/restart freach channel-broker", "style": "danger"}
+            ],
+            "links": [{"label": "Grafana", "url": "https://grafana.example.com/d/1"}]
+        })
+    }
+
+    #[test]
+    fn command_views_are_checked() {
+        let commands = commands();
+        let view = |v: Value| View::from_json(v, &commands);
+        assert!(view(board()).is_ok());
+        let wrong = [
+            (
+                json!({"buttons": [{"label": "x", "command": "/deploy prod"}]}),
+                "not a [[command]]",
+            ),
+            (
+                json!({"buttons": [{"label": "x", "command": "status freach"}]}),
+                "not a [[command]]",
+            ),
+            (
+                json!({"buttons": [{"label": "x", "command": "/reset"}]}),
+                "not a [[command]]",
+            ),
+            (
+                json!({"buttons": [{"label": "x", "command": "/status a\n/restart b"}]}),
+                "one line",
+            ),
+            (
+                json!({"buttons": [{"label": "x", "command": "/status"}, {"label": "x", "command": "/restart"}]}),
+                "twice",
+            ),
+            (json!({"choices": ["a", "b"]}), "unknown field `choices`"),
+            (
+                json!({"form": {"title": "x", "fields": [{"label": "y"}]}}),
+                "unknown field `form`",
+            ),
+            (json!({}), "nothing to show"),
+            (
+                json!({"links": [{"label": "a", "url": "https://a"}, {"label": "b", "url": "https://b"},
+                    {"label": "c", "url": "https://c"}],
+                    "buttons": [{"label": "1", "command": "/status"}, {"label": "2", "command": "/status 2"},
+                    {"label": "3", "command": "/status 3"}]}),
+                "at most 5",
+            ),
+        ];
+        for (value, error) in wrong {
+            let result = view(value.clone());
+            assert!(
+                result.as_ref().is_err_and(|e| e.contains(error)),
+                "{value}: {result:?}"
+            );
+        }
+        // `@bot` and capitals name the same command, as when typed.
+        assert!(view(json!({"buttons": [{"label": "x", "command": "/Status@okbot"}]})).is_ok());
+    }
+
+    #[test]
+    fn command_views_as_text() {
+        let view = View::from_json(board(), &commands()).unwrap();
+        insta::assert_snapshot!(view.markdown(), @r"
+        Services of **freach**
+
+        **✅ channel-broker**
+        **Uptime:** 3 d
+        -# Pod · State
+        • **cb-1** · running
+
+        - Refresh: `/status freach`
+        - Restart: `/restart freach channel-broker`
+
+        - Grafana: https://grafana.example.com/d/1
+        ");
+        // Without buttons (Zalo, the console) everything is text, commands to type included.
+        let built = build(&renderer(), &view, &caps(UiCaps::default()), None);
+        assert!(built.prompt.is_none());
+        assert!(built.lead[0].text.contains("- Restart: `/restart"));
+    }
+
+    #[test]
+    fn command_buttons_become_prompt_buttons() {
+        let view = View::from_json(board(), &commands()).unwrap();
+        let prompt = build(&renderer(), &view, &caps(UiCaps::all()), None)
+            .prompt
+            .expect("a prompt");
+        assert!(prompt.validate().is_ok());
+        let buttons: Vec<(&str, &str, ButtonStyle)> = prompt
+            .buttons
+            .iter()
+            .map(|b| (b.id.as_str(), b.label.as_str(), b.style))
+            .collect();
+        assert_eq!(
+            buttons,
+            [
+                ("c1", "Refresh", ButtonStyle::Primary),
+                ("c2", "Restart", ButtonStyle::Danger),
+                ("l1", "Grafana", ButtonStyle::Secondary)
+            ]
+        );
+        assert!(prompt.is_answerable() && prompt.allowed.is_empty());
+        assert_eq!(prompt.cards[0].title.as_deref(), Some("channel-broker"));
+
+        let ask = View::confirmation("Run it?".into(), "/restart freach", vec![UserId::new("u1")]);
+        let prompt = build(&renderer(), &ask, &caps(UiCaps::all()), None)
+            .prompt
+            .expect("a prompt");
+        assert_eq!(prompt.allowed, [UserId::new("u1")]);
+        assert_eq!(prompt.buttons[0].label, "Run");
+        assert_eq!(
+            ask.markdown(),
+            "Run it?\n\nSend `/restart freach` to run it."
+        );
+    }
+
+    #[test]
+    fn views_travel_in_structured_content_or_a_text_envelope() {
+        let commands = commands();
+        let envelope = json!({ENVELOPE: board()});
+        let structured = carried(Some(&envelope), "{\"raw\": 1}", &commands);
+        assert!(matches!(structured, Carried::View(_)), "{structured:?}");
+        let text = carried(None, &envelope.to_string(), &commands);
+        assert!(matches!(text, Carried::View(_)), "{text:?}");
+        // Other structured data and other JSON texts are not views.
+        let data = json!({"services": []});
+        assert!(matches!(
+            carried(Some(&data), "ok", &commands),
+            Carried::Nothing
+        ));
+        assert!(matches!(
+            carried(None, "{\"okbot_viewer\": 1, \"x\": [", &commands),
+            Carried::Nothing
+        ));
+        assert!(matches!(
+            carried(None, "**okbot_view** is a word", &commands),
+            Carried::Nothing
+        ));
+        let bad = json!({ENVELOPE: {"cards": "nope"}});
+        assert!(matches!(
+            carried(Some(&bad), "text", &commands),
+            Carried::Invalid { in_text: false, .. }
+        ));
+        assert!(matches!(
+            carried(None, &bad.to_string(), &commands),
+            Carried::Invalid { in_text: true, .. }
+        ));
+        let extra = json!({ENVELOPE: board(), "more": 1});
+        assert!(matches!(
+            carried(None, &extra.to_string(), &commands),
+            Carried::Invalid { in_text: true, .. }
+        ));
     }
 }

@@ -57,6 +57,8 @@ journalctl -n 20 | okbot send alerts --id daily-log   # text from stdin
 - `id` is optional: the same id within an hour is not sent again (`{"duplicate": true}`), so a caller can retry
   safely. When nothing was delivered the id is released, so a retry tries again. Ids are forgotten when the bot
   restarts.
+- `view` is optional and sent after the text; with a view, `text` may be left out
+  ([ADR 0017](adr/0017-views-for-commands-and-notifications.md)). See below.
 
 The answer lists every chat:
 
@@ -71,10 +73,43 @@ The answer lists every chat:
 | 207 | delivered to some chats; see `failed` |
 | 503 | delivered nowhere, but every failure may pass later (`Retry-After` when the platform said how long) |
 | 502 | delivered nowhere |
-| 400 / 413 | bad request / text too long |
+| 400 / 413 | bad request (an invalid `view` included) / text too long |
 | 401 | unknown target name or wrong token (they look the same) |
 
 `okbot send` exits 0 only when every chat got the message.
+
+## Cards and buttons
+
+A `view` shows cards, link buttons and buttons that run one of the bot's `[[command]]`s, natively on Discord, Slack,
+Google Chat and Telegram, and as text elsewhere. The format is the one a `[[command]]`'s tool can answer with
+(`okbot_view`, see [the guide](../crates/okbot-knowledge/packs/okbot-guide/own-tools.md)):
+
+```json
+{"id": "vps01-disk-2026-10-30",
+ "view": {
+   "text": "Disk almost full",
+   "cards": [{"title": "vps01", "tone": "warning",
+              "fields": [{"label": "Disk", "value": "91%"}, {"label": "Largest", "value": "/var/log"}],
+              "chart": {"unit": "%", "points": [{"label": "/", "value": 91}, {"label": "/data", "value": 40}]}}],
+   "buttons": [{"label": "Check again", "command": "/disk vps01"},
+               {"label": "Clean logs", "command": "/cleanlogs vps01", "style": "danger"}],
+   "links": [{"label": "Grafana", "url": "https://grafana.example.com/d/vps01"}]
+ }}
+```
+
+```sh
+okbot send alerts --view disk.json               # the view alone
+okbot send alerts "Nightly report" --view report.json
+```
+
+- Up to 5 cards (title, tone `neutral|info|success|warning|error`, Markdown text, fields, a table, a chart), up to 3
+  links (`https` only), and buttons and links together at most 5. Unknown fields are refused.
+- A button's `command` must be a `[[command]]` of this bot (`/name args…`, one line): never a built-in command or a
+  message to the agent. The view is refused with 400 and the reason otherwise.
+- A press runs the command as the person who pressed it, with their roles, in their chat (a direct chat for
+  `user:`, `person:` and `admins` targets). When the command's `[[mcp]]` server has `confirm` set for that tool, the
+  press first asks **Run?**. The first press closes the view.
+- The history keeps the view as text.
 
 ## Platforms
 

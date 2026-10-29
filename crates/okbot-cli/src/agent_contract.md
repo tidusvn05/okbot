@@ -115,7 +115,8 @@ risky call with a button or `/approve <code>`). Roles are defined in `[roles] op
 "person:lan"]`; `admins` and `everyone` are built in. `okbot role grant ops <account> --for 2h` gives
 one for a while, `okbot audit` lists the tool calls, `[limits] turns_per_day` caps each person.
 `[[command]]` turns one tool into a chat command that runs without the agent (`name`, `mcp`, `tool`,
-`args = ["company", "since?"]`, `with = {…}` fixed arguments, `roles`). `okbot doctor` checks the
+`args = ["company", "since?"]`, `with = {…}` fixed arguments, `roles`); a tool can answer it with
+cards and buttons that run other `[[command]]`s (`okbot_view`, ADR 0017). `okbot doctor` checks the
 config; restart the bot afterwards. Details: `docs/extending/README.md`. Only add servers the user
 runs or trusts, and never one that offers a shell or file access; prefer `tools = [...]` with
 the tools the bot needs.
@@ -143,7 +144,8 @@ To let the user's programs post to chats (alerts, CI, deploys), add a `[[notify]
 `token_env` (a new variable in `.env`, never a bearer `[[mcp]]` token) and `to` (`room:<key>` from
 `/whoami` as an admin, `user:<platform>:<instance>/<id>`, `person:<id>`, `admins`). It needs
 `[http] listen`. Callers `POST /notify/<name>` with `Authorization: Bearer <token>` and
-`{"text": "…", "id": "…"}`, or run `okbot send <name> "text"` on the bot's machine. Details:
+`{"text": "…", "id": "…"}` (plus an optional `view` with cards and buttons), or run
+`okbot send <name> "text"` (`--view <file>`) on the bot's machine. Details:
 `docs/notify.md`.
 
 ## Exit codes

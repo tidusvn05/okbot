@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 
-use okbot_core::{ButtonStyle, Prompt, PromptButton, ReplyTarget, UserId};
+use okbot_core::{ButtonStyle, InboundEvent, Prompt, PromptButton, ReplyTarget, UserId};
 use serde_json::Value;
 
 use crate::Shared;
@@ -54,16 +54,16 @@ fn button(id: &str, label: &str, style: ButtonStyle) -> PromptButton {
     }
 }
 
-/// Who may approve: the requester, or the `[bot] admins` of the conversation's channel.
-fn approvers(shared: &Shared, grant: &Grant, by: ConfirmBy) -> Vec<UserId> {
+/// Who may approve what `event` asked for: its author, or the `[bot] admins` of its channel.
+pub(crate) fn approvers(shared: &Shared, event: &InboundEvent, by: ConfirmBy) -> Vec<UserId> {
     match by {
-        ConfirmBy::Requester => vec![grant.event.author.id.clone()],
+        ConfirmBy::Requester => vec![event.author.id.clone()],
         ConfirmBy::Admins => shared
             .gate
             .lists()
             .admins
             .iter()
-            .filter(|(c, _)| *c == grant.event.conversation.channel)
+            .filter(|(c, _)| *c == event.conversation.channel)
             .map(|(_, u)| u.clone())
             .collect(),
     }
@@ -102,7 +102,7 @@ async fn ask_shown(
     } else {
         server.rules.confirm_by
     };
-    let allowed = approvers(shared, grant, by);
+    let allowed = approvers(shared, &grant.event, by);
     if allowed.is_empty() {
         tracing::warn!(mcp = %server.server.name, %tool, "no one on this channel can approve the call");
         return Some(false);

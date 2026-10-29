@@ -760,6 +760,22 @@ is refused.
 Exit criteria: a mixed Vietnamese and Japanese chart draws every letter; a label no font has keeps
 the chart text; the history keeps every chart as text.
 
+### P31 — Views for commands and notifications (ADR 0017)
+
+1. A `[[command]]`'s tool result may carry a view (`structuredContent.okbot_view`, or a text that
+   is only `{"okbot_view": …}`): text, cards, links and buttons that run a `[[command]]`, checked
+   by the `show` code; an invalid view is logged and the text shown.
+2. Command views are shown natively whatever `reply_mode` says, as text where a platform has no
+   components.
+3. A button press runs its command line as the presser, through the same checks as typed text and
+   the command's rules. A press whose tool needs `[[mcp]] confirm` asks **Run?** first, and only
+   the approvers may answer.
+4. `POST /notify/<name>` and `okbot send --view <file>` accept the same view.
+
+Exit criteria: Refresh on a command's view runs the command as the presser without the agent; a
+Restart press asks the presser first and nobody else can run it; a view whose button names a
+built-in is refused; Zalo shows the view as text with the commands to type.
+
 ## Part 5 — Release checklist (every release)
 
 1. All quality gates (§1.5) green on `main`; MSRV build green.

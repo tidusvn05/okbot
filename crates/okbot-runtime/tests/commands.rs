@@ -17,8 +17,9 @@ const KEY: &str = "server-secret";
 
 type Calls = Arc<Mutex<Vec<(identity::Claims, Value)>>>;
 
-/// A stand-in MCP server with one tool, `status {company, deep?: boolean}`, answering over an
-/// event stream like rmcp does. Records the verified claims and arguments of each call.
+/// A stand-in MCP server with two tools, `status {company, deep?: boolean}` (read-only) and
+/// `restart {company}`, answering over an event stream like rmcp does. Records the verified
+/// claims and arguments of each call. `status board` answers with a view (ADR 0017).
 async fn mcp_server() -> (SocketAddr, Calls) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let calls: Calls = Arc::new(Mutex::new(Vec::new()));
@@ -45,11 +46,29 @@ async fn mcp_server() -> (SocketAddr, Calls) {
                 "tools/list" => json!({"tools": [{"name": "status", "inputSchema": {
                     "type": "object",
                     "properties": {"company": {"type": "string"}, "deep": {"type": "boolean"}},
-                    "required": ["company"]}}]}),
+                    "required": ["company"]},
+                    "annotations": {"readOnlyHint": true}},
+                    {"name": "restart", "inputSchema": {"type": "object",
+                        "properties": {"company": {"type": "string"}}}}]}),
                 "tools/call" => {
                     let args = msg["params"]["arguments"].clone();
                     state.lock().unwrap().push((claims, args.clone()));
-                    if args["company"] == "broken" {
+                    if msg["params"]["name"] == "restart" {
+                        json!({"content": [{"type": "text", "text": format!("restarted {}", args["company"].as_str().unwrap())}]})
+                    } else if args["company"] == "board" {
+                        let view = json!({
+                            "cards": [{"title": "freach", "fields": [{"label": "Pods", "value": "3/3"}]}],
+                            "buttons": [
+                                {"label": "Refresh", "command": "/status freach"},
+                                {"label": "Restart", "command": "/restart freach", "style": "danger"}
+                            ]
+                        });
+                        json!({"content": [{"type": "text", "text": view.to_string()}],
+                               "structuredContent": {"okbot_view": view}})
+                    } else if args["company"] == "badview" {
+                        json!({"content": [{"type": "text",
+                            "text": "{\"okbot_view\": {\"buttons\": [{\"label\": \"x\", \"command\": \"/reset\"}]}}"}]})
+                    } else if args["company"] == "broken" {
                         json!({"content": [{"type": "text", "text": "no such company"}], "isError": true})
                     } else {
                         json!({"content": [{"type": "text", "text": format!("**{}** ok", args["company"].as_str().unwrap())}]})
@@ -78,14 +97,22 @@ async fn mcp_server() -> (SocketAddr, Calls) {
     (addr, calls)
 }
 
-fn start(
-    server: SocketAddr,
-) -> (
+type Started = (
     Arc<FakeChannel>,
     Arc<FakeAgent>,
     okbot_runtime::RuntimeHandle,
     CancellationToken,
-) {
+);
+
+fn start(server: SocketAddr) -> Started {
+    start_with(server, ChannelCaps::basic(), |_| {})
+}
+
+fn start_with(
+    server: SocketAddr,
+    caps: ChannelCaps,
+    configure: impl FnOnce(&mut RuntimeConfig),
+) -> Started {
     let mut config = RuntimeConfig::new("okbot", std::env::temp_dir().join("okbot-command-tests"));
     config.mcp = vec![ExtraMcp {
         server: okbot_core::McpServer {
@@ -115,13 +142,16 @@ fn start(
         command("status", &["company", "deep?"], false),
         command("deploy", &["company"], true),
         command("missing", &[], false),
+        command("restart", &["company"], false),
     ];
     config.commands[2].tool = "nope".into();
+    config.commands[3].tool = "restart".into();
     config
         .access
         .admins
         .insert(("fake:test".parse().unwrap(), okbot_core::UserId::new("ana")));
-    let channel = Arc::new(FakeChannel::new("fake:test", ChannelCaps::basic()));
+    configure(&mut config);
+    let channel = Arc::new(FakeChannel::new("fake:test", caps));
     let agent = Arc::new(
         FakeAgent::echo("fake")
             .with_caps(AgentCaps {
@@ -264,5 +294,107 @@ async fn an_unreachable_server_is_reported() {
         reply.contains("`/status` failed") && reply.contains("cannot be reached"),
         "{reply}"
     );
+    stop.cancel();
+}
+
+async fn press(channel: &FakeChannel, user: &str, prompt: &str, button: &str) {
+    let conversation = okbot_testkit::conversation("fake:test", "room");
+    channel
+        .answer(okbot_core::PromptAnswer {
+            prompt: prompt.into(),
+            button: button.into(),
+            values: std::collections::BTreeMap::new(),
+            user: okbot_core::UserRef {
+                id: okbot_core::UserId::new(user),
+                display_name: user.into(),
+                is_bot: false,
+            },
+            conversation: conversation.clone(),
+            sent: okbot_core::SentRef {
+                target: okbot_core::ReplyTarget {
+                    conversation,
+                    in_reply_to: None,
+                },
+                message_id: okbot_core::MessageId::new("p-1"),
+            },
+        })
+        .await;
+}
+
+async fn eventually(mut check: impl FnMut() -> bool) {
+    for _ in 0..500 {
+        if check() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("condition not reached");
+}
+
+#[tokio::test]
+async fn results_show_views_whose_buttons_run_commands() {
+    let (server, calls) = mcp_server().await;
+    let caps = ChannelCaps {
+        ui: okbot_core::UiCaps::all(),
+        ..ChannelCaps::basic()
+    };
+    // Text replies (the default): command views do not need the agent's interactive mode.
+    let (channel, agent, handle, stop) = start_with(server, caps, |c| {
+        c.mcp[0].rules.confirm = okbot_runtime::config::Confirm::Destructive;
+    });
+    let calls_now = || calls.lock().unwrap().len();
+
+    assert_eq!(say(&channel, &handle, "bob", "/status board").await, "");
+    let board = channel.prompts()[0].clone();
+    assert_eq!(board.cards[0].title.as_deref(), Some("freach"));
+    assert!(board.cards[0].text.contains("**Pods:** 3/3"));
+    let ids: Vec<&str> = board.buttons.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, ["c1", "c2"]);
+
+    // Refresh runs `/status freach` as the presser; the tool only reads, so no approval.
+    press(&channel, "eve", &board.id, "c1").await;
+    eventually(|| calls_now() == 2).await;
+    let call = calls.lock().unwrap()[1].clone();
+    assert_eq!(call.1, json!({"company": "freach"}));
+    assert_eq!(call.0.user, "fake:test/eve");
+    assert_eq!(call.0.command.as_deref(), Some("status"));
+    eventually(|| channel.sent_texts().iter().any(|t| t == "**freach** ok")).await;
+    assert!(
+        channel
+            .prompt_updates()
+            .iter()
+            .any(|(_, text, keep)| text.contains("→ ✅ eve: Refresh") && !keep),
+        "{:?}",
+        channel.prompt_updates()
+    );
+
+    // Restart may change things: the press asks the presser first, nobody else may answer.
+    say(&channel, &handle, "bob", "/status board").await;
+    let board = channel.prompts().last().unwrap().clone();
+    press(&channel, "bob", &board.id, "c2").await;
+    eventually(|| channel.prompts().len() == 3).await;
+    let ask = channel.prompts()[2].clone();
+    assert!(ask.text.contains("/restart freach"), "{}", ask.text);
+    assert_eq!(ask.allowed, [okbot_core::UserId::new("bob")]);
+    let before = calls_now();
+    press(&channel, "eve", &ask.id, "c1").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(calls_now(), before, "not eve's to approve");
+    press(&channel, "bob", &ask.id, "c1").await;
+    eventually(|| calls_now() == before + 1).await;
+    eventually(|| channel.sent_texts().iter().any(|t| t == "restarted freach")).await;
+
+    // Typed, the same command runs at once (ADR 0011).
+    assert_eq!(
+        say(&channel, &handle, "bob", "/restart acme").await,
+        "restarted acme"
+    );
+    // A view okbot cannot show is reported, not echoed.
+    let bad = say(&channel, &handle, "bob", "/status badview").await;
+    assert_eq!(
+        bad,
+        "⚠️ `/status` answered with a view that cannot be shown."
+    );
+    assert!(agent.turns().is_empty(), "the agent never ran");
     stop.cancel();
 }

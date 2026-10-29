@@ -5,7 +5,7 @@ description: Letting monitors, CI jobs and scripts post messages through the bot
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-30
 aliases: [thông báo, notify, cảnh báo, alert, okbot send, gửi tin nhắn từ script, ci, monitoring]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -40,6 +40,12 @@ journalctl -n 20 | okbot send alerts --id daily-log
 ```
 
 - `text` is Markdown, up to 8000 characters, rendered for each platform.
+- `view` (optional; then `text` may be left out) adds cards, link buttons and buttons that run a
+  `[[command]]` as the person who presses, as a command's answer can ([Your own
+  tools](own-tools.md)): `{"view": {"cards": [{"title": "vps01", "tone": "warning", "fields":
+  [{"label": "Disk", "value": "91%"}]}], "buttons": [{"label": "Check again", "command": "/disk
+  vps01"}]}}`. `okbot send alerts --view view.json` sends one from a file. A bad view is refused
+  with 400 and the reason.
 - The same `id` within an hour is not sent twice, so retries are safe.
 - Status 200: delivered everywhere; 207: some chats failed; 503: retry later; 401: wrong name or
   token.

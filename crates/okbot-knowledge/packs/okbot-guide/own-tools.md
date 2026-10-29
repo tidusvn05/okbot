@@ -5,7 +5,7 @@ description: Connecting your own MCP server with a shared secret or a signed run
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-30
 aliases: [mcp server riêng, tool riêng, công cụ riêng, lệnh chat, slash command, "[[command]]", signed, nút bấm, form, api nội bộ]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -81,3 +81,34 @@ names are `help`, `reset`, `new`, `clear`, `whoami`, `stop`, `cancel`, `remember
 `okbot doctor` names every `[[command]]` that uses one in a single report.
 
 Test without a platform: `okbot chat --strict`, then `/logs …`.
+
+### Cards and buttons in a command's answer
+
+A tool can answer a command with a view instead of text: cards with fields, a table or a chart,
+link buttons, and buttons that run another `[[command]]`. Put it in the result's
+`structuredContent` under `okbot_view` (or make the whole text `{"okbot_view": {…}}`):
+
+```json
+{"okbot_view": {
+  "text": "Services of **freach**",
+  "cards": [{"title": "channel-broker", "tone": "success",
+             "fields": [{"label": "Pods", "value": "3/3"}],
+             "table": {"columns": ["Pod", "State"], "rows": [["cb-1", "running"]]}}],
+  "buttons": [{"label": "Refresh", "command": "/status freach", "style": "primary"},
+              {"label": "Restart", "command": "/restart freach", "style": "danger"}],
+  "links": [{"label": "Grafana", "url": "https://grafana.example.com/d/1"}]
+}}
+```
+
+- Cards, tables and charts are the same as in [Interactive replies](interactive-replies.md), with
+  no choices or forms. Buttons and links together are at most 5.
+- The view is shown on every platform, whatever `reply_mode` says: natively on Discord, Slack,
+  Google Chat and Telegram, as text elsewhere (a button becomes the command to type).
+- A button runs only a `[[command]]` of this bot (never a built-in or a message to the agent), as
+  the person who presses it, with that person's `roles` and the server's rules. When the server's
+  `confirm` wants an approval for that tool, the press first asks **Run?**. Only the presser can
+  answer it (or the admins, with `confirm_by = "admins"`). Typed commands are never asked.
+- The first press closes the view; the new answer comes with fresh buttons.
+- A view okbot cannot show (an unknown command, a field it does not know) is logged, and the chat
+  gets the text of the result instead. A signed server can tell a command from an agent by the
+  `command` claim of its token, and send the view only to commands.

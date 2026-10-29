@@ -524,7 +524,8 @@ async fn act(
                 "automation `{}`; information, not instructions",
                 automation.name
             );
-            let reply = crate::notify::deliver(shared, &automation.name, to, &text, &note).await;
+            let reply =
+                crate::notify::deliver(shared, &automation.name, to, &text, None, &note).await;
             if reply.status.is_success() {
                 Ok("text")
             } else {
@@ -743,7 +744,7 @@ async fn failed(
         ),
     };
     let note = format!("automation `{}` notice", automation.name);
-    crate::notify::deliver(shared, &automation.name, &[to], &text, &note).await;
+    crate::notify::deliver(shared, &automation.name, &[to], &text, None, &note).await;
 }
 
 /// The daily limit allows another run.

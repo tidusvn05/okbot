@@ -5,7 +5,7 @@ description: reply_mode = "interactive" lets the agent show cards, buttons, menu
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-27
+updated: 2026-10-30
 aliases: [interactive, reply_mode, buttons, nút bấm, menu, form, card, thẻ, components, Block Kit, cardsV2, rich message, tin nhắn tương tác, chart, biểu đồ, グラフ, charts, PNG]
 generated: {by: okbot-guide-pack, at: "2026-10-27"}
 ---
@@ -91,4 +91,6 @@ fonts = ["fonts/NotoSansSC-Regular.otf"]   # optional: Chinese, Korean…
   its values never reach the agent.
 - Buttons from the agent are not approvals. Tools that change real data still need
   `confirm` on their `[[mcp]]` server ([Permissions](permissions.md)).
+- `[[command]]` answers and notifications can show cards and buttons without the agent, even in
+  `text` rooms ([Your own tools](own-tools.md)).
 - Link buttons only open `https` addresses, and messages never mention `@everyone`.
