@@ -4,6 +4,12 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.12.0] - 2026-10-29
+
+### Features
+
+- command views, live access reload, JSON CLI output, reserved command names (#58–#61) (#62) (0ccc597)
+
 ## [0.11.0] - 2026-10-27
 
 ### Features
