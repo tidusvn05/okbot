@@ -484,5 +484,13 @@ async fn an_admin_approves_a_press_that_runs_as_the_presser() {
     press(&channel, "ana", &ask.id, "c1").await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(calls_now(), before, "an expired approval runs nothing");
+
+    // An admin removed while the approval is open can no longer approve it (ADR 0018).
+    let ask = ask_for_restart().await;
+    handle.reload_access(okbot_runtime::AccessLists::default());
+    let before = calls_now();
+    press(&channel, "ana", &ask.id, "c1").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(calls_now(), before, "a revoked admin approves nothing");
     stop.cancel();
 }
