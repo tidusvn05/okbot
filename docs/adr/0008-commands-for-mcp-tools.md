@@ -23,7 +23,8 @@ platform okbot supports can carry a text command; Discord and Telegram also show
   message (Discord interactions) converts it to that text, so the runtime has one path. The runtime calls it
   only when the bot has `[[command]]`s, so existing bots keep their menus.
 - Names are limited to `a-z0-9_` (≤ 32) — the intersection of Discord's and Telegram's rules — and cannot reuse
-  a built-in command.
+  a built-in command. Every conflicting name is reported in one error, with the reserved list;
+  `okbot commands --builtin` prints that list (2026-10-30, #60).
 
 ## Consequences
 - Operations keep working without the agent, and each command costs one local HTTP round trip.

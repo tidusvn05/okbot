@@ -885,3 +885,24 @@ fn a2a_agents_and_clients_are_checked() {
         .to_string();
     assert!(error.contains("[http] listen"), "{error}");
 }
+
+#[test]
+fn every_reserved_command_name_is_reported_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut text = String::from(
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n",
+    );
+    for name in ["done", "status", "help", "whoami"] {
+        text.push_str("[[command]]\nname = \"");
+        text.push_str(name);
+        text.push_str("\"\nmcp = \"ops\"\ntool = \"t\"\n");
+    }
+    write(dir.path(), &text);
+    let error = Config::load(dir.path()).unwrap_err().to_string();
+    assert!(
+        error.contains("[[command]] `done`, `help`, `whoami` are built-in; rename them."),
+        "{error}"
+    );
+    assert!(error.contains("Reserved names: help, reset,"), "{error}");
+    assert!(!error.contains("`status`"), "{error}");
+}

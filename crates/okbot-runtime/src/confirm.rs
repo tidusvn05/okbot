@@ -59,8 +59,8 @@ fn approvers(shared: &Shared, grant: &Grant, by: ConfirmBy) -> Vec<UserId> {
     match by {
         ConfirmBy::Requester => vec![grant.event.author.id.clone()],
         ConfirmBy::Admins => shared
-            .config
-            .access
+            .gate
+            .lists()
             .admins
             .iter()
             .filter(|(c, _)| *c == grant.event.conversation.channel)

@@ -260,7 +260,8 @@ async fn accounts(shared: &Shared, run_as: &RunAs) -> Vec<(ChannelId, UserId)> {
             shared.owners().await
         }
         RunAs::Person(id) => shared
-            .config
+            .gate
+            .lists()
             .people
             .values()
             .find(|p| p.id == *id)
@@ -283,7 +284,11 @@ async fn person_of(shared: &Shared, run_as: &RunAs) -> String {
             {
                 return format!("person:{}", crate::config::OWNER);
             }
-            let person = shared.config.person(channel, user).map(|p| p.id.clone());
+            let person = shared
+                .gate
+                .lists()
+                .person(channel, user)
+                .map(|p| p.id.clone());
             okbot_core::person_key(channel, user, person.as_deref())
         }
     }

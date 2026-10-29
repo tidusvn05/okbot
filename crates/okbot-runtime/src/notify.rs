@@ -269,7 +269,7 @@ pub(crate) async fn resolve(
         },
         NotifyTo::Admins => {
             let mut admins: Vec<(ChannelId, UserId)> =
-                shared.config.access.admins.iter().cloned().collect();
+                shared.gate.lists().admins.iter().cloned().collect();
             admins.extend(shared.owners().await);
             admins.sort();
             admins.dedup();
@@ -324,7 +324,8 @@ async fn person(shared: &Shared, id: &str) -> Result<ConversationKey, String> {
         shared.owners().await
     } else {
         shared
-            .config
+            .gate
+            .lists()
             .people
             .values()
             .find(|p| p.id == id)
@@ -429,7 +430,7 @@ mod tests {
             (discord.id().clone(), discord.clone() as Arc<dyn Channel>),
         ]);
         let shared = Shared {
-            gate: Gate::new(config.access.clone()),
+            gate: Gate::new(&config),
             config,
             store: store.clone(),
             agent: Arc::new(FakeAgent::echo("fake")),

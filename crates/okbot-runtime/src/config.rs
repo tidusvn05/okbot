@@ -69,6 +69,41 @@ pub struct AccessPolicy {
     pub max_input_chars: usize,
 }
 
+/// The lists that decide who is answered and with which rights: `[bot] admins`, `allow_users`,
+/// `blocked_users`, `[people]` and `[roles]`. A running bot replaces them without a restart
+/// ([`RuntimeHandle::reload_access`](crate::RuntimeHandle::reload_access)).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccessLists {
+    /// Administrators.
+    pub admins: HashSet<(ChannelId, UserId)>,
+    /// If set, only these users (per channel) are answered.
+    pub allow_users: Option<HashSet<(ChannelId, UserId)>>,
+    /// Never answered.
+    pub blocked_users: HashSet<(ChannelId, UserId)>,
+    /// Linked accounts: each account maps to its person.
+    pub people: HashMap<(ChannelId, UserId), Person>,
+    /// Roles from `[roles]`.
+    pub roles: Roles,
+}
+
+impl AccessLists {
+    /// The lists of `config` (as the runtime starts with them).
+    pub fn of(config: &RuntimeConfig) -> Self {
+        Self {
+            admins: config.access.admins.clone(),
+            allow_users: config.access.allow_users.clone(),
+            blocked_users: config.access.blocked_users.clone(),
+            people: config.people.clone(),
+            roles: config.roles.clone(),
+        }
+    }
+
+    /// The person `user` of `channel` belongs to.
+    pub fn person(&self, channel: &ChannelId, user: &UserId) -> Option<&Person> {
+        self.people.get(&(channel.clone(), user.clone()))
+    }
+}
+
 /// Settings for one room.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RoomRule {
@@ -146,7 +181,7 @@ pub struct RuntimeConfig {
     pub worker_idle: Duration,
     /// How long shutdown waits for running turns.
     pub shutdown_grace: Duration,
-    /// Access rules.
+    /// Access rules. The admin, allow and block lists are starting values (ADR 0018).
     pub access: AccessPolicy,
     /// Default tool policy.
     pub tool_policy: ToolPolicy,
@@ -164,7 +199,8 @@ pub struct RuntimeConfig {
     pub resume_sessions: bool,
     /// How often a "thinking…" message is updated with progress.
     pub progress_interval: Duration,
-    /// Linked accounts (`[people]`): each account maps to its person.
+    /// Linked accounts (`[people]`): each account maps to its person. The starting value: a
+    /// running bot reads the current lists from its gate (ADR 0018).
     pub people: HashMap<(ChannelId, UserId), Person>,
     /// A personal assistant: only the owner's paired accounts are answered, and they share one
     /// profile and memory (person [`OWNER`]).
@@ -179,7 +215,7 @@ pub struct RuntimeConfig {
     pub notify: Vec<NotifyRoute>,
     /// Triggers, sources and actions (`[[automation]]`, ADR 0013).
     pub automations: Vec<Automation>,
-    /// Roles from `[roles]`.
+    /// Roles from `[roles]`. The starting value (ADR 0018).
     pub roles: Roles,
     /// Per-person limits (`[limits]`).
     pub limits: Limits,

@@ -8,6 +8,7 @@ use okbot_core::{
     ChannelId, ConversationKey, MemoryScope, NewTask, Person, Requester, Task, TaskChange,
     TaskKind, TaskStatus, TaskStore, UserRef, parse_time,
 };
+use serde_json::{Value, json};
 
 /// `okbot task` subcommands.
 #[derive(Debug, clap::Subcommand)]
@@ -22,6 +23,9 @@ pub(crate) enum TaskCommand {
         /// Only tasks with a coming reminder, soonest first.
         #[arg(long)]
         upcoming: bool,
+        /// Print a JSON array (for scripts and MCP servers; the text output may change).
+        #[arg(long)]
+        json: bool,
     },
     /// Add a to-do or a reminder for the owner (personal bots) or a linked person.
     Add(Box<AddArgs>),
@@ -32,6 +36,9 @@ pub(crate) enum TaskCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print the task as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Start a paused task (routines created in chat start paused).
     Resume {
@@ -40,6 +47,9 @@ pub(crate) enum TaskCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print the task as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Mark a task as done.
     Done {
@@ -48,6 +58,9 @@ pub(crate) enum TaskCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print the task as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Delete a task.
     #[command(alias = "remove")]
@@ -57,7 +70,24 @@ pub(crate) enum TaskCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print the task as JSON.
+        #[arg(long)]
+        json: bool,
     },
+}
+
+impl TaskCommand {
+    /// Whether errors should be reported as JSON.
+    pub(crate) fn json(&self) -> bool {
+        match self {
+            Self::List { json, .. }
+            | Self::Pause { json, .. }
+            | Self::Resume { json, .. }
+            | Self::Done { json, .. }
+            | Self::Rm { json, .. } => *json,
+            Self::Add(args) => args.json,
+        }
+    }
 }
 
 /// `okbot task add` options.
@@ -81,9 +111,13 @@ pub(crate) struct AddArgs {
     /// Channel to send the reminder to (`discord:main`); default: the owner's latest direct chat.
     #[arg(long)]
     to: Option<String>,
-    /// Person from `[people]` on a team bot.
+    /// Person from `[people]` on a team bot (wins over `--run-token`).
     #[arg(long)]
     person: Option<String>,
+    /// For the person behind a signed run token (ADR 0007): an `[[mcp]] auth = "signed"` server
+    /// passes the token it received, so the task is theirs without `--person`.
+    #[arg(long, env = "OKBOT_RUN_TOKEN", hide_env_values = true)]
+    run_token: Option<String>,
     /// Free notes.
     #[arg(long, default_value = "")]
     notes: String,
@@ -91,6 +125,9 @@ pub(crate) struct AddArgs {
     /// --repeat or --remind), for example "Summarise my tasks for today".
     #[arg(long, conflicts_with = "notes")]
     routine: Option<String>,
+    /// Print the created task as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 /// The terminal acting for `person`: tasks land in the person's folder, like a chat of theirs.
@@ -131,6 +168,89 @@ fn requester(config: &Config, person: Option<&str>) -> anyhow::Result<Requester>
     })
 }
 
+/// The person behind a signed run token of one of this bot's `[[mcp]] auth = "signed"` servers:
+/// the owner on a personal bot (it answers no one else), the linked `[people]` entry on a team bot.
+fn person_from_token(config: &Config, token: &str) -> anyhow::Result<String> {
+    let invalid = || anyhow::anyhow!("--run-token is not a valid, unexpired run token of this bot");
+    let server = okbot_runtime::identity::claimed_server(token).ok_or_else(invalid)?;
+    let m = config
+        .mcp
+        .iter()
+        .find(|m| m.name == server && m.auth == okbot_config::McpAuth::Signed)
+        .ok_or_else(invalid)?;
+    let key = config.secret(&m.token_env)?;
+    let claims = okbot_runtime::identity::verify(
+        key.expose().as_bytes(),
+        token,
+        jiff::Timestamp::now().as_second(),
+    )
+    .ok_or_else(invalid)?;
+    if claims.bot != config.bot.name || claims.mcp != m.name {
+        return Err(invalid());
+    }
+    if config.bot.profile == BotProfile::Personal {
+        return Ok(okbot_runtime::OWNER.to_string());
+    }
+    let (channel, user) = okbot_config::parse_account(&claims.user).map_err(|_| invalid())?;
+    config
+        .people
+        .iter()
+        .find(|(_, p)| {
+            p.accounts
+                .iter()
+                .filter_map(|a| okbot_config::parse_account(a).ok())
+                .any(|(c, u)| c == channel && u == user)
+        })
+        .map(|(id, _)| id.clone())
+        .with_context(|| {
+            format!(
+                "`{}` is not linked to a person: `okbot people link <person> {}`",
+                claims.user, claims.user
+            )
+        })
+}
+
+/// A task as JSON: the contract of `--json` (times in UTC RFC 3339 and in the bot's zone).
+pub(crate) fn task_json(task: &Task, tz: &jiff::tz::TimeZone) -> Value {
+    let time = |t: Option<jiff::Timestamp>| {
+        t.map(|t| {
+            json!({
+                "utc": t.to_string(),
+                "local": t.to_zoned(tz.clone()).strftime("%Y-%m-%d %H:%M").to_string(),
+            })
+        })
+    };
+    // `tasks/people/luan/t-7k2m9q` → owner `people/luan`, person `luan`.
+    let folder = task
+        .id
+        .strip_prefix("tasks/")
+        .unwrap_or(&task.id)
+        .rsplit_once('/')
+        .map_or("", |(folder, _)| folder);
+    let person = folder.strip_prefix("people/").filter(|p| !p.contains('/'));
+    json!({
+        "id": task.id,
+        "short_id": task.id.rsplit('/').next().unwrap_or(&task.id),
+        "kind": task.kind.as_str(),
+        "state": task.status.as_str(),
+        "title": task.title,
+        "notes": task.notes,
+        "scope": match task.scope {
+            MemoryScope::User => "user",
+            MemoryScope::Room => "room",
+            MemoryScope::Global => "global",
+        },
+        "remind": time(task.remind_at),
+        "due": time(task.due),
+        "repeat": task.repeat.as_ref().map(ToString::to_string),
+        "deliver_to": task.deliver_to.as_ref().map(ToString::to_string),
+        "owner": folder,
+        "person": person,
+        "author": task.author,
+        "created": task.created.to_string(),
+    })
+}
+
 fn line(task: &Task, tz: &jiff::tz::TimeZone) -> String {
     let local = |t: jiff::Timestamp| {
         t.to_zoned(tz.clone())
@@ -166,7 +286,7 @@ async fn resolve(k: &okbot_knowledge::Knowledge, id: &str) -> anyhow::Result<Str
         .with_context(|| format!("no task `{id}`; `okbot task list` shows them"))
 }
 
-async fn list(name: Option<&str>, all: bool, upcoming: bool) -> anyhow::Result<()> {
+async fn list(name: Option<&str>, all: bool, upcoming: bool, json: bool) -> anyhow::Result<()> {
     let (_, k) = crate::memory::open(name).await?;
     let tz = k.timezone().clone();
     let mut tasks: Vec<Task> = k
@@ -179,6 +299,11 @@ async fn list(name: Option<&str>, all: bool, upcoming: bool) -> anyhow::Result<(
     if upcoming {
         tasks.sort_by_key(|t| t.remind_at);
     }
+    if json {
+        let tasks: Vec<Value> = tasks.iter().map(|t| task_json(t, &tz)).collect();
+        println!("{}", Value::Array(tasks));
+        return Ok(());
+    }
     if tasks.is_empty() {
         println!("no tasks");
     }
@@ -190,7 +315,11 @@ async fn list(name: Option<&str>, all: bool, upcoming: bool) -> anyhow::Result<(
 
 async fn add(a: AddArgs) -> anyhow::Result<()> {
     let (config, k) = crate::memory::open(a.bot.as_deref()).await?;
-    let who = requester(&config, a.person.as_deref())?;
+    let person = match a.run_token.as_deref() {
+        Some(token) if a.person.is_none() => Some(person_from_token(&config, token)?),
+        _ => a.person,
+    };
+    let who = requester(&config, person.as_deref())?;
     let tz = k.timezone().clone();
     let time = |v: Option<String>| -> anyhow::Result<Option<jiff::Timestamp>> {
         v.map(|v| parse_time(&v, &tz).map_err(anyhow::Error::msg))
@@ -223,12 +352,21 @@ async fn add(a: AddArgs) -> anyhow::Result<()> {
         paused: false,
     };
     let task = TaskStore::add(k.as_ref(), &who, new).await?;
-    println!("added\n{}", line(&task, &tz));
+    if a.json {
+        println!("{}", task_json(&task, &tz));
+    } else {
+        println!("added\n{}", line(&task, &tz));
+    }
     Ok(())
 }
 
 /// Sets a task's state: `done`, `paused` or (resumed) `open`.
-async fn set_state(id: &str, bot: Option<&str>, state: TaskStatus) -> anyhow::Result<()> {
+async fn set_state(
+    id: &str,
+    bot: Option<&str>,
+    state: TaskStatus,
+    json: bool,
+) -> anyhow::Result<()> {
     let (_, k) = crate::memory::open(bot).await?;
     let id = resolve(&k, id).await?;
     let current = k
@@ -255,7 +393,11 @@ async fn set_state(id: &str, bot: Option<&str>, state: TaskStatus) -> anyhow::Re
         TaskStatus::Open => "resumed",
         other => other.as_str(),
     };
-    println!("{word}\n{}", line(&task, k.timezone()));
+    if json {
+        println!("{}", task_json(&task, k.timezone()));
+    } else {
+        println!("{word}\n{}", line(&task, k.timezone()));
+    }
     Ok(())
 }
 
@@ -265,16 +407,27 @@ pub(crate) async fn run(command: TaskCommand) -> anyhow::Result<()> {
             name,
             all,
             upcoming,
-        } => list(name.as_deref(), all, upcoming).await,
+            json,
+        } => list(name.as_deref(), all, upcoming, json).await,
         TaskCommand::Add(args) => add(*args).await,
-        TaskCommand::Done { id, bot } => set_state(&id, bot.as_deref(), TaskStatus::Done).await,
-        TaskCommand::Pause { id, bot } => set_state(&id, bot.as_deref(), TaskStatus::Paused).await,
-        TaskCommand::Resume { id, bot } => set_state(&id, bot.as_deref(), TaskStatus::Open).await,
-        TaskCommand::Rm { id, bot } => {
+        TaskCommand::Done { id, bot, json } => {
+            set_state(&id, bot.as_deref(), TaskStatus::Done, json).await
+        }
+        TaskCommand::Pause { id, bot, json } => {
+            set_state(&id, bot.as_deref(), TaskStatus::Paused, json).await
+        }
+        TaskCommand::Resume { id, bot, json } => {
+            set_state(&id, bot.as_deref(), TaskStatus::Open, json).await
+        }
+        TaskCommand::Rm { id, bot, json } => {
             let (_, k) = crate::memory::open(bot.as_deref()).await?;
             let id = resolve(&k, &id).await?;
             k.remove_task(&id).await?;
-            println!("removed {id}");
+            if json {
+                println!("{}", json!({ "removed": id }));
+            } else {
+                println!("removed {id}");
+            }
             Ok(())
         }
     }

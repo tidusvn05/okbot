@@ -37,6 +37,9 @@ Chat: `/remember <text>`, `/memories`, `/forget <id>`. Terminal: `okbot memory l
 | `/pause <n>`, `/resume <n>` | stop and start one |
 
 Terminal: `okbot task add "Pay rent" --remind "2026-11-01 09:00" --repeat "monthly 1 09:00"`.
+`--json` on `okbot task list|add|done|pause|resume|rm` prints JSON for scripts (id, `short_id`,
+kind, state, title, remind/due in UTC and local time, repeat, owner, person); the text output may
+change between versions, the JSON keeps its keys.
 Repeat rules: `daily 08:00`, `weekdays 08:00`, `weekly mon,fri 09:00`, `monthly 1 09:00`,
 `every 3h`. A reminder reaches you only on a platform where you have written to the bot directly
 at least once.

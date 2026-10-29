@@ -1,12 +1,12 @@
 //! Access policy and rate limiting: should the bot answer this event?
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 
 use jiff::{SignedDuration, Timestamp};
 use okbot_core::{ChannelId, InboundEvent, UserId};
 
-use crate::config::AccessPolicy;
+use crate::config::{AccessLists, AccessPolicy, RuntimeConfig};
 
 /// The policy's verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,23 +21,43 @@ pub(crate) enum Verdict {
     TooLong,
 }
 
-/// Applies an [`AccessPolicy`]. Rate-limit state lives in memory.
+/// Applies an [`AccessPolicy`] and holds the current [`AccessLists`], which a reload replaces.
+/// Rate-limit state lives in memory.
 #[derive(Debug)]
 pub(crate) struct Gate {
     policy: AccessPolicy,
+    lists: RwLock<Arc<AccessLists>>,
     recent: Mutex<HashMap<(ChannelId, UserId), VecDeque<Timestamp>>>,
 }
 
 impl Gate {
-    pub(crate) fn new(policy: AccessPolicy) -> Self {
+    /// A gate with `config`'s policy and lists.
+    pub(crate) fn new(config: &RuntimeConfig) -> Self {
         Self {
-            policy,
+            policy: config.access.clone(),
+            lists: RwLock::new(Arc::new(AccessLists::of(config))),
             recent: Mutex::new(HashMap::new()),
         }
     }
 
+    /// The current lists (a snapshot: a reload does not change it).
+    pub(crate) fn lists(&self) -> Arc<AccessLists> {
+        self.lists
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Replaces the lists; events checked from now on use the new ones.
+    pub(crate) fn reload(&self, lists: AccessLists) {
+        *self
+            .lists
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(lists);
+    }
+
     pub(crate) fn is_admin(&self, event: &InboundEvent) -> bool {
-        self.policy
+        self.lists()
             .admins
             .contains(&(event.conversation.channel.clone(), event.author.id.clone()))
     }
@@ -47,11 +67,13 @@ impl Gate {
     /// `check` would then drop must not use up the view.
     pub(crate) fn admits(&self, event: &InboundEvent, now: Timestamp) -> bool {
         let p = &self.policy;
+        let lists = self.lists();
         let channel = &event.conversation.channel;
         let user = (channel.clone(), event.author.id.clone());
         (!event.author.is_bot || p.answer_bots)
-            && !p.blocked_users.contains(&user)
-            && p.allow_users
+            && !lists.blocked_users.contains(&user)
+            && lists
+                .allow_users
                 .as_ref()
                 .is_none_or(|users| users.contains(&user))
             && p.allow_rooms.as_ref().is_none_or(|rooms| {
@@ -84,12 +106,13 @@ impl Gate {
     /// Decides what to do with `event` at time `now`.
     pub(crate) fn check(&self, event: &InboundEvent, now: Timestamp) -> Verdict {
         let p = &self.policy;
+        let lists = self.lists();
         let channel = &event.conversation.channel;
         let user = (channel.clone(), event.author.id.clone());
         if event.author.is_bot && !p.answer_bots {
             return Verdict::Ignore;
         }
-        if p.blocked_users.contains(&user) {
+        if lists.blocked_users.contains(&user) {
             return Verdict::Ignore;
         }
         let reply_on = p.reply_on_by_channel.get(channel).unwrap_or(&p.reply_on);
@@ -101,7 +124,7 @@ impl Gate {
         if !addressed {
             return Verdict::Ignore;
         }
-        if let Some(users) = &p.allow_users
+        if let Some(users) = &lists.allow_users
             && !users.contains(&user)
         {
             return Verdict::Ignore;
@@ -154,7 +177,37 @@ mod tests {
     use crate::test_support::event;
 
     fn gate(policy: AccessPolicy) -> Gate {
-        Gate::new(policy)
+        let mut config = RuntimeConfig::new("t", "/nonexistent");
+        config.access = policy;
+        Gate::new(&config)
+    }
+
+    #[test]
+    fn a_reload_changes_who_is_answered_and_who_is_admin() {
+        let e = event("hi", true, false);
+        let me = (e.conversation.channel.clone(), e.author.id.clone());
+        let g = gate(AccessPolicy {
+            allow_users: Some(std::collections::HashSet::new()),
+            ..AccessPolicy::default()
+        });
+        let now = Timestamp::UNIX_EPOCH;
+        assert_eq!(g.check(&e, now), Verdict::Ignore);
+        assert!(!g.is_admin(&e));
+        let before = g.lists();
+        g.reload(AccessLists {
+            allow_users: Some([me.clone()].into()),
+            admins: [me.clone()].into(),
+            ..AccessLists::default()
+        });
+        assert_eq!(g.check(&e, now), Verdict::Answer);
+        assert!(g.is_admin(&e));
+        assert!(before.admins.is_empty(), "a snapshot keeps the old lists");
+        g.reload(AccessLists {
+            blocked_users: [me].into(),
+            ..AccessLists::default()
+        });
+        assert_eq!(g.check(&e, now), Verdict::Ignore);
+        assert!(!g.admits(&e, now));
     }
 
     #[test]

@@ -365,7 +365,7 @@ mod tests {
             ChannelCaps::basic(),
         ));
         Arc::new(Shared {
-            gate: Gate::new(config.access.clone()),
+            gate: Gate::new(&config),
             config,
             store: Arc::new(MemoryStore::new(Arc::new(ManualClock::default()))),
             agent: Arc::new(FakeAgent::echo("fake")),

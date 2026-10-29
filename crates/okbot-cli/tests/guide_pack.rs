@@ -135,3 +135,15 @@ fn the_pack_lints_clean_in_a_new_bundle() {
     assert_eq!(json["errors"], 0, "{json:#}");
     assert_eq!(json["warnings"], 0, "{json:#}");
 }
+
+#[test]
+fn the_reserved_command_names_are_all_listed() {
+    let text = std::fs::read_to_string(pack_dir().join("own-tools.md")).unwrap();
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for name in okbot_config::BUILTIN_COMMANDS {
+        assert!(
+            flat.contains(&format!("`{name}`")),
+            "own-tools.md does not list the built-in command `{name}`"
+        );
+    }
+}

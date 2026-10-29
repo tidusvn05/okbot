@@ -1,4 +1,4 @@
-//! `okbot start|stop|restart|status|logs`: one systemd unit per bot (design §6.5).
+//! `okbot start|stop|restart|reload|status|logs`: one systemd unit per bot (design §6.5).
 //!
 //! As a normal user the unit is a user unit (`~/.config/systemd/user/okbot-<name>.service`, kept
 //! running after logout with `loginctl enable-linger`); as root it is a system unit. The unit runs
@@ -19,6 +19,7 @@ pub(crate) enum Action {
     Start,
     Stop,
     Restart,
+    Reload,
     Status,
 }
 
@@ -221,6 +222,18 @@ pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
         Action::Restart => {
             restart(&dir)?;
             println!("restarted {bot}");
+        }
+        Action::Reload => {
+            // Check first, so a mistake is reported here and not only in the logs.
+            crate::bot::access_lists(&config)?;
+            check(
+                &systemctl(&["kill", "--kill-whom=main", "--signal=HUP", &unit])?,
+                "systemctl kill --signal=HUP",
+            )?;
+            println!(
+                "{bot}: access lists reloaded ([bot] admins, allow_users, blocked_users, [people], \
+                 [roles]); other settings need `okbot restart {bot}`"
+            );
         }
         Action::Status => {
             let state = systemctl(&["is-active", &unit])?;

@@ -37,6 +37,12 @@ claims with your secret. The claims name the `user` (`discord:main/1234`), wheth
 `admin`, the conversation, an expiry and an `interact` URL. Verify the signature and expiry on every
 request, then authorize by `user` and `admin`; the agent cannot change them.
 
+**Tasks for the person who asked.** A server that creates reminders through the okbot CLI can pass
+the token it received: `OKBOT_RUN_TOKEN=<token> okbot task add "Renew cert" --remind "…" --json`
+(or `--run-token`). okbot checks the signature, expiry and bot, and the task belongs to the person
+linked to the token's `user` in `[people]` (the owner on a personal bot), so no `--person` is
+needed. `--person` still wins when given.
+
 With the signature, a server can keep **per-person OAuth tokens** for services that have no MCP
 server of their own: see `docs/extending/accounts.md` and `examples/mcp/accounts-server.mjs` in the
 okbot repository.
@@ -66,5 +72,12 @@ quota is used up, costs nothing and answers the same way every time. Other argum
 `name=value`. Commands obey the server's rules, are in `okbot audit`, and are not confirmed (the
 person typed them). okbot fills the command menus of Discord and Telegram with them. On Slack and
 Google Chat, mention the bot first: `@bot /logs …`.
+
+Names use `a-z`, `0-9` and `_` (at most 32) and cannot reuse a built-in command. The reserved
+names are `help`, `reset`, `new`, `clear`, `whoami`, `stop`, `cancel`, `remember`, `forget`,
+`memories`, `memory`, `pair`, `tasks`, `todo`, `todos`, `done`, `snooze`, `later`, `resume`,
+`start`, `pause`, `note`, `approve`, `deny`, `answer`, `grant`, `revoke`, `roles`, `connect`,
+`disconnect` and `connections`. `okbot commands --builtin` prints them (`--json` for scripts), and
+`okbot doctor` names every `[[command]]` that uses one in a single report.
 
 Test without a platform: `okbot chat --strict`, then `/logs …`.

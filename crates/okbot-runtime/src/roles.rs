@@ -75,7 +75,8 @@ async fn roles(s: &Shared, event: &InboundEvent, admin: bool) -> String {
     if !admin {
         return out;
     }
-    let defined: Vec<&str> = s.config.roles.names.iter().map(String::as_str).collect();
+    let lists = s.gate.lists();
+    let defined: Vec<&str> = lists.roles.names.iter().map(String::as_str).collect();
     if !defined.is_empty() {
         let _ = write!(out, "\nRoles of this assistant: {}.", defined.join(", "));
     }
@@ -112,7 +113,7 @@ async fn grant(s: &Shared, event: &InboundEvent, rest: &str) -> String {
     if *role == ROLE_ADMINS || *role == ROLE_EVERYONE {
         return format!("`{role}` cannot be granted.");
     }
-    if !s.config.roles.names.contains(*role) {
+    if !s.gate.lists().roles.names.contains(*role) {
         return format!("`{role}` is not a role in [roles].");
     }
     if !valid_member(account) {

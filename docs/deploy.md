@@ -37,6 +37,7 @@ okbot start shop           # systemd user unit okbot-shop.service, restarts on f
 okbot status shop
 okbot logs shop -f
 okbot restart shop         # after editing okbot.toml or kb/persona
+okbot reload shop          # access lists only (admins, allow_users, [people], [roles])
 okbot stop shop
 ```
 

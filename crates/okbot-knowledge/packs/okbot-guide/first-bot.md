@@ -53,6 +53,7 @@ okbot start shop          # systemd service, restarts on failure and at boot
 okbot status shop
 okbot logs shop -f
 okbot restart shop        # after editing okbot.toml or kb/persona
+okbot reload shop         # only admins, allow_users, [people], [roles] changed: no restart
 ```
 
 Without systemd (containers), run `okbot run` under your own supervisor.

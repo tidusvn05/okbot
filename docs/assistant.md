@@ -37,7 +37,8 @@ Discord").
 | `/pause <n>`, `/resume <n>` | stop and start one |
 
 Terminal: `okbot task list [--upcoming|--all]`, `okbot task add "Pay rent" --remind "2026-11-01 09:00"
-[--repeat "monthly 1 09:00"] [--to discord:main]`, `okbot task done|pause|resume|rm <id>`.
+[--repeat "monthly 1 09:00"] [--to discord:main]`, `okbot task done|pause|resume|rm <id>`. Add `--json` for scripts; `--run-token` (or
+`OKBOT_RUN_TOKEN`) makes the task belong to the person behind a signed run token (ADR 0007).
 Repeat rules: `daily 08:00`, `weekdays 08:00`, `weekly mon,fri 09:00`, `monthly 1 09:00`, `every 3h`.
 
 A reminder reaches you only on a channel where you have written to the bot in a direct message at
