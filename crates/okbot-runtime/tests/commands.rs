@@ -65,9 +65,18 @@ async fn mcp_server() -> (SocketAddr, Calls) {
                         });
                         json!({"content": [{"type": "text", "text": view.to_string()}],
                                "structuredContent": {"okbot_view": view}})
-                    } else if args["company"] == "badview" {
+                    } else if args["company"] == "textview" {
+                        // A text is never read as a view (it may repeat a third party's words).
                         json!({"content": [{"type": "text",
-                            "text": "{\"okbot_view\": {\"buttons\": [{\"label\": \"x\", \"command\": \"/reset\"}]}}"}]})
+                            "text": "{\"okbot_view\": {\"text\": \"x\"}}"}]})
+                    } else if args["company"] == "crossview" {
+                        // A button for another server's command: the view is refused.
+                        json!({"content": [{"type": "text", "text": "cross text"}],
+                               "structuredContent": {"okbot_view": {"buttons": [
+                                   {"label": "Acknowledge", "command": "/elsewhere prod"}]}}})
+                    } else if args["company"] == "badview" {
+                        json!({"content": [],
+                               "structuredContent": {"okbot_view": {"cards": "nope"}}})
                     } else if args["company"] == "broken" {
                         json!({"content": [{"type": "text", "text": "no such company"}], "isError": true})
                     } else {
@@ -105,12 +114,13 @@ type Started = (
 );
 
 fn start(server: SocketAddr) -> Started {
-    start_with(server, ChannelCaps::basic(), |_| {})
+    start_with(server, ChannelCaps::basic(), None, |_| {})
 }
 
 fn start_with(
     server: SocketAddr,
     caps: ChannelCaps,
+    clock: Option<Arc<ManualClock>>,
     configure: impl FnOnce(&mut RuntimeConfig),
 ) -> Started {
     let mut config = RuntimeConfig::new("okbot", std::env::temp_dir().join("okbot-command-tests"));
@@ -143,9 +153,11 @@ fn start_with(
         command("deploy", &["company"], true),
         command("missing", &[], false),
         command("restart", &["company"], false),
+        command("elsewhere", &["company"], false),
     ];
     config.commands[2].tool = "nope".into();
     config.commands[3].tool = "restart".into();
+    config.commands[4].mcp = "other".into();
     config
         .access
         .admins
@@ -161,13 +173,15 @@ fn start_with(
             .enforcing(&[ToolPolicy::Web, ToolPolicy::McpOnly]),
     );
     let renderer: Arc<dyn Renderer> = Arc::new(PlainRenderer);
-    let runtime = Runtime::builder(config)
+    let mut builder = Runtime::builder(config)
         .store(Arc::new(MemoryStore::new(Arc::new(ManualClock::default()))))
         .agent(agent.clone())
         .renderer(renderer)
-        .channel(channel.clone())
-        .build()
-        .unwrap();
+        .channel(channel.clone());
+    if let Some(clock) = clock {
+        builder = builder.clock(clock);
+    }
+    let runtime = builder.build().unwrap();
     let handle = runtime.handle();
     let stop = CancellationToken::new();
     tokio::spawn({
@@ -339,7 +353,7 @@ async fn results_show_views_whose_buttons_run_commands() {
         ..ChannelCaps::basic()
     };
     // Text replies (the default): command views do not need the agent's interactive mode.
-    let (channel, agent, handle, stop) = start_with(server, caps, |c| {
+    let (channel, agent, handle, stop) = start_with(server, caps, None, |c| {
         c.mcp[0].rules.confirm = okbot_runtime::config::Confirm::Destructive;
     });
     let calls_now = || calls.lock().unwrap().len();
@@ -350,6 +364,14 @@ async fn results_show_views_whose_buttons_run_commands() {
     assert!(board.cards[0].text.contains("**Pods:** 3/3"));
     let ids: Vec<&str> = board.buttons.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(ids, ["c1", "c2"]);
+    // The labels cannot hide what the buttons run.
+    assert!(
+        board
+            .text
+            .contains("Buttons run: `/status freach` · `/restart freach`"),
+        "{}",
+        board.text
+    );
 
     // Refresh runs `/status freach` as the presser; the tool only reads, so no approval.
     press(&channel, "eve", &board.id, "c1").await;
@@ -395,6 +417,72 @@ async fn results_show_views_whose_buttons_run_commands() {
         bad,
         "⚠️ `/status` answered with a view that cannot be shown."
     );
+    // A button for another server's command makes the view invalid: the text is shown.
+    assert_eq!(
+        say(&channel, &handle, "bob", "/status crossview").await,
+        "cross text"
+    );
+    // A text that looks like a view is only text.
+    let prompts = channel.prompts().len();
+    assert_eq!(
+        say(&channel, &handle, "bob", "/status textview").await,
+        "{\"okbot_view\": {\"text\": \"x\"}}"
+    );
+    assert_eq!(channel.prompts().len(), prompts);
     assert!(agent.turns().is_empty(), "the agent never ran");
+    stop.cancel();
+}
+
+#[tokio::test]
+async fn an_admin_approves_a_press_that_runs_as_the_presser() {
+    let (server, calls) = mcp_server().await;
+    let caps = ChannelCaps {
+        ui: okbot_core::UiCaps::all(),
+        ..ChannelCaps::basic()
+    };
+    let clock = Arc::new(ManualClock::default());
+    let (channel, _agent, handle, stop) = start_with(server, caps, Some(clock.clone()), |c| {
+        c.mcp[0].rules.confirm = okbot_runtime::config::Confirm::Destructive;
+        c.mcp[0].rules.confirm_by = okbot_runtime::config::ConfirmBy::Admins;
+    });
+    let calls_now = || calls.lock().unwrap().len();
+    let ask_for_restart = async || {
+        say(&channel, &handle, "bob", "/status board").await;
+        let board = channel.prompts().last().unwrap().clone();
+        let before = channel.prompts().len();
+        press(&channel, "bob", &board.id, "c2").await;
+        eventually(|| channel.prompts().len() == before + 1).await;
+        channel.prompts().last().unwrap().clone()
+    };
+
+    let ask = ask_for_restart().await;
+    assert!(
+        ask.text
+            .contains("bob pressed a button that runs `/restart freach`")
+            && ask.text.contains("as bob"),
+        "{}",
+        ask.text
+    );
+    assert_eq!(ask.allowed, [okbot_core::UserId::new("ana")]);
+    // Bob pressed, but only an admin approves.
+    let before = calls_now();
+    press(&channel, "bob", &ask.id, "c1").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(calls_now(), before);
+    // Ana's approval runs it as Bob, with Bob's rights.
+    press(&channel, "ana", &ask.id, "c1").await;
+    eventually(|| calls_now() == before + 1).await;
+    let (claims, args) = calls.lock().unwrap().last().unwrap().clone();
+    assert_eq!(args, json!({"company": "freach"}));
+    assert_eq!(claims.user, "fake:test/bob");
+    assert!(!claims.admin);
+
+    // An approval waits 10 minutes, not a week.
+    let ask = ask_for_restart().await;
+    clock.advance(Duration::from_secs(11 * 60));
+    let before = calls_now();
+    press(&channel, "ana", &ask.id, "c1").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(calls_now(), before, "an expired approval runs nothing");
     stop.cancel();
 }

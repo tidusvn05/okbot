@@ -466,6 +466,9 @@ pub struct NotifySection {
     /// Where messages go: `room:<conversation>` (as `/whoami` shows it),
     /// `user:<platform>:<instance>/<user id>`, `person:<id>` or `admins`.
     pub to: Vec<String>,
+    /// The `[[command]]`s that buttons of its views may run (ADR 0017); none by default.
+    #[serde(default)]
+    pub commands: Vec<String>,
 }
 
 /// `[schedule]`: reminders and routines (design §5.6).

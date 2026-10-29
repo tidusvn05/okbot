@@ -194,6 +194,7 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             name: n.name.clone(),
             token,
             to,
+            commands: n.commands.clone(),
         });
     }
     rc.automations = automations(config)?;

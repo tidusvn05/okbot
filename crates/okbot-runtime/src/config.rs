@@ -255,6 +255,8 @@ pub struct NotifyRoute {
     pub token: Secret<String>,
     /// The targets, in order.
     pub to: Vec<okbot_core::NotifyTo>,
+    /// The `[[command]]`s that buttons of its views may run (ADR 0017).
+    pub commands: Vec<String>,
 }
 
 /// An `[[automation]]` (ADR 0013).

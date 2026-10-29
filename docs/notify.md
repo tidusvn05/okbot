@@ -82,7 +82,17 @@ The answer lists every chat:
 
 A `view` shows cards, link buttons and buttons that run one of the bot's `[[command]]`s, natively on Discord, Slack,
 Google Chat and Telegram, and as text elsewhere. The format is the one a `[[command]]`'s tool can answer with
-(`okbot_view`, see [the guide](../crates/okbot-knowledge/packs/okbot-guide/own-tools.md)):
+(`okbot_view`, see [the guide](../crates/okbot-knowledge/packs/okbot-guide/own-tools.md)). Buttons may run only the
+commands the target lists, so a caller holding the token cannot make an admin run anything else:
+
+```toml
+[[notify]]
+name = "alerts"
+token_env = "OKBOT_NOTIFY_ALERTS"
+to = ["admins"]
+commands = ["disk", "cleanlogs"]     # [[command]]s its view buttons may run; none by default
+```
+
 
 ```json
 {"id": "vps01-disk-2026-10-30",
@@ -104,11 +114,15 @@ okbot send alerts "Nightly report" --view report.json
 
 - Up to 5 cards (title, tone `neutral|info|success|warning|error`, Markdown text, fields, a table, a chart), up to 3
   links (`https` only), and buttons and links together at most 5. Unknown fields are refused.
-- A button's `command` must be a `[[command]]` of this bot (`/name args…`, one line): never a built-in command or a
-  message to the agent. The view is refused with 400 and the reason otherwise.
+- A button's `command` must be one of the target's `commands` (`/name args…`, one line): never a built-in command,
+  another `[[command]]` or a message to the agent. The view is refused with 400 and the reason otherwise. Links need
+  no list.
+- Under the buttons okbot shows the commands they run (`Buttons run: /disk vps01 · /cleanlogs vps01`), so a label
+  cannot hide one.
 - A press runs the command as the person who pressed it, with their roles, in their chat (a direct chat for
   `user:`, `person:` and `admins` targets). When the command's `[[mcp]]` server has `confirm` set for that tool, the
-  press first asks **Run?**. The first press closes the view.
+  press first asks **Run?** (for 10 minutes; an admin's approval still runs it as the presser). The first press
+  closes the view.
 - The history keeps the view as text.
 
 ## Platforms

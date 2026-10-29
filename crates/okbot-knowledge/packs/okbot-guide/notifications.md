@@ -23,6 +23,7 @@ listen = "127.0.0.1:8787"
 name = "alerts"                       # POST /notify/alerts
 token_env = "OKBOT_NOTIFY_ALERTS"     # in .env: openssl rand -hex 32
 to = ["room:discord:ops|1104…|1290…|-", "admins"]
+commands = ["disk"]                   # [[command]]s its view buttons may run; none by default
 ```
 
 | Target | Goes to |
@@ -41,8 +42,8 @@ journalctl -n 20 | okbot send alerts --id daily-log
 
 - `text` is Markdown, up to 8000 characters, rendered for each platform.
 - `view` (optional; then `text` may be left out) adds cards, link buttons and buttons that run a
-  `[[command]]` as the person who presses, as a command's answer can ([Your own
-  tools](own-tools.md)): `{"view": {"cards": [{"title": "vps01", "tone": "warning", "fields":
+  `[[command]]` listed in the target's `commands`, as the person who presses, as a command's
+  answer can ([Your own tools](own-tools.md)): `{"view": {"cards": [{"title": "vps01", "tone": "warning", "fields":
   [{"label": "Disk", "value": "91%"}]}], "buttons": [{"label": "Check again", "command": "/disk
   vps01"}]}}`. `okbot send alerts --view view.json` sends one from a file. A bad view is refused
   with 400 and the reason.

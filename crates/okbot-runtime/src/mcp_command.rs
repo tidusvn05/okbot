@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 use crate::config::{ArgKind, McpCommand};
 use crate::mcp_client::{self, McpError};
 use crate::permission::{self, Who};
-use crate::ui::{Carried, View};
+use crate::ui::View;
 use crate::{Shared, turn};
 
 /// The `[[command]]` a message invokes, and the text after the command word.
@@ -192,19 +192,28 @@ async fn execute(shared: &Shared, command: &McpCommand, rest: &str, event: &Inbo
 
 /// The tool's view, or its text when it carries none (or one okbot cannot show).
 fn answer(shared: &Shared, command: &McpCommand, out: mcp_client::ToolOutput) -> Reply {
-    match crate::ui::carried(out.structured.as_ref(), &out.text, &shared.config.commands) {
-        Carried::View(view) => return Reply::View(view),
-        Carried::Invalid { error, in_text } => {
+    // Its buttons may run only the commands of the same server: a server cannot make people run
+    // another server's tools.
+    let same_server: Vec<McpCommand> = shared
+        .config
+        .commands
+        .iter()
+        .filter(|c| c.mcp == command.mcp)
+        .cloned()
+        .collect();
+    match crate::ui::carried(out.structured.as_ref(), &same_server) {
+        Some(Ok(view)) => return Reply::View(Box::new(view)),
+        Some(Err(error)) => {
             // The log only: the server's text is not repeated in the chat.
             tracing::warn!(command = %command.name, %error, "the tool's view cannot be shown");
-            if in_text || out.text.trim().is_empty() {
+            if out.text.trim().is_empty() {
                 return Reply::Text(format!(
                     "⚠️ `/{}` answered with a view that cannot be shown.",
                     command.name
                 ));
             }
         }
-        Carried::Nothing => {}
+        None => {}
     }
     Reply::Text(if out.is_error && starts_with_icon(&out.text) {
         // A server that leads with its own icon (❌, 🔑…) keeps it.
@@ -233,19 +242,24 @@ fn confirmation(
         ));
     }
     let line = event.text.trim();
-    let who = match by {
-        crate::config::ConfirmBy::Requester => crate::interact::literal(&event.author.display_name),
-        crate::config::ConfirmBy::Admins => "an administrator".to_string(),
-    };
-    tracing::info!(command = %command.name, "a pressed command waits for approval");
-    Reply::View(Box::new(View::confirmation(
-        format!(
-            "🔐 `{}` can change things. Run it? ({who} decides)",
+    let presser = crate::interact::literal(&event.author.display_name);
+    let text = match by {
+        crate::config::ConfirmBy::Requester => format!(
+            "🔐 {presser}, the button runs `{}`, which can change things. Run it?",
             line.replace('`', "'")
         ),
-        line,
-        allowed,
-    )))
+        crate::config::ConfirmBy::Admins => format!(
+            "🔐 {presser} pressed a button that runs `{}`, which can change things. Run it \
+             as {presser}? (an administrator decides)",
+            line.replace('`', "'")
+        ),
+    };
+    tracing::info!(command = %command.name, "a pressed command waits for approval");
+    let approval = crate::ui::Approval {
+        run_as: event.author.clone(),
+        admins: by == crate::config::ConfirmBy::Admins,
+    };
+    Reply::View(Box::new(View::confirmation(text, line, approval, allowed)))
 }
 
 /// The credential `extra` gets for `command`, or why there is none.

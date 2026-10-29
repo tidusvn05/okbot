@@ -151,7 +151,7 @@ pub(crate) async fn post(shared: &Shared, name: &str, bearer: Option<&str>, body
     };
     let view = match request.view {
         None => None,
-        Some(value) => match crate::ui::View::from_json(value, &shared.config.commands) {
+        Some(value) => match crate::ui::View::from_json(value, &allowed_commands(shared, route)) {
             Ok(view) => Some(view),
             Err(error) => return Reply::error(StatusCode::BAD_REQUEST, format!("view: {error}")),
         },
@@ -199,6 +199,21 @@ pub(crate) async fn post(shared: &Shared, name: &str, bearer: Option<&str>, body
         shared.notified.release(name, id);
     }
     reply
+}
+
+/// The `[[command]]`s buttons of `route`'s views may run: only those its `commands` lists, so a
+/// caller holding the token cannot make people run anything else under a friendly label.
+fn allowed_commands(
+    shared: &Shared,
+    route: &crate::config::NotifyRoute,
+) -> Vec<crate::config::McpCommand> {
+    shared
+        .config
+        .commands
+        .iter()
+        .filter(|c| route.commands.contains(&c.name))
+        .cloned()
+        .collect()
 }
 
 /// Sends `text`, then `view`, to every chat of `to` and records them in each chat's history with
@@ -479,6 +494,7 @@ mod tests {
             name: "alerts".into(),
             token: Secret::new("s3cret".into()),
             to: to.iter().map(|t| t.parse().unwrap()).collect(),
+            commands: Vec::new(),
         }];
         edit(&mut config);
         let channels: HashMap<ChannelId, Arc<dyn Channel>> = HashMap::from([
@@ -542,20 +558,60 @@ mod tests {
         assert!(history[0].text.contains("not instructions"));
     }
 
-    #[tokio::test]
-    async fn views_come_with_or_instead_of_the_text() {
-        let s = setup(&["room:zalo:shop|-|chat-1|-"], |c| {
-            c.commands = vec![crate::config::McpCommand {
-                name: "status".into(),
+    fn with_commands(c: &mut RuntimeConfig) {
+        c.commands = ["status", "restart"]
+            .into_iter()
+            .map(|name| crate::config::McpCommand {
+                name: name.into(),
                 description: String::new(),
                 descriptions: Vec::new(),
                 mcp: "ops".into(),
-                tool: "status".into(),
+                tool: name.into(),
                 args: Vec::new(),
                 with: serde_json::Map::new(),
                 admins_only: false,
                 roles: Vec::new(),
-            }];
+            })
+            .collect();
+    }
+
+    #[tokio::test]
+    async fn view_buttons_need_the_route_to_list_their_command() {
+        // No `commands` on the route: links are fine, command buttons are not.
+        let s = setup(&["room:zalo:shop|-|chat-1|-"], with_commands);
+        let button = json!({"view": {"buttons": [{"label": "Acknowledge", "command": "/status"}]}});
+        let reply = post_json(&s, "s3cret", button).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+        assert!(
+            reply.body["error"]
+                .as_str()
+                .unwrap()
+                .contains("not a [[command]] this view may run"),
+            "{}",
+            reply.body
+        );
+        let link =
+            json!({"view": {"links": [{"label": "Runbook", "url": "https://example.com/r"}]}});
+        assert_eq!(post_json(&s, "s3cret", link).await.status, StatusCode::OK);
+
+        // Listing `status` does not open `restart`.
+        let s = setup(&["room:zalo:shop|-|chat-1|-"], |c| {
+            with_commands(c);
+            c.notify[0].commands = vec!["status".into()];
+        });
+        let restart =
+            json!({"view": {"buttons": [{"label": "Acknowledge", "command": "/restart prod"}]}});
+        assert_eq!(
+            post_json(&s, "s3cret", restart).await.status,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn views_come_with_or_instead_of_the_text() {
+        let s = setup(&["room:zalo:shop|-|chat-1|-"], |c| {
+            with_commands(c);
+            c.notify[0].commands = vec!["status".into()];
         });
         let view = json!({
             "cards": [{"title": "vps01", "tone": "warning", "fields": [{"label": "Disk", "value": "91%"}]}],

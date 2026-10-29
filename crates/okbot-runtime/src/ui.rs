@@ -50,11 +50,12 @@ const BAR_WIDTH: usize = 12;
 const CHART_TIMEOUT: Duration = Duration::from_secs(2);
 /// The id of a form button (choices are `b1`…, options `o1`…, links `l1`…, commands `c1`…).
 const FORM: &str = "form";
-/// The key of a view in a `[[command]]` result: `structuredContent.okbot_view`, or a text that is
-/// only `{"okbot_view": …}` (ADR 0017).
+/// The key of a view in a `[[command]]` result: `structuredContent.okbot_view` (ADR 0017).
 pub(crate) const ENVELOPE: &str = "okbot_view";
 /// Characters of a button's command line.
 const MAX_COMMAND_LINE: usize = 200;
+/// How long an approval of a pressed command waits.
+const APPROVAL_TTL: Duration = Duration::from_secs(10 * 60);
 /// How a press's event id starts; a press that confirmed a command starts with [`CONFIRMED`].
 const PRESSED: &str = "ui:";
 const CONFIRMED: &str = "ui+:";
@@ -306,9 +307,29 @@ struct CommandButton {
     /// The command line, `/name args…`.
     command: String,
     style: ButtonStyle,
-    /// The press is the approval `[[mcp]] confirm` asks for: it runs as if typed.
+    /// The press is the approval `[[mcp]] confirm` asks for: the command then runs as typed by
+    /// the person who pressed the first button, not by the approver.
     #[serde(default)]
-    confirmed: bool,
+    approval: Option<Approval>,
+}
+
+/// Whose pressed command an approval is for, and who may give it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Approval {
+    /// The person who pressed the button that asked.
+    pub(crate) run_as: okbot_core::UserRef,
+    /// `confirm_by = "admins"`: the channel's admins approve; else the presser.
+    pub(crate) admins: bool,
+}
+
+impl Approval {
+    fn by(&self) -> crate::config::ConfirmBy {
+        if self.admins {
+            crate::config::ConfirmBy::Admins
+        } else {
+            crate::config::ConfirmBy::Requester
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -548,53 +569,20 @@ fn command_line(line: &str, commands: &[McpCommand]) -> Result<String, String> {
         || crate::command::Command::parse(line).is_some()
     {
         return Err(format!(
-            "button command {line:?}: not a [[command]] of this bot"
+            "button command {line:?}: not a [[command]] this view may run"
         ));
     }
     Ok(line.to_string())
 }
 
-/// What a `[[command]]`'s tool result carries.
-#[derive(Debug)]
-pub(crate) enum Carried {
-    /// No view: the text is the answer.
-    Nothing,
-    View(Box<View>),
-    /// A view okbot cannot show; `in_text` when it took the place of the text.
-    Invalid {
-        error: String,
-        in_text: bool,
-    },
-}
-
-/// The view of a tool's result (ADR 0017): `structuredContent.okbot_view`, else a text that is
-/// only `{"okbot_view": …}`.
-pub(crate) fn carried(structured: Option<&Value>, text: &str, commands: &[McpCommand]) -> Carried {
-    let (value, in_text) = match structured.and_then(|s| s.get(ENVELOPE)) {
-        Some(v) => (v.clone(), false),
-        None => {
-            let text = text.trim();
-            if !text.starts_with('{') || !text.contains(ENVELOPE) {
-                return Carried::Nothing;
-            }
-            match serde_json::from_str::<Value>(text) {
-                Ok(Value::Object(mut map)) if map.contains_key(ENVELOPE) => {
-                    if map.len() > 1 {
-                        return Carried::Invalid {
-                            error: format!("a text view holds only `{ENVELOPE}`"),
-                            in_text: true,
-                        };
-                    }
-                    (map.remove(ENVELOPE).unwrap_or_default(), true)
-                }
-                _ => return Carried::Nothing,
-            }
-        }
-    };
-    match View::from_json(value, commands) {
-        Ok(view) => Carried::View(Box::new(view)),
-        Err(error) => Carried::Invalid { error, in_text },
-    }
+/// The view of a tool's result (ADR 0017), only ever from `structuredContent.okbot_view`: a text
+/// is never read as a view, since it may repeat what a third party wrote. `None` without one.
+pub(crate) fn carried(
+    structured: Option<&Value>,
+    commands: &[McpCommand],
+) -> Option<Result<View, String>> {
+    let value = structured?.get(ENVELOPE)?.clone();
+    Some(View::from_json(value, commands))
 }
 
 impl View {
@@ -622,7 +610,7 @@ impl View {
                 command: command_line(&b.command, commands)?,
                 label: b.label,
                 style: b.style.unwrap_or(ButtonStyle::Secondary),
-                confirmed: false,
+                approval: None,
             });
         }
         Self::checked(
@@ -638,8 +626,14 @@ impl View {
         )
     }
 
-    /// Asks to confirm `line`: one button that runs it as typed, pressed only by `allowed`.
-    pub(crate) fn confirmation(text: String, line: &str, allowed: Vec<UserId>) -> Self {
+    /// Asks to approve `line`, pressed by `approval.run_as`: one button that runs it as typed by
+    /// them, pressed only by `allowed` (checked again against the current lists at the press).
+    pub(crate) fn confirmation(
+        text: String,
+        line: &str,
+        approval: Approval,
+        allowed: Vec<UserId>,
+    ) -> Self {
         Self {
             text,
             cards: Vec::new(),
@@ -651,7 +645,7 @@ impl View {
                 label: "Run".into(),
                 command: line.to_string(),
                 style: ButtonStyle::Danger,
-                confirmed: true,
+                approval: Some(approval),
             }],
             allowed,
         }
@@ -819,7 +813,7 @@ impl View {
             .iter()
             .map(|c| {
                 let line = c.command.replace('`', "'");
-                if c.confirmed {
+                if c.approval.is_some() {
                     format!("Send `{line}` to run it.")
                 } else {
                     format!("- {}: `{line}`", c.label)
@@ -827,6 +821,22 @@ impl View {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Under native command buttons: the command each one runs, so a label cannot hide it.
+    /// (An approval's own text names its command.)
+    fn commands_note(&self) -> String {
+        let lines: Vec<String> = self
+            .commands
+            .iter()
+            .filter(|c| c.approval.is_none())
+            .map(|c| format!("`{}`", c.command.replace('`', "'")))
+            .collect();
+        if lines.is_empty() {
+            String::new()
+        } else {
+            format!("-# Buttons run: {}", lines.join(" · "))
+        }
     }
 
     fn links_markdown(&self) -> String {
@@ -979,9 +989,11 @@ fn build(
     if !native.form {
         text.extend(view.form.iter().map(View::form_markdown));
     }
-    if !native.commands {
-        text.push(view.commands_markdown());
-    }
+    text.push(if native.commands {
+        view.commands_note()
+    } else {
+        view.commands_markdown()
+    });
     if !native.links {
         text.push(view.links_markdown());
     }
@@ -1236,8 +1248,14 @@ async fn show(
         is_direct,
         sent,
     };
+    // An approval is a decision about now, not about next week.
+    let ttl = if view.commands.iter().any(|c| c.approval.is_some()) {
+        APPROVAL_TTL
+    } else {
+        TTL
+    };
     let expires = shared.clock.now()
-        + jiff::SignedDuration::try_from(TTL).unwrap_or(jiff::SignedDuration::MAX);
+        + jiff::SignedDuration::try_from(ttl).unwrap_or(jiff::SignedDuration::MAX);
     let data =
         serde_json::to_string(&state).map_err(|e| okbot_core::ChannelError::Failed(e.into()))?;
     if let Err(error) = shared.store.put_view(&state.prompt.id, data, expires).await {
@@ -1328,7 +1346,8 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
         tracing::warn!(prompt = %answer.prompt, "a button's command is no longer a [[command]]");
         return;
     }
-    let prefix = if command.is_some_and(|c| c.confirmed) {
+    let approval = command.and_then(|c| c.approval.as_ref());
+    let prefix = if approval.is_some() {
         CONFIRMED
     } else {
         PRESSED
@@ -1336,7 +1355,8 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     let event = InboundEvent {
         event_id: format!("{prefix}{}:{}", answer.prompt, answer.user.id),
         conversation: state.conversation.clone(),
-        author: answer.user.clone(),
+        // An approval runs the command as the person who pressed for it, not as the approver.
+        author: approval.map_or_else(|| answer.user.clone(), |a| a.run_as.clone()),
         text,
         attachments: Vec::new(),
         // A press is addressed to the bot.
@@ -1347,6 +1367,13 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
         sent_at: now,
         locale: None,
     };
+    // The approver is checked against the current lists, not the view's snapshot.
+    if let Some(a) = approval
+        && !crate::confirm::approvers(&shared, &event, a.by()).contains(&answer.user.id)
+    {
+        tracing::info!(prompt = %answer.prompt, user = %answer.user.id, "approval ignored: not an approver now");
+        return;
+    }
     // The checks dispatch makes, so that a press it would drop does not use up the view.
     if !shared.gate.admits(&event, now)
         || (shared.config.personal && shared.person_of(&event).await.is_none())
@@ -1842,7 +1869,7 @@ mod tests {
                     label: "Refresh".into(),
                     command: "/status freach".into(),
                     style: ButtonStyle::Primary,
-                    confirmed: false,
+                    approval: None,
                 },
             )]),
             form: view.form.as_ref().map(|f| f.form.clone()),
@@ -2013,12 +2040,35 @@ mod tests {
         assert!(prompt.is_answerable() && prompt.allowed.is_empty());
         assert_eq!(prompt.cards[0].title.as_deref(), Some("channel-broker"));
 
-        let ask = View::confirmation("Run it?".into(), "/restart freach", vec![UserId::new("u1")]);
+        // A label cannot hide what a button runs: the commands are shown with them.
+        assert!(
+            prompt
+                .text
+                .ends_with("-# Buttons run: `/status freach` · `/restart freach channel-broker`"),
+            "{}",
+            prompt.text
+        );
+
+        let approval = Approval {
+            run_as: okbot_core::UserRef {
+                id: UserId::new("u2"),
+                display_name: "Bob".into(),
+                is_bot: false,
+            },
+            admins: true,
+        };
+        let ask = View::confirmation(
+            "Run it?".into(),
+            "/restart freach",
+            approval,
+            vec![UserId::new("u1")],
+        );
         let prompt = build(&renderer(), &ask, &caps(UiCaps::all()), None)
             .prompt
             .expect("a prompt");
         assert_eq!(prompt.allowed, [UserId::new("u1")]);
         assert_eq!(prompt.buttons[0].label, "Run");
+        assert_eq!(prompt.text, "Run it?", "its text names the command already");
         assert_eq!(
             ask.markdown(),
             "Run it?\n\nSend `/restart freach` to run it."
@@ -2026,40 +2076,30 @@ mod tests {
     }
 
     #[test]
-    fn views_travel_in_structured_content_or_a_text_envelope() {
+    fn views_travel_only_in_structured_content() {
         let commands = commands();
         let envelope = json!({ENVELOPE: board()});
-        let structured = carried(Some(&envelope), "{\"raw\": 1}", &commands);
-        assert!(matches!(structured, Carried::View(_)), "{structured:?}");
-        let text = carried(None, &envelope.to_string(), &commands);
-        assert!(matches!(text, Carried::View(_)), "{text:?}");
-        // Other structured data and other JSON texts are not views.
-        let data = json!({"services": []});
-        assert!(matches!(
-            carried(Some(&data), "ok", &commands),
-            Carried::Nothing
-        ));
-        assert!(matches!(
-            carried(None, "{\"okbot_viewer\": 1, \"x\": [", &commands),
-            Carried::Nothing
-        ));
-        assert!(matches!(
-            carried(None, "**okbot_view** is a word", &commands),
-            Carried::Nothing
-        ));
+        assert!(matches!(carried(Some(&envelope), &commands), Some(Ok(_))));
+        // Other structured data is not a view, and a text never is: it may repeat what a third
+        // party wrote.
+        assert!(carried(Some(&json!({"services": []})), &commands).is_none());
+        assert!(carried(None, &commands).is_none());
         let bad = json!({ENVELOPE: {"cards": "nope"}});
-        assert!(matches!(
-            carried(Some(&bad), "text", &commands),
-            Carried::Invalid { in_text: false, .. }
-        ));
-        assert!(matches!(
-            carried(None, &bad.to_string(), &commands),
-            Carried::Invalid { in_text: true, .. }
-        ));
-        let extra = json!({ENVELOPE: board(), "more": 1});
-        assert!(matches!(
-            carried(None, &extra.to_string(), &commands),
-            Carried::Invalid { in_text: true, .. }
-        ));
+        assert!(matches!(carried(Some(&bad), &commands), Some(Err(_))));
+    }
+
+    #[test]
+    fn buttons_run_only_the_commands_given() {
+        // A `[[command]]` result passes only its own server's commands (ADR 0017).
+        let ops: Vec<McpCommand> = commands()
+            .into_iter()
+            .filter(|c| c.name == "status")
+            .collect();
+        let restart = json!({"buttons": [{"label": "Acknowledge", "command": "/restart prod"}]});
+        let refused = View::from_json(restart, &ops).unwrap_err();
+        assert!(
+            refused.contains("not a [[command]] this view may run"),
+            "{refused}"
+        );
     }
 }

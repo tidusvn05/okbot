@@ -88,7 +88,7 @@ Test without a platform: `okbot chat --strict`, then `/logs …`.
 
 A tool can answer a command with a view instead of text: cards with fields, a table or a chart,
 link buttons, and buttons that run another `[[command]]`. Put it in the result's
-`structuredContent` under `okbot_view` (or make the whole text `{"okbot_view": {…}}`):
+`structuredContent` under `okbot_view` (a text is never read as a view):
 
 ```json
 {"okbot_view": {
@@ -106,10 +106,14 @@ link buttons, and buttons that run another `[[command]]`. Put it in the result's
   no choices or forms. Buttons and links together are at most 5.
 - The view is shown on every platform, whatever `reply_mode` says: natively on Discord, Slack,
   Google Chat and Telegram, as text elsewhere (a button becomes the command to type).
-- A button runs only a `[[command]]` of this bot (never a built-in or a message to the agent), as
-  the person who presses it, with that person's `roles` and the server's rules. When the server's
-  `confirm` wants an approval for that tool, the press first asks **Run?**. Only the presser can
-  answer it (or the admins, with `confirm_by = "admins"`). Typed commands are never asked.
+- A button runs only a `[[command]]` of the same `[[mcp]]` server (never a built-in, another
+  server's command or a message to the agent), as the person who presses it, with that person's
+  `roles` and the server's rules. Under the buttons, okbot always shows the commands they run
+  (`Buttons run: /status freach · /restart freach`), so a label cannot hide one.
+- When the server's `confirm` wants an approval for that tool, the press first asks **Run?**
+  (for 10 minutes). Only the presser can answer it, or the channel's admins with
+  `confirm_by = "admins"`, checked again when they press. The command then runs as the presser,
+  never as the admin who approved. Typed commands are never asked.
 - The first press closes the view; the new answer comes with fresh buttons.
 - A view okbot cannot show (an unknown command, a field it does not know) is logged, and the chat
   gets the text of the result instead. A signed server can tell a command from an agent by the

@@ -462,6 +462,7 @@ mod tests {
             name: "alerts".into(),
             token: okbot_core::Secret::new("t0k".into()),
             to: vec!["room:hook:test|-|r1|-".parse().unwrap()],
+            commands: Vec::new(),
         }];
         let app = router(&shared_with(config), 1024, None);
         let call = |token: &'static str| {

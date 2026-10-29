@@ -866,6 +866,15 @@ impl Config {
                 return invalid(format!("[[notify]] `{name}`: `to` names no target"));
             }
             self.check_targets(&format!("[[notify]] `{name}`"), &n.to)?;
+            if let Some(c) = n
+                .commands
+                .iter()
+                .find(|c| !self.commands.iter().any(|d| &d.name == *c))
+            {
+                return invalid(format!(
+                    "[[notify]] `{name}`: commands names `{c}`, which is not a [[command]]"
+                ));
+            }
         }
         Ok(())
     }
