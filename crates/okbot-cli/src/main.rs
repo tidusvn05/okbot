@@ -6,6 +6,7 @@ mod automation;
 mod bot;
 mod channel;
 mod chat;
+mod commands;
 mod doctor;
 mod exit;
 mod history;
@@ -65,6 +66,8 @@ enum Command {
     List,
     /// Check a bot's configuration, agents, knowledge and channels.
     Doctor(doctor::DoctorArgs),
+    /// List the bot's `[[command]]`s and the built-in names they cannot use (`--builtin`).
+    Commands(commands::CommandsArgs),
     /// Maintain the knowledge bundle.
     #[command(subcommand)]
     Kb(kb::KbCommand),
@@ -74,6 +77,9 @@ enum Command {
     Stop(service::ServiceArgs),
     /// Restart the bot's service (after editing okbot.toml or kb/persona).
     Restart(service::ServiceArgs),
+    /// Apply access changes (`[bot] admins`, `allow_users`, `blocked_users`, `[people]`, `[roles]`)
+    /// without a restart. A running bot also applies them by itself when okbot.toml changes.
+    Reload(service::ServiceArgs),
     /// Show whether the bot's service is running.
     Status(service::ServiceArgs),
     /// Show the bot's service logs.
@@ -175,9 +181,12 @@ async fn main() -> ExitCode {
     let json = match &cli.command {
         Command::New { args, .. } | Command::Init(args) => args.json,
         Command::Doctor(args) => args.json,
+        Command::Commands(args) => args.json,
         Command::Send(args) => args.json,
         Command::Agent(command) => command.json(),
         Command::History(command) => command.json(),
+        Command::Task(command) => command.json(),
+        Command::People(command) => command.json(),
         _ => false,
     };
     let result = match cli.command {
@@ -194,6 +203,7 @@ async fn main() -> ExitCode {
         Command::Chat(args) => chat::run(args).await,
         Command::List => list(),
         Command::Doctor(args) => doctor::run(args).await,
+        Command::Commands(args) => commands::run(&args),
         Command::Agent(command) => agent::run(command).await,
         Command::History(command) => history::run(command).await,
         Command::Kb(command) => kb::run(command).await,
@@ -213,6 +223,7 @@ async fn main() -> ExitCode {
         Command::Start(args) => service::run(service::Action::Start, &args),
         Command::Stop(args) => service::run(service::Action::Stop, &args),
         Command::Restart(args) => service::run(service::Action::Restart, &args),
+        Command::Reload(args) => service::run(service::Action::Reload, &args),
         Command::Status(args) => service::run(service::Action::Status, &args),
         Command::Logs(args) => service::logs(&args),
         Command::Remove { name } => remove(&name),

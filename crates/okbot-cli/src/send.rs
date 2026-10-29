@@ -16,8 +16,11 @@ use crate::exit::CliError;
 pub(crate) struct SendArgs {
     /// The `[[notify]]` name (`alerts`).
     target: String,
-    /// Markdown text; read from stdin when left out or `-`.
+    /// Markdown text; read from stdin when left out (unless `--view` is given) or `-`.
     text: Option<String>,
+    /// A JSON file with a view (cards, links, buttons that run `[[command]]`s), sent after the text.
+    #[arg(long, value_name = "FILE")]
+    view: Option<std::path::PathBuf>,
     /// An id for this notification: sending the same id again within an hour does nothing.
     #[arg(long)]
     id: Option<String>,
@@ -44,6 +47,34 @@ fn endpoint(listen: &str, name: &str) -> anyhow::Result<String> {
     Ok(format!("http://{addr}/notify/{name}"))
 }
 
+/// The text and the view to send: the text from the argument or stdin (optional with a view).
+fn message(args: &SendArgs) -> anyhow::Result<(String, Option<Value>)> {
+    let view: Option<Value> = match &args.view {
+        Some(path) => {
+            let data = std::fs::read_to_string(path)
+                .with_context(|| format!("cannot read {}", path.display()))?;
+            Some(
+                serde_json::from_str(&data)
+                    .with_context(|| format!("{} is not JSON", path.display()))?,
+            )
+        }
+        None => None,
+    };
+    let text = match args.text.as_deref() {
+        Some(text) if text != "-" => text.to_string(),
+        // With a view the text is optional.
+        None if view.is_some() => String::new(),
+        _ => {
+            let mut text = String::new();
+            std::io::stdin()
+                .read_to_string(&mut text)
+                .context("cannot read the text from stdin")?;
+            text.trim_end().to_string()
+        }
+    };
+    Ok((text, view))
+}
+
 pub(crate) async fn run(args: SendArgs) -> anyhow::Result<()> {
     let dir = crate::registry::resolve(args.bot.as_deref())?;
     let config = Config::load(&dir)?;
@@ -60,16 +91,7 @@ pub(crate) async fn run(args: SendArgs) -> anyhow::Result<()> {
             }
         );
     };
-    let text = match args.text.as_deref() {
-        Some(text) if text != "-" => text.to_string(),
-        _ => {
-            let mut text = String::new();
-            std::io::stdin()
-                .read_to_string(&mut text)
-                .context("cannot read the text from stdin")?;
-            text.trim_end().to_string()
-        }
-    };
+    let (text, view) = message(&args)?;
     let listen = config
         .http
         .listen
@@ -80,6 +102,9 @@ pub(crate) async fn run(args: SendArgs) -> anyhow::Result<()> {
     let mut body = json!({ "text": text });
     if let Some(id) = &args.id {
         body["id"] = json!(id);
+    }
+    if let Some(view) = view {
+        body["view"] = view;
     }
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))

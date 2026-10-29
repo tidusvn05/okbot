@@ -5,7 +5,7 @@ description: Connecting your own MCP server with a shared secret or a signed run
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-10-30
 aliases: [mcp server riêng, tool riêng, công cụ riêng, lệnh chat, slash command, "[[command]]", signed, nút bấm, form, api nội bộ]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -37,6 +37,14 @@ claims with your secret. The claims name the `user` (`discord:main/1234`), wheth
 `admin`, the conversation, an expiry and an `interact` URL. Verify the signature and expiry on every
 request, then authorize by `user` and `admin`; the agent cannot change them.
 
+**Tasks for the person who asked.** A server that creates reminders through the okbot CLI can pass
+the token it received: `OKBOT_RUN_TOKEN=<token> okbot task add "Renew cert" --remind "…" --json`
+(or `--run-token`). okbot checks the signature, expiry and bot, and the task belongs to the person
+linked to the token's `user` in `[people]` (the owner on a personal bot), so no `--person` is
+needed. `--person` still wins when given. This picks the owner; it is not a permission check
+(whoever can run `okbot task` can pass `--person`), so keep authorizing in your server. Prefer the
+variable to the flag: arguments show up in `ps`.
+
 With the signature, a server can keep **per-person OAuth tokens** for services that have no MCP
 server of their own: see `docs/extending/accounts.md` and `examples/mcp/accounts-server.mjs` in the
 okbot repository.
@@ -67,4 +75,46 @@ quota is used up, costs nothing and answers the same way every time. Other argum
 person typed them). okbot fills the command menus of Discord and Telegram with them. On Slack and
 Google Chat, mention the bot first: `@bot /logs …`.
 
+Names use `a-z`, `0-9` and `_` (at most 32) and cannot reuse a built-in command. The reserved
+names are `help`, `reset`, `new`, `clear`, `whoami`, `stop`, `cancel`, `remember`, `forget`,
+`memories`, `memory`, `pair`, `tasks`, `todo`, `todos`, `done`, `snooze`, `later`, `resume`,
+`start`, `pause`, `note`, `approve`, `deny`, `answer`, `grant`, `revoke`, `roles`, `connect`,
+`disconnect` and `connections`. `okbot commands --builtin` prints them (`--json` for scripts), and
+`okbot doctor` names every `[[command]]` that uses one in a single report.
+
 Test without a platform: `okbot chat --strict`, then `/logs …`.
+
+### Cards and buttons in a command's answer
+
+A tool can answer a command with a view instead of text: cards with fields, a table or a chart,
+link buttons, and buttons that run another `[[command]]`. Put it in the result's
+`structuredContent` under `okbot_view` (a text is never read as a view):
+
+```json
+{"okbot_view": {
+  "text": "Services of **freach**",
+  "cards": [{"title": "channel-broker", "tone": "success",
+             "fields": [{"label": "Pods", "value": "3/3"}],
+             "table": {"columns": ["Pod", "State"], "rows": [["cb-1", "running"]]}}],
+  "buttons": [{"label": "Refresh", "command": "/status freach", "style": "primary"},
+              {"label": "Restart", "command": "/restart freach", "style": "danger"}],
+  "links": [{"label": "Grafana", "url": "https://grafana.example.com/d/1"}]
+}}
+```
+
+- Cards, tables and charts are the same as in [Interactive replies](interactive-replies.md), with
+  no choices or forms. Buttons and links together are at most 5.
+- The view is shown on every platform, whatever `reply_mode` says: natively on Discord, Slack,
+  Google Chat and Telegram, as text elsewhere (a button becomes the command to type).
+- A button runs only a `[[command]]` of the same `[[mcp]]` server (never a built-in, another
+  server's command or a message to the agent), as the person who presses it, with that person's
+  `roles` and the server's rules. Under the buttons, okbot always shows the commands they run
+  (`Buttons run: /status freach · /restart freach`), so a label cannot hide one.
+- When the server's `confirm` wants an approval for that tool, the press first asks **Run?**
+  (for 10 minutes). Only the presser can answer it, or the channel's admins with
+  `confirm_by = "admins"`, checked again when they press. The command then runs as the presser,
+  never as the admin who approved. Typed commands are never asked.
+- The first press closes the view; the new answer comes with fresh buttons.
+- A view okbot cannot show (an unknown command, a field it does not know) is logged, and the chat
+  gets the text of the result instead. A signed server can tell a command from an agent by the
+  `command` claim of its token, and send the view only to commands.

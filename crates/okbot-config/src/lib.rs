@@ -731,6 +731,22 @@ impl Config {
 
     fn validate_commands(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
+        // Every reserved name at once, so one start (or `okbot doctor`) shows all of them.
+        let reserved: Vec<String> = self
+            .commands
+            .iter()
+            .filter(|c| BUILTIN_COMMANDS.contains(&c.name.as_str()))
+            .map(|c| format!("`{}`", c.name))
+            .collect();
+        if !reserved.is_empty() {
+            return invalid(format!(
+                "[[command]] {} {} built-in; rename {}. Reserved names: {}",
+                reserved.join(", "),
+                if reserved.len() == 1 { "is" } else { "are" },
+                if reserved.len() == 1 { "it" } else { "them" },
+                BUILTIN_COMMANDS.join(", ")
+            ));
+        }
         let mut seen = std::collections::HashSet::new();
         for c in &self.commands {
             let n = &c.name;
@@ -742,9 +758,6 @@ impl Config {
                 return invalid(format!(
                     "[[command]] name `{n}`: use a-z, 0-9 and `_` only, at most 32 (no `/`)"
                 ));
-            }
-            if BUILTIN_COMMANDS.contains(&n.as_str()) {
-                return invalid(format!("[[command]] `{n}` is a built-in command"));
             }
             if !seen.insert(n.as_str()) {
                 return invalid(format!("[[command]] `{n}` is defined twice"));
@@ -853,6 +866,15 @@ impl Config {
                 return invalid(format!("[[notify]] `{name}`: `to` names no target"));
             }
             self.check_targets(&format!("[[notify]] `{name}`"), &n.to)?;
+            if let Some(c) = n
+                .commands
+                .iter()
+                .find(|c| !self.commands.iter().any(|d| &d.name == *c))
+            {
+                return invalid(format!(
+                    "[[notify]] `{name}`: commands names `{c}`, which is not a [[command]]"
+                ));
+            }
         }
         Ok(())
     }

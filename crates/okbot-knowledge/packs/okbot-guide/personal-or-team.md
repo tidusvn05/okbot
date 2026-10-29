@@ -61,5 +61,8 @@ The same in `okbot.toml`:
 accounts = ["zalo:shop/123", "discord:shop/456"]
 ```
 
+A running bot applies links within seconds, without a restart. Scripts and MCP servers can use
+`okbot people list --json` (and `--json` on `link` and `unlink`).
+
 Only link accounts the person confirms are theirs: linked accounts see each other's notes. In
 roles, notifications and automations, write the person as `person:lan`.

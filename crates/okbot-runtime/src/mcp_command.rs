@@ -4,35 +4,72 @@
 //! "channel-broker", "since": "24h"}`. Values take the types the tool declares, so `limit=50` is
 //! a number. The server sees the same identity an agent turn would give it (a signed token with
 //! `command` set), so its own permission checks and prompts apply unchanged.
+//!
+//! A result may carry a view (ADR 0017): cards, links and buttons that run other `[[command]]`s,
+//! shown natively where the platform can.
 
 use okbot_core::InboundEvent;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::config::{ArgKind, McpCommand};
 use crate::mcp_client::{self, McpError};
 use crate::permission::{self, Who};
+use crate::ui::View;
 use crate::{Shared, turn};
 
 /// The `[[command]]` a message invokes, and the text after the command word.
 pub(crate) fn find<'a>(shared: &'a Shared, text: &'a str) -> Option<(&'a McpCommand, &'a str)> {
+    find_in(&shared.config.commands, text)
+}
+
+/// The command of `commands` that `text` invokes, and the text after the command word.
+pub(crate) fn find_in<'a>(
+    commands: &'a [McpCommand],
+    text: &'a str,
+) -> Option<(&'a McpCommand, &'a str)> {
     let text = text.trim();
     let word = text.split_whitespace().next()?;
     let name = word.strip_prefix('/')?;
     let name = name.split('@').next().unwrap_or(name).to_ascii_lowercase();
-    let command = shared.config.commands.iter().find(|c| c.name == name)?;
+    let command = commands.iter().find(|c| c.name == name)?;
     Some((command, text[word.len()..].trim()))
 }
 
-/// Runs a command and replies with the tool's text (nothing when it returns none, as a tool that
-/// only shows a prompt may).
+/// What a command answers.
+enum Reply {
+    Text(String),
+    View(Box<View>),
+}
+
+/// Runs a command and replies with the tool's view or text (nothing when it returns none, as a
+/// tool that only shows a prompt may).
 pub(crate) async fn run(shared: &Shared, command: &McpCommand, rest: &str, event: &InboundEvent) {
     let typing = turn::Typing::start(shared, event).await;
-    let text = execute(shared, command, rest, event).await;
-    if !text.trim().is_empty() {
+    let text = match execute(shared, command, rest, event).await {
+        Reply::Text(text) => text,
+        Reply::View(view) => {
+            done(shared, event, typing.1.as_ref()).await;
+            let to = crate::dispatch::target(event);
+            if let Err(error) = crate::ui::deliver(shared, &to, event.is_direct, &view).await {
+                tracing::error!(command = %command.name, %error, "cannot send a command's view");
+            }
+            return;
+        }
+    };
+    if text.trim().is_empty() {
+        done(shared, event, typing.1.as_ref()).await;
+    } else {
         turn::reply_over(shared, event, &text, typing.1.as_ref()).await;
-    } else if let (Some(sent), Some(channel)) =
-        (&typing.1, shared.channels.get(&event.conversation.channel))
-    {
+    }
+    drop(typing);
+}
+
+/// Replaces the "thinking…" placeholder, if any, with a check mark: it must not stay.
+async fn done(shared: &Shared, event: &InboundEvent, placeholder: Option<&okbot_core::SentRef>) {
+    if let (Some(sent), Some(channel)) = (
+        placeholder,
+        shared.channels.get(&event.conversation.channel),
+    ) {
         // Nothing to say: the "thinking…" placeholder must not stay.
         if let Some(part) = shared
             .renderer
@@ -43,39 +80,44 @@ pub(crate) async fn run(shared: &Shared, command: &McpCommand, rest: &str, event
             let _ = channel.edit(sent, &part).await;
         }
     }
-    drop(typing);
 }
 
-async fn execute(
-    shared: &Shared,
-    command: &McpCommand,
-    rest: &str,
-    event: &InboundEvent,
-) -> String {
+/// How a session with the command's server ended.
+enum Call {
+    Done(mcp_client::ToolOutput),
+    Usage(String),
+    /// A press must be confirmed first (`[[mcp]] confirm`).
+    Confirm,
+}
+
+async fn execute(shared: &Shared, command: &McpCommand, rest: &str, event: &InboundEvent) -> Reply {
+    let text = Reply::Text;
     let Some(extra) = shared
         .config
         .mcp
         .iter()
         .find(|m| m.server.name == command.mcp)
     else {
-        return format!("`/{}` is not available.", command.name);
+        return text(format!("`/{}` is not available.", command.name));
     };
     let who = Who::new(shared.roles_of(event).await, event);
     let admin = who.admin();
     if !permission::may_run(command, extra, &who) {
         if command.admins_only || extra.admins_only {
-            return format!("Only administrators can use `/{}`.", command.name);
+            return text(format!("Only administrators can use `/{}`.", command.name));
         }
-        return format!("`/{}` is not available to you here.", command.name);
+        return text(format!("`/{}` is not available to you here.", command.name));
     }
     if matches!(rest, "help" | "?" | "-h" | "--help") {
-        return describe(command, event.locale.as_deref());
+        return text(describe(command, event.locale.as_deref()));
     }
     let person = shared.person_key(event).await;
     let token = match token(shared, command, extra, event, &person, admin).await {
         Ok(token) => token,
-        Err(refusal) => return refusal,
+        Err(refusal) => return text(refusal),
     };
+    // A button press runs what the presser saw only as a label: ask as an agent's call would.
+    let pressed = crate::ui::pressed(event);
     let http = reqwest::Client::new();
     let started = std::time::Instant::now();
     let result = mcp_client::with_session(
@@ -84,30 +126,37 @@ async fn execute(
         token.expose(),
         shared.config.agent_timeout,
         async |session| {
-            let Some(schema) = session.tool_schema(&command.tool).await? else {
+            let Some(tool) = session.tool(&command.tool).await? else {
                 return Err(McpError::Rpc(format!(
                     "`/{}` is not available to you.",
                     command.name
                 )));
             };
+            if pressed && permission::needs_confirmation(&extra.rules, tool.get("annotations")) {
+                return Ok(Call::Confirm);
+            }
+            let schema = tool.get("inputSchema").cloned().unwrap_or(json!({}));
             match arguments(command, rest, &schema, event.locale.as_deref()) {
-                Ok(args) => session.call(&command.tool, args).await.map(Ok),
-                Err(usage) => Ok(Err(usage)),
+                Ok(args) => session.call(&command.tool, args).await.map(Call::Done),
+                Err(usage) => Ok(Call::Usage(usage)),
             }
         },
     )
     .await;
+    if matches!(result, Ok(Call::Confirm)) {
+        return confirmation(shared, command, extra, event);
+    }
     tracing::info!(
         command = %command.name,
         user = %event.author.id,
-        ok = matches!(result, Ok(Ok(ref out)) if !out.is_error),
+        ok = matches!(result, Ok(Call::Done(ref out)) if !out.is_error),
         ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         "command"
     );
     let error = match &result {
-        Ok(Ok(out)) if out.is_error => Some("the tool reported an error".to_string()),
-        Ok(Ok(_)) => None,
-        Ok(Err(_)) => Some("usage".to_string()),
+        Ok(Call::Done(out)) if out.is_error => Some("the tool reported an error".to_string()),
+        Ok(Call::Done(_) | Call::Confirm) => None,
+        Ok(Call::Usage(_)) => Some("usage".to_string()),
         Err(e) => Some(e.to_string()),
     };
     // A usage message never reached the tool.
@@ -129,18 +178,88 @@ async fn execute(
         )
         .await;
     }
-    match result {
-        // A server that leads with its own icon (❌, 🔑…) keeps it.
-        Ok(Ok(out)) if out.is_error && starts_with_icon(&out.text) => out.text,
-        Ok(Ok(out)) if out.is_error => format!("⚠️ {}", out.text),
-        Ok(Ok(out)) => out.text,
-        Ok(Err(usage)) => usage,
+    text(match result {
+        Ok(Call::Done(out)) => return answer(shared, command, out),
+        Ok(Call::Usage(usage)) => usage,
+        Ok(Call::Confirm) => String::new(),
         Err(McpError::Rpc(message)) => format!("⚠️ {message}"),
         Err(error) => {
             tracing::warn!(command = %command.name, %error, "command failed");
             format!("⚠️ `/{}` failed: {error}", command.name)
         }
+    })
+}
+
+/// The tool's view, or its text when it carries none (or one okbot cannot show).
+fn answer(shared: &Shared, command: &McpCommand, out: mcp_client::ToolOutput) -> Reply {
+    // Its buttons may run only the commands of the same server: a server cannot make people run
+    // another server's tools.
+    let same_server: Vec<McpCommand> = shared
+        .config
+        .commands
+        .iter()
+        .filter(|c| c.mcp == command.mcp)
+        .cloned()
+        .collect();
+    match crate::ui::carried(out.structured.as_ref(), &same_server) {
+        Some(Ok(view)) => return Reply::View(Box::new(view)),
+        Some(Err(error)) => {
+            // The log only: the server's text is not repeated in the chat.
+            tracing::warn!(command = %command.name, %error, "the tool's view cannot be shown");
+            if out.text.trim().is_empty() {
+                return Reply::Text(format!(
+                    "⚠️ `/{}` answered with a view that cannot be shown.",
+                    command.name
+                ));
+            }
+        }
+        None => {}
     }
+    Reply::Text(if out.is_error && starts_with_icon(&out.text) {
+        // A server that leads with its own icon (❌, 🔑…) keeps it.
+        out.text
+    } else if out.is_error {
+        format!("⚠️ {}", out.text)
+    } else {
+        out.text
+    })
+}
+
+/// Asks the approvers `[[mcp]] confirm_by` names to run the pressed command line.
+fn confirmation(
+    shared: &Shared,
+    command: &McpCommand,
+    extra: &crate::ExtraMcp,
+    event: &InboundEvent,
+) -> Reply {
+    let by = extra.rules.confirm_by;
+    let allowed = crate::confirm::approvers(shared, event, by);
+    if allowed.is_empty() {
+        tracing::warn!(command = %command.name, "no one on this channel can approve the command");
+        return Reply::Text(format!(
+            "⚠️ `/{}` needs an approval that no one here can give.",
+            command.name
+        ));
+    }
+    let line = event.text.trim();
+    let presser = crate::interact::literal(&event.author.display_name);
+    let text = match by {
+        crate::config::ConfirmBy::Requester => format!(
+            "🔐 {presser}, the button runs `{}`, which can change things. Run it?",
+            line.replace('`', "'")
+        ),
+        crate::config::ConfirmBy::Admins => format!(
+            "🔐 {presser} pressed a button that runs `{}`, which can change things. Run it \
+             as {presser}? (an administrator decides)",
+            line.replace('`', "'")
+        ),
+    };
+    tracing::info!(command = %command.name, "a pressed command waits for approval");
+    let approval = crate::ui::Approval {
+        run_as: event.author.clone(),
+        admins: by == crate::config::ConfirmBy::Admins,
+    };
+    Reply::View(Box::new(View::confirmation(text, line, approval, allowed)))
 }
 
 /// The credential `extra` gets for `command`, or why there is none.

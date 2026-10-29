@@ -115,7 +115,13 @@ pub(crate) async fn person(shared: &Shared, event: &InboundEvent) -> Option<okbo
         return None;
     }
     let id = caller.context.origin.person?;
-    shared.config.people.values().find(|p| p.id == id).cloned()
+    shared
+        .gate
+        .lists()
+        .people
+        .values()
+        .find(|p| p.id == id)
+        .cloned()
 }
 
 /// The key usage of a peer task counts under (and, for `credentials = "person"` servers, whose
@@ -150,7 +156,7 @@ pub(crate) async fn roles(shared: &Shared, event: &InboundEvent) -> BTreeSet<Str
     }
     let mut person = everyone;
     if let Some(id) = &caller.context.origin.person {
-        if let Some(own) = shared.config.roles.people.get(id) {
+        if let Some(own) = shared.gate.lists().roles.people.get(id) {
             person.extend(own.iter().cloned());
         }
         let account = format!("person:{id}");
@@ -159,7 +165,7 @@ pub(crate) async fn roles(shared: &Shared, event: &InboundEvent) -> BTreeSet<Str
                 grants
                     .into_iter()
                     .filter(|g| g.account == account)
-                    .filter(|g| shared.config.roles.names.contains(&g.role))
+                    .filter(|g| shared.gate.lists().roles.names.contains(&g.role))
                     .map(|g| g.role),
             ),
             Err(error) => tracing::error!(%error, "cannot read role grants"),

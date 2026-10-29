@@ -152,31 +152,17 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
         .as_deref()
         .map(str::parse)
         .transpose()?;
-    for admin in &config.bot.admins {
-        rc.access.admins.insert(parse_admin(admin)?);
-    }
-    for (id, person) in &config.people {
-        let accounts = person
-            .accounts
-            .iter()
-            .map(|a| okbot_config::parse_account(a).map_err(anyhow::Error::msg))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        rc.link_person(id, accounts);
-    }
-    let mut allow_users = HashSet::new();
+    let lists = access_lists(config)?;
+    rc.access.admins = lists.admins;
+    rc.access.allow_users = lists.allow_users;
+    rc.access.blocked_users = lists.blocked_users;
+    rc.people = lists.people;
+    rc.roles = lists.roles;
     for (platform, instance, access) in config.channels.access() {
         let channel = ChannelId::new(platform, instance)?;
         rc.access
             .reply_on_by_channel
             .insert(channel.clone(), reply_on(access.reply_on));
-        for user in access.allow_users {
-            allow_users.insert((channel.clone(), UserId::new(user.as_str())));
-        }
-        for user in access.blocked_users {
-            rc.access
-                .blocked_users
-                .insert((channel.clone(), UserId::new(user.as_str())));
-        }
         if let Some(mode) = access.reply_mode {
             rc.channel_reply_modes.insert(channel.clone(), mode);
         }
@@ -191,9 +177,6 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
                 },
             );
         }
-    }
-    if !allow_users.is_empty() {
-        rc.access.allow_users = Some(allow_users);
     }
     for m in &config.mcp {
         rc.mcp.push(extra_mcp(config, m)?);
@@ -211,16 +194,54 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
             name: n.name.clone(),
             token,
             to,
+            commands: n.commands.clone(),
         });
     }
     rc.automations = automations(config)?;
-    rc.roles = roles(config)?;
     rc.teams = team_policies(config);
     rc.limits = okbot_runtime::Limits {
         turns_per_day: config.limits.turns_per_day,
         tokens_per_day: config.limits.tokens_per_day,
     };
     Ok(rc)
+}
+
+/// Who is answered and with which rights: `[bot] admins`, each channel's `allow_users` and
+/// `blocked_users`, `[people]` and `[roles]`. A running bot reloads these when `okbot.toml` changes.
+pub(crate) fn access_lists(config: &Config) -> anyhow::Result<okbot_runtime::AccessLists> {
+    let mut rc = RuntimeConfig::new(&config.bot.name, config.state_dir().join("work"));
+    for (id, person) in &config.people {
+        let accounts = person
+            .accounts
+            .iter()
+            .map(|a| okbot_config::parse_account(a).map_err(anyhow::Error::msg))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        rc.link_person(id, accounts);
+    }
+    let mut lists = okbot_runtime::AccessLists {
+        people: rc.people,
+        roles: roles(config)?,
+        ..okbot_runtime::AccessLists::default()
+    };
+    for admin in &config.bot.admins {
+        lists.admins.insert(parse_admin(admin)?);
+    }
+    let mut allow_users = HashSet::new();
+    for (platform, instance, access) in config.channels.access() {
+        let channel = ChannelId::new(platform, instance)?;
+        for user in access.allow_users {
+            allow_users.insert((channel.clone(), UserId::new(user.as_str())));
+        }
+        for user in access.blocked_users {
+            lists
+                .blocked_users
+                .insert((channel.clone(), UserId::new(user.as_str())));
+        }
+    }
+    if !allow_users.is_empty() {
+        lists.allow_users = Some(allow_users);
+    }
+    Ok(lists)
 }
 
 /// `[teams.<id>]` and the `[a2a]` team `external` as the runtime's team policies (ADR 0014).

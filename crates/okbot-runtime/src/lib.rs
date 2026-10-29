@@ -49,10 +49,10 @@ use okbot_core::{
 use tokio::sync::{Notify, mpsc};
 
 pub use config::{
-    ArgKind, Automation, AutomationAction, CommandArg, Confirm, ConfirmBy, Credentials, ExtraMcp,
-    Limits, McpCommand, McpRules, Member, NotifyRoute, OAuthSettings, OWNER, ROLE_ADMINS,
-    ROLE_EVERYONE, Restrict, Roles, RunAs, RuntimeConfig, ScheduleConfig, Source, StdioServer,
-    TeamPolicy, Trigger,
+    AccessLists, ArgKind, Automation, AutomationAction, CommandArg, Confirm, ConfirmBy,
+    Credentials, ExtraMcp, Limits, McpCommand, McpRules, Member, NotifyRoute, OAuthSettings, OWNER,
+    ROLE_ADMINS, ROLE_EVERYONE, Restrict, Roles, RunAs, RuntimeConfig, ScheduleConfig, Source,
+    StdioServer, TeamPolicy, Trigger,
 };
 pub use http::HttpOptions;
 pub use roles::{MAX_GRANT, parse_duration};
@@ -189,7 +189,8 @@ impl Shared {
                 accounts: owners,
             });
         }
-        self.config
+        self.gate
+            .lists()
             .person(&event.conversation.channel, &event.author.id)
             .cloned()
     }
@@ -225,18 +226,16 @@ impl Shared {
         if self.is_admin(event).await {
             roles.insert(config::ROLE_ADMINS.to_string());
         }
+        let lists = self.gate.lists();
         let account = (event.conversation.channel.clone(), event.author.id.clone());
-        if let Some(r) = self.config.roles.accounts.get(&account) {
+        if let Some(r) = lists.roles.accounts.get(&account) {
             roles.extend(r.iter().cloned());
         }
         let person = self.person_of(event).await;
-        if let Some(r) = person
-            .as_ref()
-            .and_then(|p| self.config.roles.people.get(&p.id))
-        {
+        if let Some(r) = person.as_ref().and_then(|p| lists.roles.people.get(&p.id)) {
             roles.extend(r.iter().cloned());
         }
-        if self.config.roles.names.is_empty() {
+        if lists.roles.names.is_empty() {
             return roles;
         }
         let account = format!("{}/{}", account.0, account.1);
@@ -246,7 +245,7 @@ impl Shared {
                 grants
                     .into_iter()
                     .filter(|g| g.account == account || Some(&g.account) == person.as_ref())
-                    .filter(|g| self.config.roles.names.contains(&g.role))
+                    .filter(|g| lists.roles.names.contains(&g.role))
                     .map(|g| g.role),
             ),
             Err(error) => tracing::error!(%error, "cannot read role grants"),
@@ -370,7 +369,7 @@ impl RuntimeBuilder {
         let (tx, rx) = mpsc::channel(1024);
         let in_flight = Arc::new(InFlight::default());
         let shared = Arc::new(Shared {
-            gate: policy::Gate::new(self.config.access.clone()),
+            gate: policy::Gate::new(&self.config),
             config: self.config,
             store: self
                 .store
@@ -448,6 +447,13 @@ impl RuntimeHandle {
     /// The sink channels deliver to (also usable to inject events in tests).
     pub fn sink(&self) -> Arc<dyn InboundSink> {
         self.sink.clone()
+    }
+
+    /// Replaces who is answered and with which rights (`[bot] admins`, `allow_users`,
+    /// `blocked_users`, `[people]`, `[roles]`) without a restart. Turns already running keep the
+    /// lists they started with; every later event, command, prompt answer and grant uses these.
+    pub fn reload_access(&self, lists: AccessLists) {
+        self.sink.shared.gate.reload(lists);
     }
 
     /// Resolves once every delivered event has been fully handled.

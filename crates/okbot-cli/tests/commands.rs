@@ -257,6 +257,12 @@ case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
     assert!(String::from_utf8_lossy(&status.stdout).contains("shop: active (enabled)"));
     let all = okbot(&["status", "--all"]);
     assert!(String::from_utf8_lossy(&all.stdout).contains("shop: active (enabled)"));
+    let reload = okbot(&["reload", "shop"]);
+    assert!(
+        String::from_utf8_lossy(&reload.stdout).contains("access lists reloaded"),
+        "{}",
+        String::from_utf8_lossy(&reload.stderr)
+    );
     assert!(okbot(&["stop", "shop"]).status.success());
     assert!(okbot(&["remove", "shop"]).status.success());
     assert!(!env.root().join("units/okbot-shop.service").exists());
@@ -266,6 +272,7 @@ case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
         "systemctl --user daemon-reload",
         "systemctl --user enable --now okbot-shop.service",
         "loginctl enable-linger",
+        "systemctl --user kill --kill-whom=main --signal=HUP okbot-shop.service",
         "systemctl --user stop okbot-shop.service",
         "systemctl --user disable --now okbot-shop.service",
     ] {
@@ -806,4 +813,169 @@ fn team_renew_signs_only_when_due() {
     let (code, _, err) = run(&["team", "renew", "ops", "--within", "90", "--days", "90"]);
     assert_ne!(code, 0);
     assert!(err.contains("--within"), "{err}");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one scenario: the run token, then the JSON of each command
+fn machine_readable_tasks_and_people_and_run_tokens() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "ops",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    let file = env.root().join("ops/okbot.toml");
+    let mut toml = std::fs::read_to_string(&file).unwrap();
+    toml.push_str(
+        "\n[people.luan]\naccounts = [\"discord:ops/42\"]\n\n[[mcp]]\nname = \"gw\"\n\
+         url = \"http://127.0.0.1:9/mcp\"\ntoken_env = \"GW_SECRET\"\nauth = \"signed\"\n",
+    );
+    std::fs::write(&file, toml).unwrap();
+    let run = |args: &[&str], token: Option<&str>| {
+        let mut cmd = env.okbot();
+        cmd.env("GW_SECRET", "s3cret").args(args).write_stdin("");
+        if let Some(token) = token {
+            cmd.env("OKBOT_RUN_TOKEN", token);
+        }
+        let out = cmd.output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let claims = |user: &str, bot: &str| okbot_runtime::identity::Claims {
+        bot: bot.into(),
+        mcp: "gw".into(),
+        user: user.into(),
+        name: "Luan".into(),
+        conversation: okbot_core::ConversationKey::room("discord:ops".parse().unwrap(), "r1"),
+        admin: false,
+        direct: true,
+        interact: None,
+        command: None,
+        locale: None,
+        exp: jiff::Timestamp::now().as_second() + 300,
+        jti: "j1".into(),
+    };
+    let token = okbot_runtime::identity::sign(b"s3cret", &claims("discord:ops/42", "ops"));
+
+    // A team bot needs a person; the run token names one.
+    let (code, _, err) = run(&["task", "add", "Call", "--bot", "ops"], None);
+    assert_ne!(code, 0);
+    assert!(err.contains("--person"), "{err}");
+    let (code, out, err) = run(
+        &[
+            "task",
+            "add",
+            "Call",
+            "--bot",
+            "ops",
+            "--remind",
+            "2099-01-02 08:00",
+            "--json",
+        ],
+        Some(&token),
+    );
+    assert_eq!(code, 0, "{err}");
+    let task: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(task["person"], "luan", "{task:#}");
+    assert_eq!(task["owner"], "people/luan");
+    assert_eq!(task["kind"], "reminder");
+    assert_eq!(task["state"], "open");
+    assert_eq!(task["remind"]["local"], "2099-01-02 08:00");
+    assert!(task["short_id"].as_str().unwrap().starts_with("t-"));
+
+    // Tokens of another bot, another secret or an unlinked account are refused.
+    let other = okbot_runtime::identity::sign(b"s3cret", &claims("discord:ops/42", "shop"));
+    let forged = okbot_runtime::identity::sign(b"guess", &claims("discord:ops/42", "ops"));
+    for bad in [other.as_str(), forged.as_str(), "okbot1.x.y"] {
+        let (code, _, err) = run(&["task", "add", "X", "--bot", "ops"], Some(bad));
+        assert_ne!(code, 0);
+        assert!(err.contains("not a valid"), "{err}");
+    }
+    let stranger = okbot_runtime::identity::sign(b"s3cret", &claims("discord:ops/7", "ops"));
+    let (code, _, err) = run(&["task", "add", "X", "--bot", "ops"], Some(&stranger));
+    assert_ne!(code, 0);
+    assert!(err.contains("not linked to a person"), "{err}");
+
+    let (code, out, err) = run(&["task", "list", "ops", "--json"], None);
+    assert_eq!(code, 0, "{err}");
+    let tasks: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 1, "{tasks:#}");
+    assert_eq!(tasks[0]["title"], "Call");
+    let id = tasks[0]["short_id"].as_str().unwrap().to_string();
+    let (code, out, _) = run(&["task", "done", &id, "--bot", "ops", "--json"], None);
+    assert_eq!(code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&out).unwrap()["state"],
+        "done"
+    );
+
+    let (code, out, err) = run(
+        &[
+            "people",
+            "link",
+            "luan",
+            "slack:ops/U1",
+            "--bot",
+            "ops",
+            "--json",
+        ],
+        None,
+    );
+    assert_eq!(code, 0, "{err}");
+    let person: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(person["linked"], serde_json::json!(["slack:ops/U1"]));
+    let (_, out, _) = run(&["people", "list", "--bot", "ops", "--json"], None);
+    let people: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        people,
+        serde_json::json!([{ "id": "luan", "accounts": ["discord:ops/42", "slack:ops/U1"] }])
+    );
+    let (code, out, _) = run(
+        &[
+            "people",
+            "unlink",
+            "luan",
+            "slack:ops/U1",
+            "--bot",
+            "ops",
+            "--json",
+        ],
+        None,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&out).unwrap()["accounts"],
+        serde_json::json!(["discord:ops/42"])
+    );
+    // Errors are JSON too.
+    let (code, out, _) = run(
+        &[
+            "people",
+            "unlink",
+            "nobody",
+            "slack:ops/U1",
+            "--bot",
+            "ops",
+            "--json",
+        ],
+        None,
+    );
+    assert_ne!(code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&out).unwrap()["ok"],
+        false,
+        "{out}"
+    );
+
+    let (code, out, _) = run(&["commands", "--builtin"], None);
+    assert_eq!(code, 0);
+    assert!(out.lines().any(|l| l == "done"), "{out}");
 }

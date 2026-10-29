@@ -169,7 +169,7 @@ fn may_run_routine(s: &Shared, task: &Task) -> bool {
     task.author
         .split_once('/')
         .and_then(|(channel, user)| Some((channel.parse::<ChannelId>().ok()?, UserId::new(user))))
-        .is_some_and(|account| s.config.access.admins.contains(&account))
+        .is_some_and(|account| s.gate.lists().admins.contains(&account))
 }
 
 /// Routine runs started today (local day), counted from the firing records.
@@ -295,7 +295,8 @@ async fn accounts(s: &Shared, task: &Task) -> Vec<(ChannelId, UserId)> {
             if s.config.personal && *person == crate::config::OWNER {
                 s.owners().await
             } else {
-                s.config
+                s.gate
+                    .lists()
                     .people
                     .values()
                     .find(|p| p.id == *person)
@@ -441,7 +442,7 @@ mod tests {
             (discord.id().clone(), discord.clone() as Arc<dyn Channel>),
         ]);
         let shared = Shared {
-            gate: Gate::new(config.access.clone()),
+            gate: Gate::new(&config),
             config,
             store: Arc::new(MemoryStore::new(clock.clone())),
             agent: Arc::new(FakeAgent::echo("fake")),

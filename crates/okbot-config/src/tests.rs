@@ -521,10 +521,13 @@ fn notify_targets_load_and_their_tokens_are_secrets() {
          [channels.discord.ops]\ntoken_env = \"D\"\n[people.luan]\naccounts = [\"discord:ops/1\"]\n\
          [[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\nauth = \"signed\"\n\
          [[notify]]\nname = \"alerts\"\ntoken_env = \"T\"\n\
-         to = [\"room:discord:ops|42|7|-\", \"admins\", \"person:luan\", \"user:discord:ops/2\"]\n",
+         to = [\"room:discord:ops|42|7|-\", \"admins\", \"person:luan\", \"user:discord:ops/2\"]\n\
+         commands = [\"status\"]\n\
+         [[command]]\nname = \"status\"\nmcp = \"ops\"\ntool = \"status\"\n",
     );
     let config = Config::load(dir.path()).unwrap();
     assert_eq!(config.notify[0].name, "alerts");
+    assert_eq!(config.notify[0].commands, ["status"]);
     assert_eq!(config.notify[0].to.len(), 4);
     // A signed [[mcp]] secret never reaches the agent, so callers may share it.
     assert!(config.secret_names().contains(&"T".to_string()));
@@ -557,6 +560,10 @@ fn rejects_bad_notify_targets() {
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = []\n",
             "no target",
+        ),
+        (
+            "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"admins\"]\ncommands = [\"restart\"]\n",
+            "`restart`, which is not a [[command]]",
         ),
         (
             "config_version = 1\n[bot]\nname = \"x\"\n[http]\nlisten = \"127.0.0.1:8787\"\n[channels.discord.ops]\ntoken_env = \"D\"\n[[notify]]\nname = \"a\"\ntoken_env = \"N\"\nto = [\"everyone\"]\n",
@@ -884,4 +891,25 @@ fn a2a_agents_and_clients_are_checked() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("[http] listen"), "{error}");
+}
+
+#[test]
+fn every_reserved_command_name_is_reported_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut text = String::from(
+        "config_version = 1\n[bot]\nname = \"x\"\n[[mcp]]\nname = \"ops\"\nurl = \"http://x\"\ntoken_env = \"T\"\n",
+    );
+    for name in ["done", "status", "help", "whoami"] {
+        text.push_str("[[command]]\nname = \"");
+        text.push_str(name);
+        text.push_str("\"\nmcp = \"ops\"\ntool = \"t\"\n");
+    }
+    write(dir.path(), &text);
+    let error = Config::load(dir.path()).unwrap_err().to_string();
+    assert!(
+        error.contains("[[command]] `done`, `help`, `whoami` are built-in; rename them."),
+        "{error}"
+    );
+    assert!(error.contains("Reserved names: help, reset,"), "{error}");
+    assert!(!error.contains("`status`"), "{error}");
 }

@@ -106,14 +106,13 @@ impl Session {
         Ok(out)
     }
 
-    /// The input schema of `tool`, when the server lists it.
-    pub(crate) async fn tool_schema(&mut self, tool: &str) -> Result<Option<Value>, McpError> {
+    /// `tool` as the server lists it (input schema, annotations), when it does.
+    pub(crate) async fn tool(&mut self, tool: &str) -> Result<Option<Value>, McpError> {
         Ok(self
             .tools()
             .await?
             .into_iter()
-            .find(|t| t.get("name").and_then(Value::as_str) == Some(tool))
-            .map(|t| t.get("inputSchema").cloned().unwrap_or(json!({}))))
+            .find(|t| t.get("name").and_then(Value::as_str) == Some(tool)))
     }
 
     /// `tools/call`.

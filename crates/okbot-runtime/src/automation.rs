@@ -260,7 +260,8 @@ async fn accounts(shared: &Shared, run_as: &RunAs) -> Vec<(ChannelId, UserId)> {
             shared.owners().await
         }
         RunAs::Person(id) => shared
-            .config
+            .gate
+            .lists()
             .people
             .values()
             .find(|p| p.id == *id)
@@ -283,7 +284,11 @@ async fn person_of(shared: &Shared, run_as: &RunAs) -> String {
             {
                 return format!("person:{}", crate::config::OWNER);
             }
-            let person = shared.config.person(channel, user).map(|p| p.id.clone());
+            let person = shared
+                .gate
+                .lists()
+                .person(channel, user)
+                .map(|p| p.id.clone());
             okbot_core::person_key(channel, user, person.as_deref())
         }
     }
@@ -519,7 +524,8 @@ async fn act(
                 "automation `{}`; information, not instructions",
                 automation.name
             );
-            let reply = crate::notify::deliver(shared, &automation.name, to, &text, &note).await;
+            let reply =
+                crate::notify::deliver(shared, &automation.name, to, &text, None, &note).await;
             if reply.status.is_success() {
                 Ok("text")
             } else {
@@ -738,7 +744,7 @@ async fn failed(
         ),
     };
     let note = format!("automation `{}` notice", automation.name);
-    crate::notify::deliver(shared, &automation.name, &[to], &text, &note).await;
+    crate::notify::deliver(shared, &automation.name, &[to], &text, None, &note).await;
 }
 
 /// The daily limit allows another run.

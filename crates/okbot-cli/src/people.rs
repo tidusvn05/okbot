@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use okbot_config::{CONFIG_FILE, Config, ConfigEditor};
+use serde_json::json;
 
 /// `okbot people` subcommands.
 #[derive(Debug, clap::Subcommand)]
@@ -14,6 +15,9 @@ pub(crate) enum PeopleCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print JSON (for scripts and MCP servers; the text output may change).
+        #[arg(long)]
+        json: bool,
     },
     /// Link accounts to a person (created if new). Ask each account to send `/whoami` for its id.
     Link {
@@ -25,6 +29,9 @@ pub(crate) enum PeopleCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print JSON (for scripts and MCP servers; the text output may change).
+        #[arg(long)]
+        json: bool,
     },
     /// Unlink accounts; the person is removed when no account is left. Notes are kept.
     Unlink {
@@ -36,6 +43,9 @@ pub(crate) enum PeopleCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print JSON (for scripts and MCP servers; the text output may change).
+        #[arg(long)]
+        json: bool,
     },
     /// Remove a person and all their links. Notes in `kb/memory/people/<id>/` are kept.
     Remove {
@@ -44,25 +54,53 @@ pub(crate) enum PeopleCommand {
         /// Bot name; default: the bot in the current directory.
         #[arg(long)]
         bot: Option<String>,
+        /// Print JSON (for scripts and MCP servers; the text output may change).
+        #[arg(long)]
+        json: bool,
     },
+}
+
+impl PeopleCommand {
+    /// Whether errors should be reported as JSON.
+    pub(crate) fn json(&self) -> bool {
+        match self {
+            Self::List { json, .. }
+            | Self::Link { json, .. }
+            | Self::Unlink { json, .. }
+            | Self::Remove { json, .. } => *json,
+        }
+    }
+}
+
+/// A person as JSON: `{"id", "accounts"}` (empty accounts once removed).
+fn person_json(config: &Config, id: &str) -> serde_json::Value {
+    let accounts = config
+        .people
+        .get(id)
+        .map(|p| p.accounts.clone())
+        .unwrap_or_default();
+    json!({ "id": id, "accounts": accounts })
 }
 
 pub(crate) fn run(command: PeopleCommand) -> anyhow::Result<()> {
     match command {
-        PeopleCommand::List { bot } => list(&crate::registry::resolve(bot.as_deref())?),
+        PeopleCommand::List { bot, json } => list(&crate::registry::resolve(bot.as_deref())?, json),
         PeopleCommand::Link {
             person,
             accounts,
             bot,
+            json,
         } => link(
             &crate::registry::resolve(bot.as_deref())?,
             &person,
             &accounts,
+            json,
         ),
         PeopleCommand::Unlink {
             person,
             accounts,
             bot,
+            json,
         } => {
             let dir = crate::registry::resolve(bot.as_deref())?;
             let mut editor = ConfigEditor::open(&dir)?;
@@ -70,28 +108,47 @@ pub(crate) fn run(command: PeopleCommand) -> anyhow::Result<()> {
             if removed.is_empty() {
                 bail!("none of these accounts is linked to `{person}`");
             }
-            editor.save()?;
-            eprintln!("✓ Unlinked {} from `{person}`", removed.join(", "));
-            restart_hint(&dir);
+            let config = editor.save()?;
+            if json {
+                let mut out = person_json(&config, &person);
+                out["unlinked"] = json!(removed);
+                println!("{out}");
+            } else {
+                eprintln!("✓ Unlinked {} from `{person}`", removed.join(", "));
+                applied_hint();
+            }
             Ok(())
         }
-        PeopleCommand::Remove { person, bot } => {
+        PeopleCommand::Remove { person, bot, json } => {
             let dir = crate::registry::resolve(bot.as_deref())?;
             let mut editor = ConfigEditor::open(&dir)?;
             if !editor.remove_person(&person) {
                 bail!("no person `{person}`; `okbot people list` shows them");
             }
             editor.save()?;
-            eprintln!("✓ Removed `{person}`; notes in kb/memory/people/{person}/ are kept");
-            restart_hint(&dir);
+            if json {
+                println!("{}", json!({ "removed": person }));
+            } else {
+                eprintln!("✓ Removed `{person}`; notes in kb/memory/people/{person}/ are kept");
+                applied_hint();
+            }
             Ok(())
         }
     }
 }
 
-fn list(dir: &Path) -> anyhow::Result<()> {
+fn list(dir: &Path, json: bool) -> anyhow::Result<()> {
     let config = Config::load(dir)
         .with_context(|| format!("cannot load {}", dir.join(CONFIG_FILE).display()))?;
+    if json {
+        let people: Vec<_> = config
+            .people
+            .keys()
+            .map(|id| person_json(&config, id))
+            .collect();
+        println!("{}", serde_json::Value::Array(people));
+        return Ok(());
+    }
     if config.people.is_empty() {
         println!(
             "no people linked; `okbot people link <person> <account>…` shares memory across accounts"
@@ -106,7 +163,7 @@ fn list(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn link(dir: &Path, person: &str, accounts: &[String]) -> anyhow::Result<()> {
+fn link(dir: &Path, person: &str, accounts: &[String], json: bool) -> anyhow::Result<()> {
     let config = Config::load(dir)?;
     let configured: Vec<String> = config
         .channel_secrets()
@@ -122,10 +179,22 @@ fn link(dir: &Path, person: &str, accounts: &[String]) -> anyhow::Result<()> {
     let mut editor = ConfigEditor::open(dir)?;
     let added = editor.link_accounts(person, accounts);
     if added.is_empty() {
-        eprintln!("Nothing to do: already linked to `{person}`");
+        if json {
+            let mut out = person_json(&config, person);
+            out["linked"] = json!([]);
+            println!("{out}");
+        } else {
+            eprintln!("Nothing to do: already linked to `{person}`");
+        }
         return Ok(());
     }
     let config = editor.save()?;
+    if json {
+        let mut out = person_json(&config, person);
+        out["linked"] = json!(added);
+        println!("{out}");
+        return Ok(());
+    }
     eprintln!(
         "✓ `{person}` now has {} account(s): {}",
         config.people[person].accounts.len(),
@@ -135,11 +204,10 @@ fn link(dir: &Path, person: &str, accounts: &[String]) -> anyhow::Result<()> {
         "They share one profile and personal memory (kb/memory/people/{person}/); notes saved \
          before the link stay visible to all of them."
     );
-    restart_hint(dir);
+    applied_hint();
     Ok(())
 }
 
-fn restart_hint(dir: &Path) {
-    let name = crate::registry::name_of(dir);
-    eprintln!("Restart the bot to apply: okbot restart {name}   (or restart `okbot run`)");
+fn applied_hint() {
+    eprintln!("A running bot applies this within seconds (no restart needed).");
 }

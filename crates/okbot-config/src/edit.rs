@@ -255,7 +255,7 @@ impl ConfigEditor {
             ));
         }
         let write = |text: &str| {
-            std::fs::write(&path, text).map_err(|source| ConfigError::Read {
+            replace_file(&path, text).map_err(|source| ConfigError::Read {
                 path: path.clone(),
                 source,
             })
@@ -269,6 +269,29 @@ impl ConfigEditor {
             }
         }
     }
+}
+
+/// Replaces `path` with `text` at once (a sibling temporary file, then a rename), so a running bot
+/// that re-reads the file never sees half of it. The file keeps its permissions.
+fn replace_file(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    let name = path.file_name().map_or_else(
+        || std::ffi::OsString::from("okbot.toml"),
+        std::ffi::OsStr::to_os_string,
+    );
+    let mut tmp_name = std::ffi::OsString::from(".");
+    tmp_name.push(&name);
+    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = path.with_file_name(tmp_name);
+    let written = std::fs::write(&tmp, text).and_then(|()| {
+        if let Ok(meta) = std::fs::metadata(path) {
+            std::fs::set_permissions(&tmp, meta.permissions())?;
+        }
+        std::fs::rename(&tmp, path)
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -303,6 +326,42 @@ mod tests {
             !std::fs::read_to_string(dir.path().join(CONFIG_FILE))
                 .unwrap()
                 .contains("discord")
+        );
+    }
+
+    #[test]
+    fn saves_by_rename_and_keeps_the_mode() {
+        let dir = bot();
+        let file = dir.path().join(CONFIG_FILE);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&file).unwrap().ino()
+        };
+        let mut e = ConfigEditor::open(dir.path()).unwrap();
+        e.append("\n[channels.discord.a]\ntoken_env = \"D\"\n")
+            .unwrap();
+        e.save().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let meta = std::fs::metadata(&file).unwrap();
+            assert_ne!(meta.ino(), inode, "replaced, not rewritten in place");
+            assert_eq!(meta.permissions().mode() & 0o777, 0o640);
+        }
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            left,
+            [std::ffi::OsString::from(CONFIG_FILE)],
+            "no temporary file"
         );
     }
 

@@ -132,16 +132,16 @@ fn allowed(shared: &Shared, claims: &identity::Claims, by: AnswerBy) -> Vec<User
             .map(|(_, id)| vec![UserId::new(id)])
             .unwrap_or_default(),
         AnswerBy::Admins => shared
-            .config
-            .access
+            .gate
+            .lists()
             .admins
             .iter()
             .filter(|(c, _)| c == channel)
             .map(|(_, u)| u.clone())
             .collect(),
         AnswerBy::Anyone => shared
-            .config
-            .access
+            .gate
+            .lists()
             .allow_users
             .as_ref()
             .map(|users| {
@@ -494,8 +494,8 @@ pub(crate) async fn answer(shared: Arc<Shared>, answer: PromptAnswer) {
     };
     let channel = &answer.conversation.channel;
     let admin = shared
-        .config
-        .access
+        .gate
+        .lists()
         .admins
         .contains(&(channel.clone(), answer.user.id.clone()));
     if !text {
