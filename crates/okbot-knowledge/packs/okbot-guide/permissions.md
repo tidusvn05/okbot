@@ -46,6 +46,9 @@ support = []                                 # filled by temporary grants only
   (`okbot people link` included); `okbot reload <bot>` applies them at once. Conversations keep
   going; a turn already running finishes with the old lists. A file with a mistake changes nothing
   (the log says why). Other settings still need `okbot restart`.
+- After upgrading okbot, `okbot restart <bot>` once: the bot keeps running the old binary until
+  then, and `okbot reload` refuses a bot that was started by an older okbot or is still starting
+  (it says to restart instead).
 - Temporary grants: `okbot role grant sales zalo:shop/222 --for 2h`, or `/grant sales <account> 2h`
   by an admin in chat. `okbot role revoke`, `/revoke`, `okbot role list`, `/roles`. A grant lasts at
   most 30 days; `admins` and `everyone` cannot be granted.

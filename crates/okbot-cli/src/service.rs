@@ -226,6 +226,18 @@ pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
         Action::Reload => {
             // Check first, so a mistake is reported here and not only in the logs.
             crate::bot::access_lists(&config)?;
+            // SIGHUP terminates a process that does not handle it, so only a bot that said it
+            // does is signalled.
+            let pid = main_pid(&unit)?;
+            if pid == 0 {
+                bail!("{bot} is not running; start it with `okbot start {bot}`");
+            }
+            if !crate::run::accepts_reload(&config.state_dir(), pid) {
+                bail!(
+                    "the running {bot} cannot reload: it was started by an older okbot, or it is \
+                     still starting. Apply the change with `okbot restart {bot}`"
+                );
+            }
             check(
                 &systemctl(&["kill", "--kill-whom=main", "--signal=HUP", &unit])?,
                 "systemctl kill --signal=HUP",
@@ -252,6 +264,19 @@ pub(crate) fn run(action: Action, args: &ServiceArgs) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The process id of the unit's main process; 0 when it is not running.
+fn main_pid(unit: &str) -> anyhow::Result<u32> {
+    let out = systemctl(&["show", "--property=MainPID", "--value", unit])?;
+    check(&out, "systemctl show --property=MainPID")?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.trim().parse().with_context(|| {
+        format!(
+            "systemctl show --property=MainPID printed `{}`",
+            text.trim()
+        )
+    })
 }
 
 /// Restarts one service without printing, so callers can produce a single JSON document.
