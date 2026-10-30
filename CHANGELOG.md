@@ -4,6 +4,12 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.12.1] - 2026-10-30
+
+### Bug fixes
+
+- **cli:** okbot reload no longer kills a bot that cannot handle SIGHUP (#66) (#68) (fa1e26d)
+
 ## [0.12.0] - 2026-10-29
 
 ### Features
