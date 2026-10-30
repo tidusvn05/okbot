@@ -10,6 +10,9 @@ The installer checks the archive against the release's `SHA256SUMS` and puts `ok
 `~/.local/bin`. Before the first release, build from source: `cargo install --locked --git
 https://github.com/tidusvn05/okbot okbot`.
 
+To upgrade, run the installer again, then `okbot restart --all`: a running bot keeps the old binary
+until it restarts.
+
 Install and log in to at least one agent CLI that can restrict its tools: Claude Code
 (`claude`, then log in) or Codex (`codex login`). `okbot doctor` checks both.
 
@@ -38,6 +41,7 @@ okbot status shop
 okbot logs shop -f
 okbot restart shop         # after editing okbot.toml or kb/persona
 okbot reload shop          # access lists only (admins, allow_users, [people], [roles])
+                           # after an upgrade, restart first: reload refuses an older running bot
 okbot stop shop
 ```
 

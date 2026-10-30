@@ -204,7 +204,7 @@ fn service_commands_drive_systemd() {
             tool,
             &format!(
                 r#"echo "{tool} $*" >> "{log}"
-case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
+case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; *MainPID*) echo 4242;; esac"#,
                 log = calls.display()
             ),
         );
@@ -257,6 +257,21 @@ case "$*" in *is-active*) echo active;; *is-enabled*) echo enabled;; esac"#,
     assert!(String::from_utf8_lossy(&status.stdout).contains("shop: active (enabled)"));
     let all = okbot(&["status", "--all"]);
     assert!(String::from_utf8_lossy(&all.stdout).contains("shop: active (enabled)"));
+    // SIGHUP would terminate a bot that does not handle it: refused until it says it does.
+    let reload = okbot(&["reload", "shop"]);
+    assert!(!reload.status.success());
+    assert!(
+        String::from_utf8_lossy(&reload.stderr).contains("okbot restart shop"),
+        "{}",
+        String::from_utf8_lossy(&reload.stderr)
+    );
+    assert!(
+        !std::fs::read_to_string(&calls)
+            .unwrap()
+            .contains("--signal=HUP")
+    );
+    std::fs::create_dir_all(env.root().join("shop/state")).unwrap();
+    std::fs::write(env.root().join("shop/state/reload.pid"), "4242\n").unwrap();
     let reload = okbot(&["reload", "shop"]);
     assert!(
         String::from_utf8_lossy(&reload.stdout).contains("access lists reloaded"),

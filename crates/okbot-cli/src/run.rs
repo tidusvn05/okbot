@@ -9,6 +9,48 @@ use okbot_runtime::RuntimeHandle;
 /// How often `okbot.toml` is checked for changes.
 const WATCH_EVERY: Duration = Duration::from_secs(2);
 
+/// In the state directory: the process id of the running bot, written once it handles SIGHUP.
+/// `okbot reload` signals only that process, since SIGHUP terminates one that does not handle it
+/// (a bot still starting, or one started by an okbot older than its binary on disk).
+const RELOAD_PID_FILE: &str = "reload.pid";
+
+/// Whether the process `pid` handles SIGHUP (`okbot reload`), as recorded in `state_dir`.
+pub(crate) fn accepts_reload(state_dir: &Path, pid: u32) -> bool {
+    std::fs::read_to_string(state_dir.join(RELOAD_PID_FILE))
+        .is_ok_and(|text| text.trim() == pid.to_string())
+}
+
+/// SIGHUP, which `okbot reload` sends. Registered before anything slow, so the signal never
+/// terminates the bot; one sent while it starts is applied once the watcher runs.
+#[cfg(unix)]
+type Hangup = tokio::signal::unix::Signal;
+#[cfg(not(unix))]
+type Hangup = ();
+
+#[cfg(unix)]
+fn hangup(state_dir: &Path) -> Option<Hangup> {
+    let signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        .inspect_err(
+            |error| tracing::warn!(%error, "cannot handle SIGHUP; `okbot reload` will not work"),
+        );
+    let signal = signal.ok()?;
+    let written = std::fs::create_dir_all(state_dir).and_then(|()| {
+        std::fs::write(
+            state_dir.join(RELOAD_PID_FILE),
+            format!("{}\n", std::process::id()),
+        )
+    });
+    if let Err(error) = written {
+        tracing::warn!(%error, "cannot record the process id; `okbot reload` will not work");
+    }
+    Some(signal)
+}
+
+#[cfg(not(unix))]
+fn hangup(_state_dir: &Path) -> Option<Hangup> {
+    None
+}
+
 /// Arguments of `okbot run`.
 #[derive(Debug, clap::Args)]
 pub(crate) struct RunArgs {
@@ -71,14 +113,17 @@ fn reload(dir: &Path, runtime: &RuntimeHandle, why: &str) {
 /// Reloads the access lists when `okbot.toml` changes, and on SIGHUP, until `stop`. A change is
 /// applied once the file has stayed the same for one more check, so an editor that is still
 /// writing it is not read half way.
-async fn watch(dir: PathBuf, runtime: RuntimeHandle, stop: CancellationToken) {
+async fn watch(
+    dir: PathBuf,
+    runtime: RuntimeHandle,
+    mut hangup: Option<Hangup>,
+    stop: CancellationToken,
+) {
     let file = dir.join(okbot_config::CONFIG_FILE);
     let mut last = stamp(&file);
     let mut pending = None;
     let mut tick = tokio::time::interval(WATCH_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    #[cfg(unix)]
-    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok();
     loop {
         #[cfg(unix)]
         let signalled = async {
@@ -88,7 +133,10 @@ async fn watch(dir: PathBuf, runtime: RuntimeHandle, stop: CancellationToken) {
             }
         };
         #[cfg(not(unix))]
-        let signalled = std::future::pending::<Option<()>>();
+        let signalled = {
+            let _ = hangup.take();
+            std::future::pending::<Option<()>>()
+        };
         tokio::select! {
             () = stop.cancelled() => return,
             Some(()) = signalled => {
@@ -116,6 +164,8 @@ pub(crate) async fn run(args: RunArgs) -> anyhow::Result<()> {
     crate::logging::init("info,rmcp=warn");
     let dir = crate::registry::resolve(args.name.as_deref())?;
     let config = okbot_config::Config::load(&dir)?;
+    let state_dir = config.state_dir();
+    let hangup = hangup(&state_dir);
     let stop = CancellationToken::new();
     // The knowledge endpoint outlives the runtime's grace period, so turns finishing during
     // shutdown can still use their tools.
@@ -127,7 +177,12 @@ pub(crate) async fn run(args: RunArgs) -> anyhow::Result<()> {
         bot.retention_days,
         stop.child_token(),
     ));
-    let watcher = tokio::spawn(watch(dir.clone(), bot.runtime.handle(), stop.child_token()));
+    let watcher = tokio::spawn(watch(
+        dir.clone(),
+        bot.runtime.handle(),
+        hangup,
+        stop.child_token(),
+    ));
     let runtime = tokio::spawn(bot.runtime.run(stop.child_token()));
     shutdown_signal().await;
     tracing::info!("shutting down");
@@ -136,5 +191,6 @@ pub(crate) async fn run(args: RunArgs) -> anyhow::Result<()> {
     infra.cancel();
     let _ = retention.await;
     let _ = watcher.await;
+    let _ = std::fs::remove_file(state_dir.join(RELOAD_PID_FILE));
     Ok(())
 }
