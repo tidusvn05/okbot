@@ -90,9 +90,9 @@ rustyline = { version = "18", default-features = false, features = ["with-file-h
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form", "multipart"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
 rand = "0.10"
-twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "twilight-http", "zlib"] }
-twilight-http = { version = "0.17", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
-twilight-model = "0.17"
+twilight-gateway = { version = "0.18", default-features = false, features = ["rustls-webpki-roots", "twilight-http", "zlib"] }
+twilight-http = { version = "0.18", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
+twilight-model = "0.18"
 tokio-websockets = { version = "0.13", default-features = false, features = ["client", "server", "rustls-webpki-roots", "ring", "rand", "sha1_smol"] }
 sha2 = "0.11"
 hmac = "0.13"
