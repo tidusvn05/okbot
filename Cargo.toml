@@ -57,13 +57,13 @@ okbot-testkit = { path = "crates/okbot-testkit", version = "0.13.0-dev" }
 # External crates.
 # Agent CLI adapters (formerly agent-core).
 agent-call = "0.5.0"
-okbase = "0.2.4"
-okbase-mcp = "0.2.4"
+okbase = "0.2.6"
+okbase-mcp = "0.2.6"
 # Zalo Bot API client (unofficial); ring is installed by okbot, so no default TLS provider.
 zalo-bot = { version = "0.1", default-features = false }
 include_dir = "0.7"
 # Same minor as okbase-mcp, so one rmcp is linked.
-rmcp = { version = "~3.5", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "~3.10", default-features = false, features = ["server", "transport-streamable-http-server"] }
 async-trait = "0.1"
 thiserror = "2"
 anyhow = "1"
@@ -85,14 +85,14 @@ tiny-skia = { version = "0.12", default-features = false, features = ["std", "si
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 unicode-normalization = "0.1"
-rusqlite = { version = "0.40", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)
+rusqlite = { version = "0.41", features = ["bundled"] }   # must match okbase (libsqlite3-sys links once)
 rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form", "multipart"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
 rand = "0.10"
-twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "twilight-http", "zlib"] }
-twilight-http = { version = "0.17", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
-twilight-model = "0.17"
+twilight-gateway = { version = "0.18", default-features = false, features = ["rustls-webpki-roots", "zlib"] }
+twilight-http = { version = "0.18", default-features = false, features = ["decompression", "rustls-webpki-roots"] }
+twilight-model = "0.18"
 tokio-websockets = { version = "0.13", default-features = false, features = ["client", "server", "rustls-webpki-roots", "ring", "rand", "sha1_smol"] }
 sha2 = "0.11"
 hmac = "0.13"
@@ -118,3 +118,4 @@ debug = "line-tables-only"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+

@@ -262,7 +262,7 @@ async fn slash_commands_register_and_arrive_as_text() {
                    "roles": [], "joined_at": "2026-01-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0},
         "data": {"id": "11", "name": "status", "type": 1,
                  "options": [{"name": "company", "type": 3, "value": "free ch"}]},
-        "entitlements": [], "authorizing_integration_owners": {}
+        "entitlements": [], "authorizing_integration_owners": {}, "attachment_size_limit": 10_485_760
     }))
     .unwrap();
     let collected = Arc::new(Sink::default());
@@ -489,7 +489,7 @@ fn component_click(id: &str, data: &Value) -> Interaction {
             "embeds": [], "pinned": false, "type": 0
         },
         "data": data,
-        "entitlements": [], "authorizing_integration_owners": {}
+        "entitlements": [], "authorizing_integration_owners": {}, "attachment_size_limit": 10_485_760
     }))
     .unwrap()
 }
@@ -743,7 +743,7 @@ async fn a_card_image_is_uploaded_and_shown_in_its_card() {
             {"type": 14, "divider": true},
             {"type": 10, "content": "Unpaid"},
             {"type": 12, "items": [{
-                "media": {"url": "attachment://chart.png", "content_type": null},
+                "media": {"url": "attachment://chart.png"},
                 "description": "Sales by month: Jan 3, Feb 5"
             }]}
         ])
