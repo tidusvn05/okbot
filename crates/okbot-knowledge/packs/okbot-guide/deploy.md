@@ -5,7 +5,7 @@ description: Running bots as services, several bots on one machine, webhooks beh
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-11-15
 aliases: [triển khai, deploy, vps, server, systemd, docker, reverse proxy, caddy, nginx, cloudflare tunnel, nhiều bot, backup, nâng cấp]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -63,6 +63,10 @@ are structured and secrets are redacted.
 Back up the whole bot directory: `okbot.toml`, `.env`, `kb/` (or its git remote) and `state/`.
 `state/secrets.key` and the database go together: without the key, people must reconnect their
 services.
+
+If the bot directory is inside a git repository (for example next to the knowledge base), keep
+`state/` out of it: set `state_dir` to a path outside the repository. `state/` is gitignored, so
+`git clean -fdx` deletes history, pairing and keys. `okbot doctor` warns about this.
 
 ## Upgrades
 

@@ -560,6 +560,17 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     }) {
         Ok(store) => {
             r.add("state", Status::Ok, state.display().to_string());
+            if let Some(repo) = git_work_tree(&state) {
+                r.add(
+                    "state",
+                    Status::Warn,
+                    format!(
+                        "state_dir is inside the git repository {}: `git clean -fdx` there \
+                         deletes history, pairing and keys; set state_dir outside it",
+                        repo.display()
+                    ),
+                );
+            }
             if config.bot.profile == okbot_config::BotProfile::Personal {
                 check_owners(&store, &mut r).await;
             }
@@ -572,6 +583,14 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// The git work tree that contains `dir`, if any (a `.git` directory or file in an ancestor).
+fn git_work_tree(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = std::fs::canonicalize(dir).ok()?;
+    dir.ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(std::path::Path::to_path_buf)
 }
 
 /// `[teams]` (ADR 0014): manifests, membership, and the members this bot may call.
@@ -886,4 +905,25 @@ pub(crate) async fn run(args: DoctorArgs) -> anyhow::Result<()> {
         .into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_work_tree;
+
+    #[test]
+    fn finds_the_enclosing_git_work_tree() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonical temp dir");
+        let repo = root.join("repo");
+        let inside = repo.join("bot/state");
+        let outside = root.join("srv/state");
+        std::fs::create_dir_all(&inside).expect("create state dir");
+        std::fs::create_dir_all(&outside).expect("create state dir");
+        // A worktree or submodule has a `.git` file instead of a directory.
+        std::fs::write(repo.join(".git"), "gitdir: elsewhere\n").expect("write .git");
+        assert_eq!(git_work_tree(&inside), Some(repo));
+        // The temp dir itself may sit in a repository; only the nearest one counts.
+        assert!(git_work_tree(&outside).is_none_or(|r| !r.starts_with(&root)));
+    }
 }

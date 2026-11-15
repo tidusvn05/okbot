@@ -5,7 +5,7 @@ description: What okbot protects by design (no shell, scoped memory, sealed toke
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-24
+updated: 2026-11-15
 aliases: [bảo mật, an toàn, security, prompt injection, rò rỉ dữ liệu, secret, token, quyền riêng tư, privacy]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -16,6 +16,8 @@ generated: {by: okbot-guide-pack, at: "2026-10-23"}
 
 - **The agent is untrusted.** It never gets a shell or file access, runs in an empty directory per
   conversation, and has no secrets in its environment. CLIs that cannot be locked down are refused.
+  Claude Code runs without the operator's own settings, project `CLAUDE.md` files or the git status
+  of the bot directory, even when that directory is inside a git repository.
 - **Chat text is data.** Messages, mail and web pages are passed as data, never as instructions to
   okbot. Rules come only from `okbot.toml`.
 - **Scoped knowledge and memory.** Each turn sees only what its user and room may see; one user can
