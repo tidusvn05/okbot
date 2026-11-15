@@ -725,7 +725,7 @@ impl Channel for DiscordChannel {
             let Some(item) = item else { return Ok(()) };
             match item {
                 Ok(Event::MessageCreate(message)) => {
-                    if let Some(event) = to_inbound(&self.id, &message.0, me, &roles)
+                    if let Some(event) = to_inbound(&self.id, &message.message, me, &roles)
                         && sink.deliver(event).await.is_err()
                     {
                         return Ok(());

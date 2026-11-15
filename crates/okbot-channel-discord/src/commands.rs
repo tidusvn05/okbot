@@ -66,6 +66,7 @@ pub(crate) fn definitions(commands: &[CommandInfo]) -> Vec<Command> {
                         choices: None,
                         description: clip(&p.name.replace(['_', '-'], " "), 100),
                         description_localizations: None,
+                        file_types: None,
                         kind: CommandOptionType::String,
                         max_length: None,
                         max_value: None,
