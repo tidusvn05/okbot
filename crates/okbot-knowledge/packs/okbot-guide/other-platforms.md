@@ -5,7 +5,7 @@ description: Trying a bot in the terminal with okbot chat, testing scenarios, an
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-11-20
 aliases: [okbot chat, console, terminal, thử bot, bridge, matrix, whatsapp, messenger, nền tảng khác]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -15,6 +15,8 @@ generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ## The console: `okbot chat`
 
 `okbot chat` in a bot's directory runs the bot in the terminal. It needs no platform account.
+It uses the bundle (`kb`) and state directory (`state_dir`) from `okbot.toml`, as `okbot run`
+does; `--kb` and `--state-dir` override them, and `--fresh` starts from an empty state.
 
 ```sh
 okbot chat                         # you, in a direct chat

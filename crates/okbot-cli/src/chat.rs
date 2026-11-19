@@ -27,9 +27,10 @@ pub(crate) struct ChatArgs {
     /// Model for the first agent, in its CLI's format (`sonnet@high`).
     #[arg(long)]
     model: Option<String>,
-    /// Where conversation history and agent working directories live.
-    #[arg(long, default_value = "state")]
-    state_dir: PathBuf,
+    /// Where conversation history and agent working directories live. Default: the bot
+    /// directory's `state_dir`, or `state`.
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
     /// Start with an empty state in a temporary directory, removed afterwards (for scripts).
     #[arg(long, conflicts_with = "state_dir")]
     fresh: bool,
@@ -41,9 +42,10 @@ pub(crate) struct ChatArgs {
     /// directory's name, or `okbot`.
     #[arg(long)]
     name: Option<String>,
-    /// The okbase knowledge bundle (skipped when the directory does not exist).
-    #[arg(long, default_value = "kb")]
-    kb: PathBuf,
+    /// The okbase knowledge bundle (skipped when the directory does not exist). Default: the bot
+    /// directory's `kb`, or `kb`.
+    #[arg(long)]
+    kb: Option<PathBuf>,
     /// Your name in the conversation.
     #[arg(long, default_value = "you")]
     user: String,
@@ -247,6 +249,22 @@ fn console(options: ConsoleOptions, _state_dir: &Path) -> anyhow::Result<Console
     Ok(ConsoleChannel::stdio_with(options))
 }
 
+/// The state directory: `--state-dir`, else the bot directory's `state_dir` as `okbot run` uses it.
+fn state_dir(args: &ChatArgs, bot: Option<&okbot_config::Config>) -> PathBuf {
+    args.state_dir
+        .clone()
+        .or_else(|| bot.map(okbot_config::Config::state_dir))
+        .unwrap_or_else(|| PathBuf::from("state"))
+}
+
+/// The knowledge bundle: `--kb`, else the bot directory's `kb` as `okbot run` uses it.
+fn kb_dir(args: &ChatArgs, bot: Option<&okbot_config::Config>) -> PathBuf {
+    args.kb
+        .clone()
+        .or_else(|| bot.map(okbot_config::Config::kb_dir))
+        .unwrap_or_else(|| PathBuf::from("kb"))
+}
+
 /// Inside a bot directory, chat as that bot: its profile, time zone and linked people apply.
 fn bot_dir_config(strict: bool) -> anyhow::Result<Option<okbot_config::Config>> {
     match okbot_config::Config::load(Path::new(".")) {
@@ -273,28 +291,35 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
              --unsafe-tools."
         );
     }
+    let bot = bot_dir_config(args.strict)?;
     // Kept until the end: dropping it removes the directory.
     let fresh = args
         .fresh
         .then(|| tempfile::Builder::new().prefix("okbot-chat-").tempdir())
         .transpose()
         .context("cannot create a temporary state directory")?;
-    let state_dir = fresh
-        .as_ref()
-        .map_or(args.state_dir.clone(), |d| d.path().to_path_buf());
+    let state_dir = match &fresh {
+        Some(dir) => dir.path().to_path_buf(),
+        None => state_dir(&args, bot.as_ref()),
+    };
     std::fs::create_dir_all(&state_dir)
         .with_context(|| format!("cannot create {}", state_dir.display()))?;
     let store = open_store(&state_dir)?;
 
     let stop = CancellationToken::new();
-    let bot = bot_dir_config(args.strict)?;
     let timezone = bot.as_ref().and_then(|b| b.bot.timezone.clone());
     let name = args
         .name
         .clone()
         .or_else(|| bot.as_ref().map(|b| b.bot.name.clone()))
         .unwrap_or_else(|| "okbot".into());
-    let knowledge = knowledge(&args.kb, &state_dir, timezone.as_deref(), &stop).await?;
+    let knowledge = knowledge(
+        &kb_dir(&args, bot.as_ref()),
+        &state_dir,
+        timezone.as_deref(),
+        &stop,
+    )
+    .await?;
 
     eprintln!(
         "Chatting with {} like {} (Ctrl-D to quit, /help for the bot's commands, :help for \
