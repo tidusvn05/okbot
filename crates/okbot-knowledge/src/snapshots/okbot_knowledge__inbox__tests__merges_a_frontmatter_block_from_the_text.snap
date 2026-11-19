@@ -1,0 +1,22 @@
+---
+source: crates/okbot-knowledge/src/inbox.rs
+expression: md
+---
+---
+type: Reference
+title: "Feature idea: X"
+description: "The body."
+tags: [feature, inbox]
+lang: en
+status: stable
+updated: 2026-11-18
+source: "chat"
+added_by: "zalo:me/u1"
+generated: {by: okbot, at: "2026-11-18"}
+feature_status: idea
+target: features/x.md
+---
+
+# X
+
+The body.

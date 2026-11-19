@@ -73,6 +73,10 @@ images only.
 Terminal: `okbot kb add <file|https://…> [--title …]`, `okbot kb inbox` (what was saved, to move into
 the right folder later).
 
+A text that starts with a frontmatter block (for example from a bundle template) is merged into the
+document's frontmatter: its `type`, `tags`, `description` and other keys are kept, while okbot sets
+`title`, `updated`, `source`, `added_by` and `generated` itself and adds the `inbox` tag.
+
 ## In groups
 
 Pairing belongs to your account, not to a chat: once paired, the bot knows you in every group of

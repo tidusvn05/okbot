@@ -2669,6 +2669,7 @@ dependencies = [
  "base64 0.23.1",
  "hex",
  "include_dir",
+ "insta",
  "jiff",
  "okbase",
  "okbase-mcp",

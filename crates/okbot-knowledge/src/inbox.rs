@@ -44,7 +44,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
-                    "text": {"type": "string", "description": "Markdown content, or a summary when a file is attached."},
+                    "text": {"type": "string", "description": "Markdown content, or a summary when a file is attached. It may start with a YAML frontmatter block (type, tags, description, other keys); okbot merges it into the document's own."},
                     "attachment": {"type": "integer", "minimum": 1,
                                    "description": "Number of the attached image or file to keep (from the message)."},
                     "source_url": {"type": "string", "description": "The page it came from, if any."}
@@ -138,11 +138,30 @@ pub(crate) fn save(
     if let (Some((bytes, _)), Some(file_name)) = (&doc.file, &file_name) {
         std::fs::write(dir.join(file_name), bytes).map_err(|e| e.to_string())?;
     }
-    let text = doc.text.trim();
+    // A leading frontmatter block in the text (a bundle template) is merged into the document's
+    // own instead of ending up in the body (issue #80).
+    let (theirs, body) = okbase::core::Frontmatter::split(doc.text.trim_start());
+    if theirs.is_present() && theirs.mapping().is_none() {
+        return Err(format!(
+            "the text starts with a frontmatter block that is not valid YAML ({}); fix it, or \
+             send the text without it",
+            theirs.error().unwrap_or("unreadable")
+        ));
+    }
+    let text = body.trim();
+    if text.is_empty() && doc.file.is_none() {
+        return Err("give the text to save, or attach a file".into());
+    }
     let summary = if text.is_empty() {
         format!("Saved file {}", file_name.as_deref().unwrap_or(""))
     } else {
-        text.to_string()
+        // Without the text's own top heading, when there is more than the heading.
+        text.strip_prefix("# ")
+            .and_then(|t| t.split_once('\n'))
+            .map(|(_, rest)| rest.trim())
+            .filter(|rest| !rest.is_empty())
+            .unwrap_or(text)
+            .to_string()
     };
     let mut md = String::new();
     let _ = writeln!(md, "---");
@@ -160,7 +179,15 @@ pub(crate) fn save(
     );
     let _ = writeln!(md, "added_by: {}", quote(&doc.added_by));
     let _ = writeln!(md, "generated: {{by: okbot, at: \"{day}\"}}");
-    let _ = writeln!(md, "---\n\n# {title}\n");
+    let _ = writeln!(md, "---");
+    if let Some(theirs) = theirs.mapping().filter(|m| !m.is_empty()) {
+        md = merge_frontmatter(&md, theirs)?;
+    }
+    let _ = writeln!(md);
+    // The text's own top heading replaces the title heading.
+    if !text.starts_with("# ") {
+        let _ = writeln!(md, "# {title}\n");
+    }
     if !text.is_empty() {
         let _ = writeln!(md, "{text}\n");
     }
@@ -172,6 +199,38 @@ pub(crate) fn save(
     write_index(root, folder).map_err(|e| e.to_string())?;
     areas::ensure(root, &areas::INBOX).map_err(|e| e.to_string())?;
     Ok(format!("{folder}/{name}"))
+}
+
+/// Keys okbot always sets itself: the text's frontmatter cannot change them.
+const OWN_KEYS: [&str; 5] = ["title", "updated", "source", "added_by", "generated"];
+
+/// `ours` (a markdown file holding only okbot's frontmatter) with the keys of `theirs` added:
+/// their `type`, `description`, `lang`, `status` and other keys win, their `tags` are kept next
+/// to `inbox`, and okbot's [`OWN_KEYS`] stay.
+fn merge_frontmatter(ours: &str, theirs: &okbase::core::Mapping) -> Result<String, String> {
+    let (mut fm, _) = okbase::core::Frontmatter::split(ours);
+    for (key, value) in theirs {
+        if OWN_KEYS.contains(&key.as_str()) {
+            continue;
+        }
+        let value = if key == "tags" {
+            let mut tags: Vec<Value> = match value {
+                Value::Array(tags) => tags.clone(),
+                Value::Null => Vec::new(),
+                other => vec![other.clone()],
+            };
+            let inbox = Value::String("inbox".into());
+            if !tags.contains(&inbox) {
+                tags.push(inbox);
+            }
+            Value::Array(tags)
+        } else {
+            value.clone()
+        };
+        fm.set(key, value)
+            .map_err(|e| format!("cannot use the frontmatter key `{key}`: {e}"))?;
+    }
+    Ok(fm.render())
 }
 
 /// The `knowledge_add` tool: owner and administrators only.
@@ -259,6 +318,46 @@ mod tests {
         let inbox = std::fs::read_to_string(dir.path().join("knowledge/inbox/index.md")).unwrap();
         assert!(inbox.contains("Chính sách đổi trả"), "{inbox}");
         assert!(save(dir.path(), &tz, &NewDocument::default(), now).is_err());
+    }
+
+    #[test]
+    fn merges_a_frontmatter_block_from_the_text() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::write_default_bundle(dir.path()).unwrap();
+        let tz = TimeZone::get("Asia/Ho_Chi_Minh").unwrap();
+        let now: Timestamp = "2026-11-18T02:00:00Z".parse().unwrap();
+        let doc = NewDocument {
+            title: "Feature idea: X".into(),
+            text: "---\ntype: Reference\nfeature_status: idea\ntarget: features/x.md\n\
+                   tags: [feature]\nadded_by: someone-else\n---\n\n# X\n\nThe body."
+                .into(),
+            added_by: "zalo:me/u1".into(),
+            ..NewDocument::default()
+        };
+        let id = save(dir.path(), &tz, &doc, now).unwrap();
+        let md = std::fs::read_to_string(dir.path().join(format!("{id}.md"))).unwrap();
+        insta::assert_snapshot!(md);
+        let (fm, body) = okbase::core::Frontmatter::split(&md);
+        assert_eq!(fm.get_str("type"), Some("Reference"));
+        assert_eq!(fm.get_str("added_by"), Some("zalo:me/u1"));
+        assert_eq!(fm.get_str("description"), Some("The body."));
+        assert_eq!(body.matches("---").count(), 0, "{body}");
+
+        let broken = NewDocument {
+            title: "Broken".into(),
+            text: "---\ntype: [unclosed\n---\nBody".into(),
+            added_by: "operator".into(),
+            ..NewDocument::default()
+        };
+        let error = save(dir.path(), &tz, &broken, now).unwrap_err();
+        assert!(error.contains("not valid YAML"), "{error}");
+        let only = NewDocument {
+            title: "Only frontmatter".into(),
+            text: "---\ntype: Reference\n---\n".into(),
+            added_by: "operator".into(),
+            ..NewDocument::default()
+        };
+        assert!(save(dir.path(), &tz, &only, now).is_err());
     }
 
     #[tokio::test]
