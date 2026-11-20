@@ -127,9 +127,9 @@ dependencies = [
 
 [[package]]
 name = "anydoc"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf0d78e4cfe3654eb3ea04422ec5a94352000ee56e97902125e68e51f7527062"
+checksum = "ae154cb7eea57f6844f090210f08b3609daf6bceea680daab472c54eb8a9bf56"
 dependencies = [
  "cfb",
  "csv",
@@ -138,7 +138,7 @@ dependencies = [
  "log",
  "pdf-inspector",
  "quick-xml 0.41.0",
- "zip 8.6.0",
+ "zip",
 ]
 
 [[package]]
@@ -437,7 +437,7 @@ dependencies = [
  "log",
  "quick-xml 0.42.0",
  "serde",
- "zip 9.5.1",
+ "zip",
 ]
 
 [[package]]
@@ -1002,7 +1002,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2215,9 +2215,9 @@ dependencies = [
 
 [[package]]
 name = "okbase"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c9c03fd2e9f1a30e449d3e6ca67eb3110b6cc5b5a91c3261e672085deab4f4"
+checksum = "ef90ac6e24e11d4fe2d7eefe0363766a4bacc2af59eb64d427176ec47e04b762"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2240,9 +2240,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-analyze"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3cb0b08ff927fc8c06f95d36226ad7ce21ba46253f649df3043baf5eec46703"
+checksum = "000dc33a44ce87df0299a7941609ea1336e39e2726b2a908625c05d0d5b4ab0b"
 dependencies = [
  "flate2",
  "lindera",
@@ -2258,9 +2258,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-convert"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89118a4227872772264d1090b6da4a792f75f9db2e045a4968adcb5b1f986bd0"
+checksum = "63d75a0297e05422f941e91f79d9cb338e669e841d93470c4028392684f5fc37"
 dependencies = [
  "anydoc",
  "crc32fast",
@@ -2276,9 +2276,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-core"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a89a39e1868995018be723c632683fe83bea75efbd36d3e17a84e46dbec38d7"
+checksum = "0b094be3327e7ebf883f150dc68ffef022fd01a0cc0c3f5b5692c43aa4e1aeac"
 dependencies = [
  "ignore",
  "pulldown-cmark",
@@ -2292,9 +2292,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-data"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d307fe826aea398bcf18d22d5c4f81a44655f78a8ce527c8ec692552770c1ef0"
+checksum = "c2a03664e04659fc46f05f37eba55dc78d4b9813108e6146b525634181991be2"
 dependencies = [
  "blake3",
  "calamine",
@@ -2309,9 +2309,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-embed"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca32c3ae3a538738eb2aefb9899641402da2fc79693d1577ff5b2f5055599ee0"
+checksum = "6308101dd53911410f93e4166c98eb84162d323cd52edf6de50dc566da7a1cbd"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2323,9 +2323,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-index"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b13de3b0e04ff983bb21de68a9c85962aa7ce3ea51f8d83d2d10f7d40107091a"
+checksum = "f7dbd8613f38d5bd17bc30be35843ebb25e2f6b3024561f3e95fe5cf804e7042"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -2340,9 +2340,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-lint"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "439756765c578a4a7e497d631fd6ac53c36f4f7e8c92ac332d2fc0dbecb2108c"
+checksum = "f5d5feb93bf11d9f3c2f4a988a6c4013ea7ec156b16232056e1e50d4544ebeab"
 dependencies = [
  "okbase-analyze",
  "okbase-core",
@@ -2354,9 +2354,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-mcp"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac9ee8c9d667e09f83c8bc2dd8d91531e67059eba0ef3f6fd362993267d57201"
+checksum = "3423a858de6e6f9f851ba5cf7695f549e4fe2456d48cab46cfcb47cbad4895da"
 dependencies = [
  "axum",
  "http",
@@ -2370,9 +2370,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-query"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b770853f1629010075f5e8883c1a20348f2d4af70f9f59abbdc51c5804c7aa0a"
+checksum = "2d16820740b662c07d8db00a1624a3e0b6e3c22f14c5c513c6a61bcdd7c360d5"
 dependencies = [
  "okbase-analyze",
  "okbase-core",
@@ -2387,9 +2387,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-search"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2893fe11cc7c61ebcf8d7ff8ee5cf0f252a03bcd45a61b45c6547fddd465442a"
+checksum = "13e5bb5957f3e6878e03e05ecb5e8af0c39bd909833ae49a93f00f298743e058"
 dependencies = [
  "okbase-analyze",
  "okbase-embed",
@@ -2402,9 +2402,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-standard"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfc42a80406ba370e9b034277d10d27f2b46782150cbf2c528ebfbc6df7f473c"
+checksum = "4d1bf0e8804ac32aacf6b129add003698708a6d47b560043dbed33da511eef56"
 dependencies = [
  "okbase-core",
  "serde",
@@ -2414,9 +2414,9 @@ dependencies = [
 
 [[package]]
 name = "okbase-tune"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ee4f1c19a9d97e67e8d2ac00e3b9e1aab4fde49b650de583a3a8b3a703d7ae9"
+checksum = "adc0f2617e6f24379da4622cffb4cdb3f280f243f4bc4e55d94cbd7beae32d0c"
 dependencies = [
  "blake3",
  "okbase-analyze",
@@ -3404,7 +3404,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3461,7 +3461,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4046,7 +4046,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4536,12 +4536,6 @@ dependencies = [
 
 [[package]]
 name = "typed-path"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54ec2755506471f54baf5e4bb5499d8e510cc1caf271270e778a736bd2d7336c"
-
-[[package]]
-name = "typed-path"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
@@ -4866,7 +4860,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5175,20 +5169,6 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
-dependencies = [
- "crc32fast",
- "flate2",
- "indexmap",
- "memchr",
- "typed-path 0.12.4",
- "zopfli",
-]
-
-[[package]]
-name = "zip"
 version = "9.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3476fd497ac8af5b1ec7b51acab7bef380f7e8dd8e0487595bafd839417a302"
@@ -5201,7 +5181,7 @@ dependencies = [
  "libc",
  "memchr",
  "nix",
- "typed-path 0.13.0",
+ "typed-path",
  "windows-sys 0.61.2",
  "zeroize",
  "zopfli",
