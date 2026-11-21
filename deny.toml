@@ -18,19 +18,9 @@ ignore = [
     # which okbase-mcp enables by default. Unmaintained, no known vulnerability; okbase ignores it
     # for the same reason. Drop this when okbase does.
     { id = "RUSTSEC-2026-0192", reason = "unmaintained font parser via okbase import; no known vulnerability" },
-    # zip yanked every 8.x release when 9.0.1 fixed several parsing bugs (no RUSTSEC advisory).
-    # It arrives through okbase-convert → anydoc, which requires `zip ^8.6.0`; okbot reads Word,
-    # PowerPoint and EPUB files only for `knowledge_add` (owner/admins). Drop this when anydoc moves
-    # to zip 9 and okbase follows.
-    { crate = "zip@8.6.0", reason = "yanked; anydoc (via okbase-convert) requires zip ^8.6.0" },
-    # Same zip 8.x: unsafe permission bits, symlinks and an abort on a large symlink entry when
-    # *extracting* archives to disk (`ZipArchive::extract`, `ZipStreamReader::extract`). anydoc is
-    # the only crate on zip 8 (calamine moved to zip 9) and reads entries in memory; nothing in
-    # the tree calls extract (okbase docs/security/zip-advisories.md). Drop with the zip@8.6.0 entry.
-    { id = "RUSTSEC-2026-0367", reason = "zip extract() only; never called (entries read in memory)" },
-    { id = "RUSTSEC-2026-0368", reason = "zip extract() only; never called (entries read in memory)" },
-    { id = "RUSTSEC-2026-0369", reason = "zip extract() only; never called (entries read in memory)" },
-    { id = "RUSTSEC-2026-0429", reason = "zip extract() only; never called (entries read in memory)" },
+    # `chrono` is unmaintained (no known vulnerability, no maintained drop-in). It comes only
+    # through lopdf, rmcp and schemars; no okbot crate depends on it. okbase ignores it too.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, transitive only (lopdf, rmcp, schemars)" },
 ]
 
 [licenses]
