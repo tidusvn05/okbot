@@ -135,9 +135,6 @@ pub(crate) fn save(
         n += 1;
     }
     let file_name = doc.file.as_ref().map(|(_, ext)| format!("{name}.{ext}"));
-    if let (Some((bytes, _)), Some(file_name)) = (&doc.file, &file_name) {
-        std::fs::write(dir.join(file_name), bytes).map_err(|e| e.to_string())?;
-    }
     // A leading frontmatter block in the text (a bundle template) is merged into the document's
     // own instead of ending up in the body (issue #80).
     let (theirs, body) = okbase::core::Frontmatter::split(doc.text.trim_start());
@@ -193,6 +190,10 @@ pub(crate) fn save(
     }
     if let Some(file_name) = &file_name {
         let _ = writeln!(md, "Original file: [{file_name}]({file_name})");
+    }
+    // Written once the document is ready, so a refused frontmatter leaves no stray file.
+    if let (Some((bytes, _)), Some(file_name)) = (&doc.file, &file_name) {
+        std::fs::write(dir.join(file_name), bytes).map_err(|e| e.to_string())?;
     }
     write_atomic(&dir.join(format!("{name}.md")), &md).map_err(|e| e.to_string())?;
     // Only the inbox index: `knowledge/index.md` belongs to the operator.
