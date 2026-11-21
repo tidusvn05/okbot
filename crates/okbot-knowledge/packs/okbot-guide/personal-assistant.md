@@ -5,7 +5,7 @@ description: Memory, to-dos and reminders, routines, quick notes and saved docum
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-10-23
+updated: 2026-11-20
 aliases: [nhắc nhở, reminder, ghi nhớ, memory, task, việc cần làm, routine, ghi chú, note, lưu tài liệu, múi giờ, timezone]
 generated: {by: okbot-guide-pack, at: "2026-10-23"}
 ---
@@ -61,6 +61,10 @@ when you ask ("what did I note about project X last week?").
 
 Send a PDF, Word file, image or link and say "save this". It goes to `kb/knowledge/inbox/` and can be
 used at once. Only the owner (personal bot) can do this. Zalo delivers images only.
+
+When the text follows a bundle template with its own frontmatter (`type`, `tags`, `description`,
+other keys), those keys are merged into the saved document's frontmatter; okbot keeps `title`,
+`updated`, `source`, `added_by` and `generated` itself and always adds the `inbox` tag.
 
 ## Settings
 
