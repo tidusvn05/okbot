@@ -3,6 +3,8 @@
 `okbot chat` runs the bot in the terminal through the console channel (`console:local`). It needs
 no platform account, so it is the quickest way to try a bot directory, and with the console
 commands below it can stand in for group rooms, several users and other platforms' limits.
+In a bot directory it uses the bundle (`kb`) and state directory (`state_dir`) from `okbot.toml`,
+like `okbot run`; `--kb` and `--state-dir` override them, and `--fresh` uses an empty temporary state.
 
 ```sh
 okbot chat                         # you, in a direct chat

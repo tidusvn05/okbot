@@ -994,3 +994,56 @@ fn machine_readable_tasks_and_people_and_run_tokens() {
     assert_eq!(code, 0);
     assert!(out.lines().any(|l| l == "done"), "{out}");
 }
+
+#[test]
+fn chat_uses_the_configured_kb_and_state_dir() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "me",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--profile",
+        "personal",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    // The bundle moves next to the bot directory and the state elsewhere (issue #76).
+    let bot = env.root().join("me");
+    std::fs::rename(bot.join("kb"), env.root().join("shared-kb")).unwrap();
+    let state = env.root().join("elsewhere/state");
+    let config = std::fs::read_to_string(bot.join("okbot.toml")).unwrap();
+    let config: String = config
+        .lines()
+        .map(|line| match line.split('=').next().map(str::trim) {
+            Some("kb") => "kb = \"../shared-kb\"".to_string(),
+            Some("state_dir") => format!("state_dir = \"{}\"", state.display()),
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        config.contains("../shared-kb") && config.contains("elsewhere"),
+        "{config}"
+    );
+    std::fs::write(bot.join("okbot.toml"), config).unwrap();
+    let _ = std::fs::remove_dir_all(bot.join("state"));
+
+    let out = env
+        .okbot()
+        .current_dir(&bot)
+        .args(["chat"])
+        .write_stdin("/note from the console\n")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stdout.contains("Noted."), "{stdout}{stderr}");
+    assert!(!stderr.contains("no knowledge bundle"), "{stderr}");
+    assert!(env.root().join("shared-kb/notes/people/owner").is_dir());
+    assert!(state.join("okbot.db").exists());
+    assert!(!bot.join("state").exists());
+}
