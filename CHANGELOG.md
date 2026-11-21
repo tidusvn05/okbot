@@ -4,6 +4,17 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.13.1] - 2026-11-21
+
+### Bug fixes
+
+- **chat:** use kb and state_dir from okbot.toml (#81) (5342ef2)
+- **knowledge:** merge a frontmatter block in knowledge_add text (#82) (408682e)
+
+### Dependencies
+
+- **deps:** okbase 0.2.7 (zip 9) and drop the zip 8 exceptions (#83) (6b93d2b)
+
 ## [0.13.0] - 2026-11-15
 
 ### Bug fixes
