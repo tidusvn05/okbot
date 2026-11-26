@@ -4,6 +4,16 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.14.0] - 2026-11-26
+
+### Features
+
+- apps — sandboxed pages behind chat summaries, launch tickets and a signed registry (#87) (67e198b)
+
+### Other
+
+- reopen main as 0.14.0-dev (#75) (de8641a)
+
 ## [0.13.1] - 2026-11-21
 
 ### Bug fixes
