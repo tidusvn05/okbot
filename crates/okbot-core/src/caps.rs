@@ -70,6 +70,10 @@ pub struct UiCaps {
     pub cards: bool,
     /// A card's chart as a picture ([`Card::image`](crate::Card::image), ADR 0016).
     pub images: bool,
+    /// A press can be answered so that only the presser sees it (Discord ephemeral replies):
+    /// app buttons ([`PromptButton::launch`](crate::PromptButton::launch), ADR 0019) are shown
+    /// natively only then.
+    pub private_reply: bool,
 }
 
 impl UiCaps {
@@ -81,6 +85,7 @@ impl UiCaps {
             forms: true,
             cards: true,
             images: true,
+            private_reply: true,
         }
     }
 }

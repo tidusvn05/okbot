@@ -18,6 +18,8 @@ pub(crate) struct File {
     #[serde(default)]
     pub(crate) charts: ChartsSection,
     #[serde(default)]
+    pub(crate) apps: AppsSection,
+    #[serde(default)]
     pub(crate) channels: ChannelsSection,
     #[serde(default)]
     pub(crate) people: BTreeMap<String, PersonSection>,
@@ -658,6 +660,131 @@ pub struct HttpSection {
     /// for OAuth callbacks (`/oauth/callback`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+}
+
+/// `[apps]`: web pages served by the bot behind chat summaries (ADR 0019). Apps need
+/// `[http] public_url`; the console also opens them on the loopback `[http] listen`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(try_from = "toml::Table")]
+pub struct AppsSection {
+    /// Serve apps and show their buttons. On by default where they can work.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// A session ends after this long unused (`12h`; `30d` on personal bots).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_idle: Option<String>,
+    /// A session ends this long after sign-in, used or not (`7d`; `30d` on personal bots).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_max: Option<String>,
+    /// The signed index `okbot app add` installs from (ADR 0020); okbot's own by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
+    /// Keys that may sign that index (`ed25519:<base64>`), besides those built into okbot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub registry_keys: Vec<String>,
+    /// Stop serving installed versions the registry yanked (on by default).
+    #[serde(skip_serializing_if = "is_true")]
+    pub refuse_yanked: bool,
+    /// Rules per app (`[apps.<name>]`).
+    #[serde(flatten)]
+    pub rules: BTreeMap<String, AppRuleSection>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // the signature serde wants
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+impl TryFrom<toml::Table> for AppsSection {
+    type Error = String;
+
+    /// The settings, then one table per app: a typo in a setting is an error that names it,
+    /// not an app with the wrong shape.
+    fn try_from(mut table: toml::Table) -> Result<Self, Self::Error> {
+        let text = |table: &mut toml::Table, key: &str| -> Result<Option<String>, String> {
+            match table.remove(key) {
+                None => Ok(None),
+                Some(toml::Value::String(s)) => Ok(Some(s)),
+                Some(_) => Err(format!("[apps] {key} must be a text such as \"12h\"")),
+            }
+        };
+        let enabled = match table.remove("enabled") {
+            None => true,
+            Some(toml::Value::Boolean(b)) => b,
+            Some(_) => return Err("[apps] enabled must be true or false".into()),
+        };
+        let session_idle = text(&mut table, "session_idle")?;
+        let session_max = text(&mut table, "session_max")?;
+        let registry = text(&mut table, "registry")?;
+        let registry_keys = match table.remove("registry_keys") {
+            None => Vec::new(),
+            Some(toml::Value::Array(keys)) => keys
+                .into_iter()
+                .map(|k| match k {
+                    toml::Value::String(s) => Ok(s),
+                    _ => Err("[apps] registry_keys is a list of \"ed25519:<base64>\"".to_string()),
+                })
+                .collect::<Result<_, _>>()?,
+            Some(_) => return Err("[apps] registry_keys is a list of \"ed25519:<base64>\"".into()),
+        };
+        let refuse_yanked = match table.remove("refuse_yanked") {
+            None => true,
+            Some(toml::Value::Boolean(b)) => b,
+            Some(_) => return Err("[apps] refuse_yanked must be true or false".into()),
+        };
+        let mut rules = BTreeMap::new();
+        for (name, value) in table {
+            let toml::Value::Table(rule) = value else {
+                return Err(format!(
+                    "unknown field `{name}` in [apps] (enabled, session_idle, session_max, registry, registry_keys, refuse_yanked, or a table [apps.<app name>])"
+                ));
+            };
+            let rule = AppRuleSection::deserialize(rule)
+                .map_err(|e| format!("[apps.{name}]: {}", e.message()))?;
+            rules.insert(name, rule);
+        }
+        Ok(Self {
+            enabled,
+            session_idle,
+            session_max,
+            registry,
+            registry_keys,
+            refuse_yanked,
+            rules,
+        })
+    }
+}
+
+impl Default for AppsSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            session_idle: None,
+            session_max: None,
+            registry: None,
+            registry_keys: Vec::new(),
+            refuse_yanked: true,
+            rules: BTreeMap::new(),
+        }
+    }
+}
+
+/// `[apps.<name>]`: who may open an app, from where, and with what.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppRuleSection {
+    /// Turn the app off for this bot.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
+    /// Roles that may open it; empty: everyone the bot answers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<String>,
+    /// Only from these rooms (`discord:main/<channel id>`), plus direct chats; empty: anywhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms: Vec<String>,
+    /// Grant only these of the permissions its manifest asks for; unset: all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<String>>,
 }
 
 /// `[charts]`: charts in interactive replies drawn as pictures (ADR 0016).

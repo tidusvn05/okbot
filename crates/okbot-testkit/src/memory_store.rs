@@ -35,6 +35,10 @@ struct State {
     peer_tasks: HashMap<(bool, String), PeerTaskRecord>,
     /// id → (data, expires)
     views: HashMap<String, (String, Timestamp)>,
+    /// hash → (data, expires)
+    app_tickets: HashMap<String, (String, Timestamp)>,
+    /// handle → (person, data, updated, expires)
+    app_sessions: HashMap<String, (String, String, Timestamp, Timestamp)>,
 }
 
 /// A [`ConversationStore`] kept in memory, for runtime tests.
@@ -580,6 +584,99 @@ impl ConversationStore for MemoryStore {
         } else {
             None
         })
+    }
+
+    async fn put_app_ticket(
+        &self,
+        hash: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<(), StoreError> {
+        let mut state = self.lock();
+        if state.app_tickets.contains_key(hash) {
+            return Err(StoreError::Backend("ticket exists".into()));
+        }
+        state.app_tickets.insert(hash.to_string(), (data, expires));
+        Ok(())
+    }
+
+    async fn take_app_ticket(
+        &self,
+        hash: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .lock()
+            .app_tickets
+            .remove(hash)
+            .filter(|(_, expires)| *expires > now)
+            .map(|(data, _)| data))
+    }
+
+    async fn put_app_session(
+        &self,
+        handle: &str,
+        person: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<(), StoreError> {
+        let now = self.clock.now();
+        self.lock()
+            .app_sessions
+            .insert(handle.to_string(), (person.to_string(), data, now, expires));
+        Ok(())
+    }
+
+    async fn app_session(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .lock()
+            .app_sessions
+            .get(handle)
+            .filter(|s| s.3 > now)
+            .map(|s| s.1.clone()))
+    }
+
+    async fn end_app_sessions(
+        &self,
+        handle: Option<&str>,
+        person: Option<&str>,
+    ) -> Result<u64, StoreError> {
+        let mut state = self.lock();
+        let before = state.app_sessions.len();
+        state
+            .app_sessions
+            .retain(|h, s| !(handle.is_none_or(|x| x == h) && person.is_none_or(|p| p == s.0)));
+        Ok((before - state.app_sessions.len()) as u64)
+    }
+
+    async fn app_sessions(
+        &self,
+        person: Option<&str>,
+        now: Timestamp,
+    ) -> Result<Vec<okbot_core::AppSessionEntry>, StoreError> {
+        let state = self.lock();
+        let mut list: Vec<(Timestamp, okbot_core::AppSessionEntry)> = state
+            .app_sessions
+            .iter()
+            .filter(|(_, s)| s.3 > now && person.is_none_or(|p| p == s.0))
+            .map(|(h, s)| {
+                (
+                    s.2,
+                    okbot_core::AppSessionEntry {
+                        handle: h.clone(),
+                        person: s.0.clone(),
+                        data: s.1.clone(),
+                        expires_at: s.3,
+                    },
+                )
+            })
+            .collect();
+        list.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.handle.cmp(&b.1.handle)));
+        Ok(list.into_iter().map(|(_, e)| e).collect())
     }
 }
 

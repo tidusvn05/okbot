@@ -34,7 +34,7 @@ pub async fn conversation_store(store: &dyn ConversationStore, clock: &ManualClo
     sealed_secrets(store).await;
     automations(store, clock).await;
     peer_tasks(store, clock).await;
-    views(store, clock).await;
+    views_and_apps(store, clock).await;
 
     // History: oldest first, limited to the newest, separated by conversation.
     for i in 0..5 {
@@ -529,6 +529,102 @@ async fn views(store: &dyn ConversationStore, clock: &ManualClock) {
         "expired"
     );
     assert_eq!(store.take_view("v2", later).await.expect("take"), None);
+}
+
+async fn views_and_apps(store: &dyn ConversationStore, clock: &ManualClock) {
+    views(store, clock).await;
+    app_sessions(store, clock).await;
+}
+
+/// App launch tickets work once and not after they expire; sessions are kept until they expire
+/// and end by handle, by person or all at once (ADR 0019).
+async fn app_sessions(store: &dyn ConversationStore, clock: &ManualClock) {
+    let now = clock.now();
+    let later = now + jiff::SignedDuration::from_secs(300);
+    store
+        .put_app_ticket("h1", "t1".into(), later)
+        .await
+        .expect("put");
+    store
+        .put_app_ticket("h2", "t2".into(), now)
+        .await
+        .expect("put");
+    assert!(
+        store.put_app_ticket("h1", "x".into(), later).await.is_err(),
+        "a ticket never replaces another"
+    );
+    assert_eq!(
+        store
+            .take_app_ticket("h1", now)
+            .await
+            .expect("take")
+            .as_deref(),
+        Some("t1")
+    );
+    assert_eq!(
+        store.take_app_ticket("h1", now).await.expect("take"),
+        None,
+        "once"
+    );
+    assert_eq!(
+        store.take_app_ticket("h2", now).await.expect("take"),
+        None,
+        "expired"
+    );
+    assert_eq!(store.take_app_ticket("h9", now).await.expect("take"), None);
+
+    for (handle, person) in [
+        ("s1", "person:ana"),
+        ("s2", "person:ana"),
+        ("s3", "zalo:x/1"),
+    ] {
+        store
+            .put_app_session(handle, person, format!("{handle}-data"), later)
+            .await
+            .expect("put session");
+    }
+    store
+        .put_app_session("s1", "person:ana", "s1-new".into(), later)
+        .await
+        .expect("replace session");
+    assert_eq!(
+        store.app_session("s1", now).await.expect("get").as_deref(),
+        Some("s1-new")
+    );
+    assert_eq!(
+        store.app_session("s1", later).await.expect("get"),
+        None,
+        "expired"
+    );
+    let ana = store
+        .app_sessions(Some("person:ana"), now)
+        .await
+        .expect("list");
+    assert_eq!(ana.len(), 2);
+    assert!(ana.iter().all(|e| e.person == "person:ana"));
+    assert_eq!(store.app_sessions(None, now).await.expect("list").len(), 3);
+    assert_eq!(
+        store
+            .end_app_sessions(Some("s3"), Some("person:ana"))
+            .await
+            .expect("end"),
+        0,
+        "not hers"
+    );
+    assert_eq!(
+        store.end_app_sessions(Some("s1"), None).await.expect("end"),
+        1
+    );
+    assert_eq!(
+        store
+            .end_app_sessions(None, Some("person:ana"))
+            .await
+            .expect("end"),
+        1
+    );
+    assert_eq!(store.end_app_sessions(None, None).await.expect("end"), 1);
+    let left = store.app_sessions(None, now).await.expect("list");
+    assert_eq!(left, Vec::new(), "every session ended");
 }
 
 async fn dedupe(store: &dyn ConversationStore, clock: &ManualClock) {

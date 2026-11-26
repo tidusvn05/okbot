@@ -99,6 +99,10 @@ pub struct PromptButton {
     /// A link button: opens this `https` URL and sends no answer (no form).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Opens an app (ADR 0019): a press goes to [`InboundSink::launch`](crate::InboundSink::launch)
+    /// and its reply is shown to the presser only. Never closes the prompt; anyone may press it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub launch: bool,
 }
 
 /// What a [`Card`] means; sets its colour (or a leading emoji) where the platform has one.
@@ -417,6 +421,7 @@ mod tests {
             style: ButtonStyle::Primary,
             form,
             url: None,
+            launch: false,
         }
     }
 

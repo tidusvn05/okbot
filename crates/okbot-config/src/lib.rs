@@ -17,12 +17,12 @@ use okbot_core::Secret;
 
 pub use edit::ConfigEditor;
 pub use schema::{
-    A2aAgentSection, A2aClientSection, A2aSection, AgentSection, AutomationSection, BotProfile,
-    BotSection, BridgeSection, ChannelAccess, ChannelsSection, ChartsSection, CommandSection,
-    Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery, GChatSection, HttpSection,
-    LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection, OAuthSection, PersonSection,
-    ProviderSection, ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection,
-    SourceSection, TeamSection, TelegramSection, ZaloSection,
+    A2aAgentSection, A2aClientSection, A2aSection, AgentSection, AppRuleSection, AppsSection,
+    AutomationSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection,
+    ChartsSection, CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery,
+    GChatSection, HttpSection, LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection,
+    OAuthSection, PersonSection, ProviderSection, ReplyOn, RestrictSection, RoomSection,
+    ScheduleSection, SlackSection, SourceSection, TeamSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -238,6 +238,8 @@ pub struct Config {
     pub http: HttpSection,
     /// `[charts]`.
     pub charts: ChartsSection,
+    /// `[apps]` (ADR 0019).
+    pub apps: AppsSection,
     /// `[channels.*]`.
     pub channels: ChannelsSection,
     /// `[people.*]`: linked accounts by person id.
@@ -308,6 +310,7 @@ impl Config {
             agent: file.agent,
             http: file.http,
             charts: file.charts,
+            apps: file.apps,
             channels: file.channels,
             people: file.people,
             schedule: file.schedule,
@@ -327,15 +330,7 @@ impl Config {
 
     fn validate(&self) -> Result<(), ConfigError> {
         let invalid = |m: String| Err(ConfigError::Invalid(m));
-        self.validate_people()?;
-        self.validate_roles()?;
-        self.validate_schedule()?;
-        self.validate_mcp()?;
-        self.validate_commands()?;
-        self.validate_notify()?;
-        self.validate_automations()?;
-        self.validate_peers()?;
-        self.validate_http()?;
+        self.validate_sections()?;
         if self.bot.name.trim().is_empty() {
             return invalid("[bot] name must not be empty".into());
         }
@@ -439,6 +434,62 @@ impl Config {
         }
         if self.http.public_url.is_some() && self.http.listen.is_none() {
             return invalid("[http] public_url needs [http] listen".into());
+        }
+        Ok(())
+    }
+
+    /// The sections with checks of their own.
+    fn validate_sections(&self) -> Result<(), ConfigError> {
+        self.validate_people()?;
+        self.validate_roles()?;
+        self.validate_schedule()?;
+        self.validate_mcp()?;
+        self.validate_commands()?;
+        self.validate_notify()?;
+        self.validate_automations()?;
+        self.validate_peers()?;
+        self.validate_http()?;
+        self.validate_apps()
+    }
+
+    /// `[apps]` (ADR 0019): names, roles, rooms and permissions; durations are checked where
+    /// they are read.
+    fn validate_apps(&self) -> Result<(), ConfigError> {
+        let invalid = |m: String| Err(ConfigError::Invalid(m));
+        if let Some(url) = &self.apps.registry
+            && !url.starts_with("https://")
+        {
+            return invalid(format!("[apps] registry `{url}` must be an https URL"));
+        }
+        for key in &self.apps.registry_keys {
+            let ok = key
+                .strip_prefix("ed25519:")
+                .is_some_and(|k| k.len() == 44 && k.ends_with('='));
+            if !ok {
+                return invalid(format!(
+                    "[apps] registry_keys: `{key}` is not ed25519:<base64 of 32 bytes>"
+                ));
+            }
+        }
+        for (name, rule) in &self.apps.rules {
+            if !okbot_core::valid_app_name(name) {
+                return invalid(format!(
+                    "[apps.{name}]: an app name is a-z, 0-9 and `-`, starting with a letter"
+                ));
+            }
+            self.check_roles(&format!("[apps.{name}] roles"), &rule.roles)?;
+            for room in &rule.rooms {
+                parse_account(room).map_err(|e| {
+                    ConfigError::Invalid(format!(
+                        "[apps.{name}] rooms: {} (a room is `platform:instance/<room id>`)",
+                        e.replace("<user id>", "<room id>")
+                    ))
+                })?;
+            }
+            for p in rule.permissions.iter().flatten() {
+                p.parse::<okbot_core::AppPermission>()
+                    .map_err(|e| ConfigError::Invalid(format!("[apps.{name}] permissions: {e}")))?;
+            }
         }
         Ok(())
     }

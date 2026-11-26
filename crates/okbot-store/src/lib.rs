@@ -14,10 +14,10 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use okbot_core::{
-    AgentRunRecord, AutomationRun, ChannelId, Clock, ConversationKey, ConversationStore, Fire,
-    FireState, MessageRole, NewMessage, PeerTaskRecord, PeerTaskState, RoleGrant, SealedEntry,
-    StoreError, StoredMessage, SystemClock, ToolCallRecord, ToolDecision, Usage, UserId,
-    async_trait,
+    AgentRunRecord, AppSessionEntry, AutomationRun, ChannelId, Clock, ConversationKey,
+    ConversationStore, Fire, FireState, MessageRole, NewMessage, PeerTaskRecord, PeerTaskState,
+    RoleGrant, SealedEntry, StoreError, StoredMessage, SystemClock, ToolCallRecord, ToolDecision,
+    Usage, UserId, async_trait,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -706,6 +706,14 @@ impl ConversationStore for SqliteStore {
                 params![millis(now)],
             )?;
             removed += tx.execute(
+                "DELETE FROM app_tickets WHERE expires_at <= ?1",
+                params![millis(now)],
+            )?;
+            removed += tx.execute(
+                "DELETE FROM app_sessions WHERE expires_at <= ?1",
+                params![millis(now)],
+            )?;
+            removed += tx.execute(
                 "DELETE FROM conversations WHERE updated_at < ?1
                  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)",
                 params![cutoff],
@@ -1016,6 +1024,131 @@ impl ConversationStore for SqliteStore {
                 |row| row.get(0),
             )
             .optional()
+        })
+        .await
+    }
+
+    async fn put_app_ticket(
+        &self,
+        hash: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<(), StoreError> {
+        let hash = hash.to_string();
+        self.with(move |conn, _| {
+            conn.execute(
+                "INSERT INTO app_tickets (hash, data, expires_at) VALUES (?1, ?2, ?3)",
+                params![hash, data, millis(expires)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn take_app_ticket(
+        &self,
+        hash: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, StoreError> {
+        let hash = hash.to_string();
+        self.with(move |conn, _| {
+            // Expired or not, a presented ticket is gone.
+            let row: Option<(String, i64)> = conn
+                .query_row(
+                    "DELETE FROM app_tickets WHERE hash = ?1 RETURNING data, expires_at",
+                    params![hash],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            Ok(row.and_then(|(data, expires)| (expires > millis(now)).then_some(data)))
+        })
+        .await
+    }
+
+    async fn put_app_session(
+        &self,
+        handle: &str,
+        person: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<(), StoreError> {
+        let (handle, person) = (handle.to_string(), person.to_string());
+        self.with(move |conn, now| {
+            conn.execute(
+                "INSERT INTO app_sessions (handle, person, data, updated_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(handle) DO UPDATE SET person = excluded.person, data = excluded.data,
+                     updated_at = excluded.updated_at, expires_at = excluded.expires_at",
+                params![handle, person, data, millis(now), millis(expires)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn app_session(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, StoreError> {
+        let handle = handle.to_string();
+        self.with(move |conn, _| {
+            conn.query_row(
+                "SELECT data FROM app_sessions WHERE handle = ?1 AND expires_at > ?2",
+                params![handle, millis(now)],
+                |row| row.get(0),
+            )
+            .optional()
+        })
+        .await
+    }
+
+    async fn end_app_sessions(
+        &self,
+        handle: Option<&str>,
+        person: Option<&str>,
+    ) -> Result<u64, StoreError> {
+        let (handle, person) = (handle.map(str::to_string), person.map(str::to_string));
+        self.with(move |conn, _| {
+            let n = match (handle, person) {
+                (Some(h), Some(p)) => conn.execute(
+                    "DELETE FROM app_sessions WHERE handle = ?1 AND person = ?2",
+                    params![h, p],
+                )?,
+                (Some(h), None) => {
+                    conn.execute("DELETE FROM app_sessions WHERE handle = ?1", params![h])?
+                }
+                (None, Some(p)) => {
+                    conn.execute("DELETE FROM app_sessions WHERE person = ?1", params![p])?
+                }
+                (None, None) => conn.execute("DELETE FROM app_sessions", [])?,
+            };
+            Ok(n as u64)
+        })
+        .await
+    }
+
+    async fn app_sessions(
+        &self,
+        person: Option<&str>,
+        now: Timestamp,
+    ) -> Result<Vec<AppSessionEntry>, StoreError> {
+        let person = person.map(str::to_string);
+        self.with(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT handle, person, data, expires_at FROM app_sessions
+                 WHERE expires_at > ?1 AND (?2 IS NULL OR person = ?2)
+                 ORDER BY updated_at DESC",
+            )?;
+            let rows = stmt.query_map(params![millis(now), person], |row| {
+                Ok(AppSessionEntry {
+                    handle: row.get(0)?,
+                    person: row.get(1)?,
+                    data: row.get(2)?,
+                    expires_at: from_millis(row.get(3)?),
+                })
+            })?;
+            rows.collect()
         })
         .await
     }

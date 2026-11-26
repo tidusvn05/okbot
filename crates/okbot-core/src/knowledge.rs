@@ -127,4 +127,58 @@ pub trait KnowledgeProvider: Send + Sync {
     /// Text search for backends without MCP: the most relevant excerpts for `query`, or an empty
     /// string when nothing matches.
     async fn excerpts(&self, who: &Requester, query: &str) -> Result<String, KnowledgeError>;
+
+    /// Documents visible to `who` whose id starts with `path` (`notes/`, empty for all) and, when
+    /// `text` is given, whose id, title or description contain it; newest first, at most
+    /// `limit` (for apps, ADR 0019).
+    async fn documents(
+        &self,
+        who: &Requester,
+        path: &str,
+        text: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentInfo>, KnowledgeError> {
+        let _ = (who, path, text, limit);
+        Err(KnowledgeError::Other(
+            "this knowledge provider lists no documents".into(),
+        ))
+    }
+
+    /// One document visible to `who`, or `None` when it does not exist for them.
+    async fn document(
+        &self,
+        who: &Requester,
+        id: &str,
+    ) -> Result<Option<Document>, KnowledgeError> {
+        let _ = (who, id);
+        Err(KnowledgeError::Other(
+            "this knowledge provider reads no documents".into(),
+        ))
+    }
+}
+
+/// A document in a listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentInfo {
+    /// Its id (`notes/users/zalo-shop/u1/2026/2026-10-13`).
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// OKF `type`.
+    pub kind: Option<String>,
+    /// Last update (`YYYY-MM-DD`).
+    pub updated: Option<String>,
+    /// Tags.
+    pub tags: Vec<String>,
+}
+
+/// A document's text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Document {
+    /// Its listing entry.
+    pub info: DocumentInfo,
+    /// Markdown body, cut to a reasonable length.
+    pub text: String,
+    /// Whether `text` was cut.
+    pub truncated: bool,
 }

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::app::PrivateReply;
 use crate::caps::ChannelCaps;
 use crate::id::{ChannelId, ConversationKey, UserId};
 use crate::message::{InboundEvent, RenderedMessage, ReplyTarget, SentRef};
@@ -85,6 +86,14 @@ pub trait InboundSink: Send + Sync {
     /// that no longer hold it (they restarted since showing it). Interactive replies (ADR 0015)
     /// outlive restarts; other prompts do not.
     async fn prompt(&self, _id: &str, _conversation: &ConversationKey) -> Option<Prompt> {
+        None
+    }
+
+    /// A press on an app button ([`PromptButton::launch`](crate::PromptButton::launch),
+    /// ADR 0019). The answer's user is the presser, as the platform reported them. The reply is
+    /// for the presser only (an ephemeral message): it carries their own launch link, or why
+    /// they cannot open the app. `None` when the button is unknown or expired.
+    async fn launch(&self, _press: PromptAnswer) -> Option<PrivateReply> {
         None
     }
 }

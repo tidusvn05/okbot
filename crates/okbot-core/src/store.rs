@@ -276,6 +276,19 @@ pub struct AutomationRun {
     pub error: Option<String>,
 }
 
+/// A signed-in browser of an app (ADR 0019), without its secret, for listings and revocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSessionEntry {
+    /// SHA-256 of the session id, hex: a handle that cannot sign anyone in.
+    pub handle: String,
+    /// Whose it is ([`person_key`]).
+    pub person: String,
+    /// The runtime's state of the session.
+    pub data: String,
+    /// When it ends unless used.
+    pub expires_at: Timestamp,
+}
+
 fn unsupported() -> StoreError {
     StoreError::Backend("not supported by this store".into())
 }
@@ -534,6 +547,71 @@ pub trait ConversationStore: Send + Sync {
     /// (the first answer wins).
     async fn take_view(&self, id: &str, now: Timestamp) -> Result<Option<String>, StoreError> {
         let _ = (id, now);
+        Err(unsupported())
+    }
+
+    /// Keeps an app launch ticket (ADR 0019), by the hash of its secret, until `expires`.
+    async fn put_app_ticket(
+        &self,
+        hash: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<(), StoreError> {
+        let _ = (hash, data, expires);
+        Err(unsupported())
+    }
+
+    /// Removes the ticket with `hash` and returns its state, unless it expired: a ticket works
+    /// once.
+    async fn take_app_ticket(
+        &self,
+        hash: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, StoreError> {
+        let _ = (hash, now);
+        Err(unsupported())
+    }
+
+    /// Stores or replaces an app session, by the hash of its id ([`AppSessionEntry::handle`]).
+    async fn put_app_session(
+        &self,
+        handle: &str,
+        person: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<(), StoreError> {
+        let _ = (handle, person, data, expires);
+        Err(unsupported())
+    }
+
+    /// The state of the app session `handle`, unless it expired.
+    async fn app_session(
+        &self,
+        handle: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, StoreError> {
+        let _ = (handle, now);
+        Err(unsupported())
+    }
+
+    /// Ends app sessions: one by its handle, every one of `person`, or all of them when both are
+    /// `None`. Returns how many ended.
+    async fn end_app_sessions(
+        &self,
+        handle: Option<&str>,
+        person: Option<&str>,
+    ) -> Result<u64, StoreError> {
+        let _ = (handle, person);
+        Err(unsupported())
+    }
+
+    /// App sessions that have not expired at `now`, of `person` or of everyone, newest first.
+    async fn app_sessions(
+        &self,
+        person: Option<&str>,
+        now: Timestamp,
+    ) -> Result<Vec<AppSessionEntry>, StoreError> {
+        let _ = (person, now);
         Err(unsupported())
     }
 }
