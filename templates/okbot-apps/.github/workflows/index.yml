@@ -6,6 +6,8 @@ on:
   push:
     branches: [main]
     paths: ["apps/**"]
+  # Re-index by hand, e.g. after a yank or when okbot's index format changes.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,7 +34,7 @@ jobs:
             --out /tmp/index.json
 
   sign:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     needs: check
     runs-on: ubuntu-24.04
     # Required reviewers on this environment: a maintainer approves every signing.

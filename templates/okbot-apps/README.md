@@ -6,9 +6,10 @@ without a new okbot release.
 
 ## How it works
 
-- Each app is a folder `apps/<name>/` with an `app.toml` and static files (see okbot's
-  `docs/apps.md`). Nothing in an app runs on the bot: it runs sandboxed in the browser and reaches
-  data only through okbot's App API, within its permissions and the person's rights.
+- Each app is a folder `apps/<name>/` with an `app.toml` and static files (see
+  [Writing an app](https://github.com/tidusvn05/okbot/blob/main/docs/extending/apps.md)).
+  Nothing in an app runs on the bot: it runs sandboxed in the browser and reaches data only
+  through okbot's App API, within its permissions and the person's rights.
 - On every merge to `main`, CI checks every app as okbot's installer would, writes
   `index.json` and pins each app to the merge commit with the SHA-256 of each of its files.
   CI then signs the index with the registry key (`index.json.sig`).
