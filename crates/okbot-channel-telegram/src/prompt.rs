@@ -23,6 +23,8 @@ pub(crate) struct Open {
     pub(crate) allowed: Vec<UserId>,
     /// The button and option ids that answer.
     pub(crate) answers: Vec<String>,
+    /// The buttons that open an app (ADR 0019).
+    pub(crate) launches: Vec<String>,
     /// Its keyboard, to keep it when the text changes.
     pub(crate) markup: Value,
     /// Where it is.
@@ -46,9 +48,16 @@ impl Open {
                     .map(|b| b.id.clone()),
             )
             .collect();
+        let launches = prompt
+            .buttons
+            .iter()
+            .filter(|b| b.launch)
+            .map(|b| b.id.clone())
+            .collect();
         Self {
             allowed: prompt.allowed.clone(),
             answers,
+            launches,
             markup: markup(prompt),
             target,
             message_id,
@@ -185,6 +194,7 @@ mod tests {
                     style: ButtonStyle::Success,
                     form: None,
                     url: None,
+                    launch: false,
                 },
                 PromptButton {
                     id: "deny".into(),
@@ -192,6 +202,7 @@ mod tests {
                     style: ButtonStyle::Danger,
                     form: None,
                     url: None,
+                    launch: false,
                 },
             ],
             allowed: vec![],
@@ -219,6 +230,7 @@ mod tests {
             style: ButtonStyle::Primary,
             form: None,
             url: url.map(Into::into),
+            launch: false,
         };
         let option = |id: &str, label: &str, description: Option<&str>| SelectOption {
             id: id.into(),

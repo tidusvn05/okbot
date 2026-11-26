@@ -280,6 +280,42 @@ impl SlackChannel {
                 .await;
             return true;
         }
+        let press = |user: okbot_core::UserRef, target: ReplyTarget| okbot_core::PromptAnswer {
+            prompt: id.to_string(),
+            button: answer.to_string(),
+            values: std::collections::BTreeMap::new(),
+            user,
+            conversation: target.conversation.clone(),
+            sent: SentRef {
+                target,
+                message_id: MessageId::new(ts.clone()),
+            },
+        };
+        // An app button (ADR 0019): the presser's own link, in a message only they see.
+        if prompt.button(answer).is_some_and(|b| b.launch) {
+            let user_id = user.id.clone();
+            let reply = sink.launch(press(user, target.clone())).await;
+            let reply = reply.unwrap_or_else(|| okbot_core::PrivateReply {
+                text: "⌛ This button has expired.".into(),
+                link: None,
+            });
+            let blocks = prompt::private_blocks(&reply);
+            let conversation = &target.conversation;
+            if let Err(error) = self
+                .web
+                .post_ephemeral_blocks(
+                    &conversation.room,
+                    user_id.as_str(),
+                    conversation.thread.as_deref(),
+                    &reply.text,
+                    Some(&blocks),
+                )
+                .await
+            {
+                tracing::warn!(channel = %self.id, %error, "cannot answer an app button");
+            }
+            return true;
+        }
         if !prompt.answers_with(answer) {
             return true;
         }
@@ -297,18 +333,7 @@ impl SlackChannel {
             }
             return true;
         }
-        let answer = okbot_core::PromptAnswer {
-            prompt: id.to_string(),
-            button: answer.to_string(),
-            values: std::collections::BTreeMap::new(),
-            user,
-            conversation: target.conversation.clone(),
-            sent: SentRef {
-                target,
-                message_id: MessageId::new(ts),
-            },
-        };
-        sink.answer(answer).await.is_ok()
+        sink.answer(press(user, target)).await.is_ok()
     }
 
     /// A `view_submission` of one of okbot's forms: the values go to the runtime as secrets.

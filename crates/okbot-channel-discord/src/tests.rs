@@ -314,6 +314,7 @@ async fn prompts_never_show_link_previews() {
             style: okbot_core::ButtonStyle::Primary,
             form: None,
             url: None,
+            launch: false,
         }],
         allowed: vec![],
         cards: Vec::new(),
@@ -372,6 +373,7 @@ fn interactive_prompt() -> okbot_core::Prompt {
                 }],
             }),
             url: None,
+            launch: false,
         }],
         allowed: vec![],
         cards: vec![okbot_core::Card {
@@ -855,4 +857,87 @@ async fn an_update_with_a_new_picture_replaces_the_file() {
         json["components"][1]["components"][3]["items"][0]["media"]["url"],
         "attachment://chart.png"
     );
+}
+
+struct Launches(Mutex<Vec<okbot_core::PromptAnswer>>, okbot_core::Prompt);
+
+#[async_trait]
+impl InboundSink for Launches {
+    async fn deliver(&self, _event: InboundEvent) -> Result<(), okbot_core::SinkClosed> {
+        Ok(())
+    }
+
+    async fn prompt(
+        &self,
+        id: &str,
+        _conversation: &okbot_core::ConversationKey,
+    ) -> Option<okbot_core::Prompt> {
+        (self.1.id == id).then(|| self.1.clone())
+    }
+
+    async fn launch(&self, press: okbot_core::PromptAnswer) -> Option<okbot_core::PrivateReply> {
+        let url = format!("https://bot.example.com/apps/#t=for-{}", press.user.id);
+        self.0.lock().unwrap().push(press);
+        Some(okbot_core::PrivateReply {
+            text: "Your own link".into(),
+            link: Some(okbot_core::PromptButton {
+                id: "open".into(),
+                label: "Open ↗".into(),
+                style: okbot_core::ButtonStyle::Primary,
+                form: None,
+                url: Some(url),
+                launch: false,
+            }),
+        })
+    }
+}
+
+#[tokio::test]
+async fn app_buttons_answer_the_presser_privately() {
+    let calls = Arc::new(Calls::default());
+    let channel = serve(calls.clone()).await;
+    let _ = channel.app.set(Id::new(77));
+    let prompt = okbot_core::Prompt {
+        id: "vapp".into(),
+        text: "Tasks".into(),
+        buttons: vec![okbot_core::PromptButton {
+            id: "a1".into(),
+            label: "Open Tasks".into(),
+            style: okbot_core::ButtonStyle::Primary,
+            form: None,
+            url: None,
+            launch: true,
+        }],
+        ..okbot_core::Prompt::default()
+    };
+    let launches = Arc::new(Launches(Mutex::default(), prompt));
+    let sink: Arc<dyn InboundSink> = launches.clone();
+    let press = component_click(
+        "4001",
+        &json!({"custom_id": "okp:vapp:a1", "component_type": 2}),
+    );
+    channel.interaction(&sink, &press).await.unwrap();
+
+    let pressed = launches.0.lock().unwrap().clone();
+    assert_eq!(pressed.len(), 1);
+    assert_eq!(
+        pressed[0].user.id.as_str(),
+        "7",
+        "the presser, as Discord reported"
+    );
+    let calls = calls.0.lock().unwrap().clone();
+    let callback = calls
+        .iter()
+        .find(|c| c.1.ends_with("/interactions/4001/tok/callback"))
+        .unwrap_or_else(|| panic!("{calls:?}"));
+    assert_eq!(callback.2["type"], 5, "deferred, with a message to follow");
+    assert_eq!(callback.2["data"]["flags"], 64, "ephemeral");
+    let reply = calls
+        .iter()
+        .find(|c| c.0 == "PATCH" && c.1.ends_with("/webhooks/77/tok/messages/@original"))
+        .unwrap_or_else(|| panic!("{calls:?}"));
+    assert_eq!(reply.2["content"], "Your own link");
+    let button = &reply.2["components"][0]["components"][0];
+    assert_eq!(button["style"], 5, "a link button");
+    assert_eq!(button["url"], "https://bot.example.com/apps/#t=for-7");
 }

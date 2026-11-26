@@ -236,6 +236,7 @@ async fn prompts_are_block_kit_buttons() {
         style: okbot_core::ButtonStyle::Primary,
         form: None,
         url: None,
+        launch: false,
     };
     let prompt = okbot_core::Prompt {
         id: "abc123".into(),
@@ -358,6 +359,7 @@ async fn interactive_prompts_menus_forms_and_restarts() {
         style: okbot_core::ButtonStyle::Secondary,
         form: None,
         url: Some("https://example.com".into()),
+        launch: false,
     };
     let order = okbot_core::PromptButton {
         id: "b1".into(),
@@ -365,6 +367,7 @@ async fn interactive_prompts_menus_forms_and_restarts() {
         style: okbot_core::ButtonStyle::Primary,
         form: Some(form),
         url: None,
+        launch: false,
     };
     let prompt = Prompt {
         id: "v1a2b3c4d".into(),

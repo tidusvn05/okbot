@@ -215,6 +215,7 @@ async fn shows_rooms_edits_typing_and_prompts() {
                 style: ButtonStyle::default(),
                 form: None,
                 url: None,
+                launch: false,
             },
             PromptButton {
                 id: "deny".into(),
@@ -234,6 +235,7 @@ async fn shows_rooms_edits_typing_and_prompts() {
                     }],
                 }),
                 url: None,
+                launch: false,
             },
         ],
         allowed: vec![],
@@ -304,6 +306,7 @@ async fn presses_prompt_buttons() {
         style: ButtonStyle::default(),
         form,
         url: None,
+        launch: false,
     };
     let prompt = Prompt {
         id: "p1".into(),
@@ -364,6 +367,7 @@ async fn zalo_has_no_buttons_and_telegram_no_forms() {
             style: ButtonStyle::default(),
             form,
             url: None,
+            launch: false,
         }],
         allowed: vec![],
         cards: Vec::new(),
@@ -459,6 +463,7 @@ impl InboundSink for Bot {
                     style: ButtonStyle::default(),
                     form: None,
                     url: None,
+                    launch: false,
                 }],
                 allowed: vec![],
                 cards: Vec::new(),
