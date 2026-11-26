@@ -22,10 +22,13 @@ pub const INDEX_FORMAT: u32 = 1;
 /// The largest index accepted.
 const MAX_INDEX: usize = 2 * 1024 * 1024;
 
-/// The keys of okbot's own registry (`tidusvn05/okbot-apps`), current first, then a standby key
-/// for rotation once there is one. The secret halves are kept offline by the maintainer
+/// The keys of okbot's own registry (`tidusvn05/okbot-apps`): the current key, then the
+/// standby key for rotation. The secret halves are kept offline by the maintainer
 /// (`okbot app keygen`, ADR 0020).
-pub const OFFICIAL_KEYS: &[&str] = &["ed25519:EZrgaFudD8Rj1/wa+NudP1cp/grZw7q8G0TJL7KRxmo="];
+pub const OFFICIAL_KEYS: &[&str] = &[
+    "ed25519:EZrgaFudD8Rj1/wa+NudP1cp/grZw7q8G0TJL7KRxmo=",
+    "ed25519:MW+6hfikbeCRQdg2Yv7eAGLmSGbypxQIfdhtRlwp5TM=",
+];
 
 /// The official registry's index.
 pub const OFFICIAL_INDEX: &str =

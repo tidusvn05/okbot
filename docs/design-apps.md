@@ -539,8 +539,9 @@ What the code does where it differs from the sections above:
   `KnowledgeProvider::documents` and `document`, which the notes app uses too.
 - **`mcp.call`** answers `{"confirm": "..."}` for a guarded tool. The shell removes any
   `confirmed` an app sends, asks in its own dialog and calls again.
-- **Signing key.** `OFFICIAL_KEYS` holds the maintainer's key (made 2026-11-26; no standby key
-  yet). The secret is the `registry-signing` environment secret of `tidusvn05/okbot-apps`.
+- **Signing keys.** `OFFICIAL_KEYS` holds the maintainer's current key and a standby key (both
+  made 2026-11-26). The current secret is the `registry-signing` environment secret of
+  `tidusvn05/okbot-apps`; the standby secret stays offline until a rotation.
   `templates/okbot-apps/` holds the registry repository's README, CODEOWNERS, CI workflow and a
   sample app.
 - **Browsers.** `scripts/e2e-apps.py` opens a launch link from `okbot chat` in Playwright: the
