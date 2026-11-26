@@ -60,6 +60,9 @@ pub(crate) enum AppCommand {
         /// Accept new permissions without asking.
         #[arg(long)]
         yes: bool,
+        /// Install an older version when the registry offers one (normally refused).
+        #[arg(long)]
+        allow_downgrade: bool,
     },
     /// Removes an installed app (built-in apps are turned off with `[apps.<name>] disabled`).
     Remove {
@@ -170,9 +173,12 @@ pub(crate) async fn run(command: AppCommand) -> anyhow::Result<()> {
                 _ => bail!("name a registry app, a folder, or --git <url> --rev <commit>"),
             }
         }
-        AppCommand::Update { app, bot, yes } => {
-            update(&load(bot.as_deref())?, app.as_deref(), yes).await
-        }
+        AppCommand::Update {
+            app,
+            bot,
+            yes,
+            allow_downgrade,
+        } => update(&load(bot.as_deref())?, app.as_deref(), yes, allow_downgrade).await,
         AppCommand::Remove { app, bot } => {
             let config = load(bot.as_deref())?;
             if okbot_apps::builtin()
@@ -234,11 +240,17 @@ fn client() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
+/// The registry's index, signed and no older than the newest this bot accepted before.
 async fn fetch_index(config: &Config) -> anyhow::Result<okbot_apps::registry::Index> {
     let url = registry_url(config);
-    okbot_apps::registry::fetch_index(&client()?, url, &keys(config)?)
+    let index = okbot_apps::registry::fetch_index(&client()?, url, &keys(config)?)
         .await
-        .with_context(|| format!("cannot use the registry {url}"))
+        .with_context(|| format!("cannot use the registry {url}"))?;
+    let dir = apps_dir(config);
+    okbot_apps::registry::check_fresh(&dir, &index)
+        .with_context(|| format!("cannot use the registry {url}"))?;
+    okbot_apps::registry::remember(&dir, &index)?;
+    Ok(index)
 }
 
 /// Shows what an app may do and asks to grant it (or says why not when `yes`).
@@ -387,7 +399,12 @@ fn add_git(config: &Config, url: &str, rev: &str, path: &str, yes: bool) -> anyh
     add_local(config, &dir, yes)
 }
 
-async fn update(config: &Config, only: Option<&str>, yes: bool) -> anyhow::Result<()> {
+async fn update(
+    config: &Config,
+    only: Option<&str>,
+    yes: bool,
+    allow_downgrade: bool,
+) -> anyhow::Result<()> {
     let dir = apps_dir(config);
     let index = fetch_index(config).await?;
     let client = client()?;
@@ -429,6 +446,18 @@ async fn update(config: &Config, only: Option<&str>, yes: bool) -> anyhow::Resul
             && installed.commit.as_ref() == Some(&index.commit)
         {
             println!("{name} {} is up to date", latest.version);
+            continue;
+        }
+        if let Some(have) = &installed.version
+            && okbot_apps::registry::is_older(&latest.version, have) != Some(false)
+            && &latest.version != have
+            && !allow_downgrade
+        {
+            println!(
+                "{name}: the registry offers {}, not newer than the installed {have}; kept it \
+                 (--allow-downgrade installs it anyway)",
+                latest.version
+            );
             continue;
         }
         if let Err(why) = okbot_apps::registry::installable(latest) {

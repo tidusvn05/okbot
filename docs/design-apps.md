@@ -549,5 +549,17 @@ What the code does where it differs from the sections above:
   error, a write through the SDK bridge, the shell's confirm dialog and a used ticket being
   refused. CI (`apps-browser`) runs it in Chromium, Firefox and WebKit, and keeps desktop and
   phone screenshots. Mobile in-app browsers (Zalo, Telegram, Discord) are still checked by hand.
+- **Pre-release security review (v0.14.0)** found eight issues, all fixed before the tag:
+  - `knowledge.get` now checks the id okbase resolved, so `./memory/…` cannot reach memory or notes.
+  - The shell talks to the frame over a `MessageChannel` port and closes a frame that loads a
+    second page.
+  - okbot's dialogs name who asks, focus Cancel, ignore presses for 0.6 s, come one at a time and
+    show a tool's arguments.
+  - Requests only update sessions that exist, so a sign-out cannot be undone by a request in
+    flight.
+  - A ticket for another account asks before it switches (login CSRF).
+  - Places have stable ids, and rooms drop out 12 h after their last press.
+  - The CLI refuses an index older than the newest it accepted, and downgrades without
+    `--allow-downgrade`.
 - **Audit.** Every write through the App API is a `tool_calls` row: server `bot` (a reserved
   `[[mcp]]` name), tool the method, command `app:<name>`. `mcp.call` records the real server.

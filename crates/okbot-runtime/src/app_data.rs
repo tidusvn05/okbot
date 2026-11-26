@@ -37,6 +37,28 @@ const MAX_DAYS: i64 = 62;
 /// Areas the knowledge app does not show: they have apps of their own.
 const PRIVATE_AREAS: [&str; 3] = ["memory/", "notes/", "tasks/"];
 
+/// Whether an app may open document `id`: inside `within` when given, else outside the areas
+/// that have their own permissions. The id is compared as okbase resolves it.
+fn may_open(id: &str, within: Option<&str>) -> bool {
+    let mut id = id.trim();
+    loop {
+        let next = id.trim_start_matches("./").trim_start_matches('/');
+        if next == id {
+            break;
+        }
+        id = next;
+    }
+    if id.split('/').any(|part| part == "..") {
+        return false;
+    }
+    match within {
+        Some(area) => id.starts_with(area),
+        None => !PRIVATE_AREAS
+            .iter()
+            .any(|a| id.starts_with(a) || Some(id) == a.strip_suffix('/')),
+    }
+}
+
 fn not_found(what: &str) -> ApiError {
     ApiError::new(
         StatusCode::NOT_FOUND,
@@ -233,7 +255,7 @@ async fn documents(call: &Call<'_>, path: &str, limit: usize) -> Result<Value, A
         .map_err(|e| knowledge_error(call, &e))?;
     let items: Vec<Value> = docs
         .iter()
-        .filter(|d| !path.is_empty() || !PRIVATE_AREAS.iter().any(|a| d.id.starts_with(a)))
+        .filter(|d| may_open(&d.id, (!path.is_empty()).then_some(path)))
         .map(doc_json)
         .collect();
     Ok(json!({"items": items, "personal": who.personal}))
@@ -247,11 +269,7 @@ async fn document(call: &Call<'_>, within: Option<&str>) -> Result<Value, ApiErr
         .as_ref()
         .ok_or_else(|| not_found("knowledge base"))?;
     let id = call.required("id")?;
-    let allowed = match within {
-        Some(area) => id.starts_with(area),
-        None => !PRIVATE_AREAS.iter().any(|a| id.starts_with(a)),
-    };
-    if !allowed {
+    if !may_open(id, within) {
         return Err(not_found("such document"));
     }
     let who = call.requester().await;
@@ -260,6 +278,11 @@ async fn document(call: &Call<'_>, within: Option<&str>) -> Result<Value, ApiErr
         .await
         .map_err(|e| knowledge_error(call, &e))?
         .ok_or_else(|| not_found("such document"))?;
+    // The id okbase resolved, not the one asked for, decides: `./memory/x` and `memory/x.md`
+    // name the same document.
+    if !may_open(&doc.info.id, within) {
+        return Err(not_found("such document"));
+    }
     Ok(json!({
         "info": doc_json(&doc.info),
         "text": doc.text,
@@ -511,5 +534,29 @@ async fn mcp_token(
             "unavailable",
             format!("`{server}` cannot be reached now"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_open;
+
+    #[test]
+    fn apps_cannot_reach_private_areas_through_other_spellings() {
+        for id in [
+            "memory/a",
+            "./memory/a",
+            "/memory/a",
+            "././/memory/a",
+            " memory/a",
+            "memory",
+            "x/../memory/a",
+        ] {
+            assert!(!may_open(id, None), "{id}");
+        }
+        assert!(may_open("guides/setup", None));
+        assert!(may_open("./notes/a", Some("notes/")));
+        assert!(!may_open("notes/../memory/a", Some("notes/")));
+        assert!(!may_open("memory/a", Some("notes/")));
     }
 }

@@ -24,8 +24,8 @@ without a new okbot release.
 2. Ask only for the permissions the app needs. Reviewers read every file.
 3. Open a pull request. CI runs `okbot app index` on it, and a maintainer reviews it.
 
-Apps must not load anything from outside the bot. The sandbox blocks it anyway (no network, no
-cookies), and reviewers refuse apps that try.
+Apps must not load anything from outside the bot. The sandbox blocks most of it (no `fetch`, no
+cookies, and okbot closes a frame that navigates away), and reviewers refuse apps that try.
 
 ## Yanking a bad version
 

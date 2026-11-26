@@ -627,6 +627,24 @@ impl ConversationStore for MemoryStore {
         Ok(())
     }
 
+    async fn update_app_session(
+        &self,
+        handle: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<bool, StoreError> {
+        let now = self.clock.now();
+        Ok(match self.lock().app_sessions.get_mut(handle) {
+            Some(entry) => {
+                entry.1 = data;
+                entry.2 = now;
+                entry.3 = expires;
+                true
+            }
+            None => false,
+        })
+    }
+
     async fn app_session(
         &self,
         handle: &str,

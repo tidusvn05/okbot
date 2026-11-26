@@ -1,5 +1,6 @@
 // okbot app shell (ADR 0019). Trusted code: it holds the session and is the only thing that
-// talks to the App API. Apps run in a sandboxed frame and reach the API through postMessage.
+// talks to the App API. Apps run in a sandboxed frame and reach the API through a MessageChannel
+// port the shell hands to the frame's first page. A frame that loads any other page is closed.
 "use strict";
 (() => {
   const T = {
@@ -11,6 +12,10 @@
       leave: "Leave okbot and open {host}?", cancel: "Cancel", go: "Open", ok: "OK",
       confirm: "Continue", error: "Something went wrong. Try again from the chat.",
       choose: "Choose an app above.", none: "No apps are available here.",
+      asks: "{app} asks:", okbot: "okbot asks:", busy: "Another question is open.",
+      left: "{app} tried to open another page and was closed.", reopen: "Open it again from the bar above.",
+      signInAs: "Sign in as {name} ({platform})? You are signed in as {current} now.",
+      signIn: "Sign in", stay: "Stay",
     },
     vi: {
       signing: "Đang đăng nhập…", expired: "Liên kết đã hết hạn hoặc đã được dùng.",
@@ -20,6 +25,10 @@
       leave: "Rời okbot và mở {host}?", cancel: "Huỷ", go: "Mở", ok: "OK",
       confirm: "Tiếp tục", error: "Có lỗi xảy ra. Hãy mở lại từ chat.",
       choose: "Chọn một app ở trên.", none: "Không có app nào ở đây.",
+      asks: "{app} hỏi:", okbot: "okbot hỏi:", busy: "Đang có một câu hỏi khác.",
+      left: "{app} đã cố mở một trang khác nên đã bị đóng.", reopen: "Mở lại từ thanh ở trên.",
+      signInAs: "Đăng nhập là {name} ({platform})? Bạn đang đăng nhập là {current}.",
+      signIn: "Đăng nhập", stay: "Giữ nguyên",
     },
   };
   const lang = (navigator.language || "en").slice(0, 2) === "vi" ? "vi" : "en";
@@ -45,6 +54,8 @@
 
   let session = null;
   let frame = null;
+  let port = null; // the shell's end of the channel to the current frame
+  let asking = false;
   let current = null; // { app, view, params }
 
   // The ticket is in the fragment, which browsers never send to servers; drop it at once.
@@ -82,29 +93,48 @@
     return r.data.result;
   }
 
-  function dialog(text, buttons) {
+  // okbot's own questions. `from` says who asks: the app (its text) or okbot (`trusted`).
+  // Cancel has the focus and nothing can be pressed for a moment, so a keystroke meant for the
+  // app cannot answer. One question at a time.
+  function dialog(text, buttons, { from, detail, trusted } = {}) {
+    if (asking) return Promise.reject({ code: "busy", message: t("busy") });
+    asking = true;
     return new Promise((resolve) => {
       const back = document.createElement("div");
       back.className = "dialog";
       const box = document.createElement("div");
       box.setAttribute("role", "dialog");
       box.setAttribute("aria-modal", "true");
+      if (trusted) box.className = "trusted";
+      if (from) {
+        const h = document.createElement("strong");
+        h.className = "from";
+        h.textContent = from;
+        box.append(h);
+      }
       const p = document.createElement("p");
       p.textContent = text;
+      box.append(p);
+      if (detail) {
+        const pre = document.createElement("pre");
+        pre.textContent = detail;
+        box.append(pre);
+      }
       const row = document.createElement("div");
       row.className = "row";
       for (const [label, value, primary] of buttons) {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = label;
+        b.disabled = true;
         if (primary) b.className = "primary";
-        b.onclick = () => { back.remove(); resolve(value); };
+        b.onclick = () => { back.remove(); asking = false; resolve(value); };
         row.append(b);
       }
-      box.append(p, row);
+      box.append(row);
       back.append(box);
       document.body.append(back);
-      row.lastChild?.focus();
+      setTimeout(() => { for (const b of row.children) b.disabled = false; row.firstChild?.focus(); }, 600);
     });
   }
 
@@ -129,7 +159,7 @@
     select.replaceChildren();
     for (const c of session.contexts) {
       const o = document.createElement("option");
-      o.value = String(c.id);
+      o.value = c.id;
       o.textContent = c.direct ? t("direct") : c.label;
       if (c.id === session.context) o.selected = true;
       select.append(o);
@@ -154,35 +184,57 @@
     }
     const params = new URLSearchParams({ view: open.view || app.view, lang });
     for (const [k, v] of Object.entries(open.params || {})) params.set("p_" + k, v);
+    port?.close();
+    port = null;
     frame = document.createElement("iframe");
     frame.title = app.title;
     // No allow-same-origin: the app gets an opaque origin, no cookies, no API of its own.
     frame.setAttribute("sandbox", "allow-scripts allow-forms");
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.src = "frame/" + encodeURIComponent(app.name) + "/index.html#" + params;
+    // The first page gets the port. Any later load is the frame navigating itself (to another
+    // site, say): close the channel and the frame, so that page can neither call nor hear back.
+    const opened = frame;
+    let loads = 0;
+    frame.onload = () => {
+      if (frame !== opened) return;
+      loads += 1;
+      if (loads === 1) {
+        const channel = new MessageChannel();
+        const mine = channel.port1;
+        port = mine;
+        mine.onmessage = (event) => handle(event.data, mine, app);
+        frame.contentWindow.postMessage({ okbot: 1, port: true }, "*", [channel.port2]);
+        return;
+      }
+      port?.close();
+      port = null;
+      frame = null;
+      status(t("left", { app: app.title }), t("reopen"));
+    };
     $("main").replaceChildren(frame);
     document.title = app.title + " · " + session.bot;
   }
 
-  window.addEventListener("message", async (event) => {
-    if (!frame || event.source !== frame.contentWindow) return;
-    const m = event.data;
+  async function handle(m, from, info) {
     if (!m || m.okbot !== 1 || typeof m.method !== "string") return;
-    const reply = (body) => frame.contentWindow.postMessage({ okbot: 1, id: m.id, ...body }, "*");
-    const app = current.app;
+    const reply = (body) => { if (from === port) from.postMessage({ okbot: 1, id: m.id, ...body }); };
+    const app = info.name;
     try {
       if (m.method === "shell.openLink") {
         let url;
         try { url = new URL(String(m.params?.url)); } catch { throw { code: "invalid", message: "not a URL" }; }
         if (url.protocol !== "https:") throw { code: "invalid", message: "only https links" };
-        const go = await dialog(t("leave", { host: url.host }), [[t("cancel"), false], [t("go"), true, true]]);
+        const go = await dialog(t("leave", { host: url.host }), [[t("cancel"), false], [t("go"), true, true]],
+          { from: t("okbot"), detail: url.href, trusted: true });
         if (go) window.open(url.href, "_blank", "noopener,noreferrer");
         reply({ result: go });
         return;
       }
       if (m.method === "shell.confirm") {
         const text = String(m.params?.text ?? "").slice(0, 500);
-        const yes = await dialog(text, [[t("cancel"), false], [t("confirm"), true, true]]);
+        const yes = await dialog(text, [[t("cancel"), false], [t("confirm"), true, true]],
+          { from: t("asks", { app: info.title }) });
         reply({ result: yes });
         return;
       }
@@ -197,7 +249,9 @@
         delete params.confirmed;
         let result = await api("mcp.call", params, app);
         if (result && typeof result.confirm === "string") {
-          const yes = await dialog(result.confirm, [[t("cancel"), false], [t("confirm"), true, true]]);
+          const args = JSON.stringify(params.arguments ?? {}, null, 2);
+          const yes = await dialog(result.confirm, [[t("cancel"), false], [t("confirm"), true, true]],
+            { from: t("okbot"), detail: args.length > 600 ? args.slice(0, 600) + "…" : args, trusted: true });
           if (!yes) throw { code: "declined", message: "declined" };
           result = await api("mcp.call", { ...params, confirmed: true }, app);
         }
@@ -208,7 +262,7 @@
     } catch (error) {
       reply({ error: { code: error.code ?? "failed", message: error.message ?? String(error) } });
     }
-  });
+  }
 
   $("logout").onclick = async () => {
     await post("api/logout", {}, { "x-okbot-csrf": session?.csrf ?? "" });
@@ -218,13 +272,23 @@
   };
 
   $("context").onchange = async (e) => {
-    session.context = Number(e.target.value);
+    session.context = e.target.value;
     if (current) show(current);
   };
 
   async function start() {
     status(t("signing"));
-    const r = await post("api/session", ticket ? { ticket } : {});
+    let r = await post("api/session", ticket ? { ticket } : {});
+    if (r.status === 409 && r.data?.error?.code === "other_account") {
+      // The link is someone else's account: never switch without the person saying so.
+      const e = r.data.error;
+      const yes = await dialog(
+        t("signInAs", { name: e.name, platform: e.platform, current: e.current }),
+        [[t("stay"), false], [t("signIn"), true, true]],
+        { from: t("okbot"), trusted: true },
+      );
+      r = await post("api/session", yes ? { ticket, replace: true } : {});
+    }
     if (!r.ok) {
       const code = r.data?.error?.code;
       if (code === "expired") status(t("expired"), t("again", { cmd: r.data.error.command ?? "/app" }));

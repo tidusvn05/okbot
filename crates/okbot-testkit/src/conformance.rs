@@ -583,10 +583,12 @@ async fn app_sessions(store: &dyn ConversationStore, clock: &ManualClock) {
             .await
             .expect("put session");
     }
-    store
-        .put_app_session("s1", "person:ana", "s1-new".into(), later)
-        .await
-        .expect("replace session");
+    assert!(
+        store
+            .update_app_session("s1", "s1-new".into(), later)
+            .await
+            .expect("update session")
+    );
     assert_eq!(
         store.app_session("s1", now).await.expect("get").as_deref(),
         Some("s1-new")
@@ -623,6 +625,13 @@ async fn app_sessions(store: &dyn ConversationStore, clock: &ManualClock) {
         1
     );
     assert_eq!(store.end_app_sessions(None, None).await.expect("end"), 1);
+    assert!(
+        !store
+            .update_app_session("s3", "late".into(), later)
+            .await
+            .expect("update"),
+        "an ended session stays ended"
+    );
     let left = store.app_sessions(None, now).await.expect("list");
     assert_eq!(left, Vec::new(), "every session ended");
 }

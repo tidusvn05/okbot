@@ -38,14 +38,43 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+# An app that tries to leave its frame: it navigates the frame to another page, which then
+# tries to call the App API. The shell must close the frame instead.
+LEAVER = {
+    "app.toml": 'name = "leaver"\ntitle = "Leaver"\nversion = "0.1.0"\napi = 1\npermissions = ["me"]\n',
+    "index.html": '<!doctype html><html><head><meta charset="utf-8"><script src="../../sdk/v1.js">'
+    '</script><script src="app.js" defer></script></head><body><h1>Leaver</h1>'
+    '<p id="me"></p><button id="go" type="button">Leave</button></body></html>',
+    "app.js": 'okbot.me().then((m) => { document.getElementById("me").textContent = m.name; });\n'
+    'document.getElementById("go").onclick = () => { location.href = "away.html"; };\n',
+    "away.html": '<!doctype html><html><head><meta charset="utf-8"><script src="away.js"></script>'
+    "</head><body><h1>Away</h1></body></html>",
+    "away.js": 'parent.postMessage({ okbot: 1, id: 1, method: "me", params: {} }, "*");\n',
+}
+
+
 class Chat:
     """`okbot chat` with the echo agent, driven through stdin."""
 
     def __init__(self, bot: Path, port: int):
+        # Its own okbot home, so the machine's list of bots is left alone.
+        env = {**os.environ, "OKBOT_HOME": str(bot / ".okbot-home")}
         subprocess.run(
             [OKBOT, "init", "--name", "E2E", "--agent", "claude", "--profile", "personal",
              "--platform", "none", "--yes"],
             cwd=bot,
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        leaver = bot / "leaver-src"
+        leaver.mkdir()
+        for name, text in LEAVER.items():
+            (leaver / name).write_text(text)
+        subprocess.run(
+            [OKBOT, "app", "add", str(leaver), "--yes"],
+            cwd=bot,
+            env=env,
             check=True,
             capture_output=True,
         )
@@ -53,6 +82,7 @@ class Chat:
         self.proc = subprocess.Popen(
             [OKBOT, "chat", "--agent", "echo", "--http", f"127.0.0.1:{port}"],
             cwd=bot,
+            env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -96,7 +126,8 @@ def main() -> int:
                 page.set_default_timeout(TIMEOUT_MS)
                 page.on(
                     "console",
-                    lambda m: m.type == "error" and problems.append(f"console: {m.text}"),
+                    lambda m: m.type == "error"
+                    and problems.append(f"console ({m.location.get('url') or 'no url'}): {m.text}"),
                 )
                 page.on("pageerror", lambda e: problems.append(f"script error: {e}"))
                 page.goto(link)
@@ -144,6 +175,15 @@ def main() -> int:
                     expect(page.frame_locator("iframe").locator("h1")).not_to_be_empty()
                     page.wait_for_load_state("networkidle")
                     print(f"  opened {name}")
+
+                # An app that navigates its frame away is closed, and its new page hears nothing.
+                page.locator("#apps a", has_text="Leaver").click()
+                leaver = page.frame_locator("iframe")
+                expect(leaver.locator("#me")).not_to_be_empty()
+                leaver.locator("#go").click()
+                expect(page.locator("iframe")).to_have_count(0)
+                expect(page.locator("#status")).to_contain_text("another page")
+                print("  a frame that navigated away was closed")
 
                 # The ticket was single use: opening the same link again does not sign in.
                 second = browser.new_page()

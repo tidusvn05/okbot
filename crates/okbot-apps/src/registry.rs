@@ -221,6 +221,55 @@ pub async fn fetch_index(
     parse(&bytes)
 }
 
+/// In a bot's `apps/` folder: when the newest index it accepted was generated.
+pub const SEEN_FILE: &str = ".okbot-index";
+
+/// Refuses an index older than the newest one this bot accepted: an old index is still signed,
+/// and replaying it would bring back versions the registry has since fixed or yanked.
+pub fn check_fresh(apps_dir: &Path, index: &Index) -> Result<(), Error> {
+    let generated: jiff::Timestamp = index.generated.parse().map_err(|_| {
+        bad(format!(
+            "the index time `{}` is not a time",
+            index.generated
+        ))
+    })?;
+    let seen = std::fs::read_to_string(apps_dir.join(SEEN_FILE))
+        .ok()
+        .and_then(|s| s.trim().parse::<jiff::Timestamp>().ok());
+    if let Some(seen) = seen
+        && generated < seen
+    {
+        return Err(bad(format!(
+            "this index ({generated}) is older than one this bot already used ({seen}); \
+             it may be a replay. Check the registry, or delete {} to accept it",
+            apps_dir.join(SEEN_FILE).display()
+        )));
+    }
+    Ok(())
+}
+
+/// Remembers `index` as the newest accepted (see [`check_fresh`]).
+pub fn remember(apps_dir: &Path, index: &Index) -> Result<(), Error> {
+    std::fs::create_dir_all(apps_dir).map_err(|e| bad(format!("{}: {e}", apps_dir.display())))?;
+    std::fs::write(apps_dir.join(SEEN_FILE), &index.generated)
+        .map_err(|e| bad(format!("{}: {e}", apps_dir.display())))
+}
+
+/// Whether version `a` is older than `b`, comparing dotted numbers (`1.10.0` > `1.9`); `None`
+/// when either is not of that form.
+#[must_use]
+pub fn is_older(a: &str, b: &str) -> Option<bool> {
+    let parse = |v: &str| -> Option<Vec<u64>> {
+        let core = v.trim().split(['-', '+']).next()?;
+        core.split('.').map(|p| p.parse().ok()).collect()
+    };
+    let (mut a, mut b) = (parse(a)?, parse(b)?);
+    let n = a.len().max(b.len());
+    a.resize(n, 0);
+    b.resize(n, 0);
+    Some(a < b)
+}
+
 /// What an installed app came from (the first line of [`SOURCE_FILE`] says `registry`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Installed {
@@ -538,6 +587,32 @@ pub fn public_of(pkcs8: &[u8]) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replayed_indexes_and_versions() {
+        assert_eq!(is_older("1.9", "1.10.0"), Some(true));
+        assert_eq!(is_older("2", "1.10"), Some(false));
+        assert_eq!(is_older("1.0", "1"), Some(false));
+        assert_eq!(is_older("beta", "1"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let at = |generated: &str| Index {
+            format: INDEX_FORMAT,
+            generated: generated.into(),
+            commit: "c".into(),
+            base: "https://x".into(),
+            apps: Vec::new(),
+        };
+        let new = at("2026-11-26T10:00:00Z");
+        check_fresh(dir.path(), &new).unwrap();
+        remember(dir.path(), &new).unwrap();
+        check_fresh(dir.path(), &new).unwrap();
+        assert!(
+            check_fresh(dir.path(), &at("2026-11-20T10:00:00Z")).is_err(),
+            "a replay"
+        );
+        check_fresh(dir.path(), &at("2026-11-27T10:00:00Z")).unwrap();
+        assert!(check_fresh(dir.path(), &at("yesterday")).is_err());
+    }
 
     #[test]
     fn official_keys_are_valid() {

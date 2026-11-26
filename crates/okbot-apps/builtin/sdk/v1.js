@@ -11,9 +11,11 @@
   const params = {};
   for (const [k, v] of hash) if (k.startsWith("p_")) params[k.slice(2)] = v;
 
-  window.addEventListener("message", (event) => {
-    if (event.source !== window.parent) return;
-    const m = event.data;
+  // The shell hands this page a MessageChannel port once; every call and answer goes through it.
+  let port = null;
+  const queue = [];
+
+  function receive(m) {
     if (!m || m.okbot !== 1) return;
     if (m.id && pending.has(m.id)) {
       const { resolve, reject } = pending.get(m.id);
@@ -26,14 +28,24 @@
     } else if (m.event && listeners.has(m.event)) {
       for (const f of listeners.get(m.event)) f(m.data);
     }
+  }
+
+  window.addEventListener("message", (event) => {
+    // The frame may only be embedded by okbot's shell (frame-ancestors), so the parent is it.
+    if (port || event.source !== window.parent) return;
+    if (!event.data || event.data.okbot !== 1 || !event.data.port || !event.ports[0]) return;
+    port = event.ports[0];
+    port.onmessage = (e) => receive(e.data);
+    for (const m of queue.splice(0)) port.postMessage(m);
   });
 
   function call(method, args) {
     return new Promise((resolve, reject) => {
       const id = ++seq;
       pending.set(id, { resolve, reject });
-      // The frame may only be embedded by okbot's shell (frame-ancestors), so the parent is it.
-      window.parent.postMessage({ okbot: 1, id, method, params: args ?? {} }, "*");
+      const m = { okbot: 1, id, method, params: args ?? {} };
+      if (port) port.postMessage(m);
+      else queue.push(m);
     });
   }
 

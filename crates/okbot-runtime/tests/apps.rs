@@ -161,12 +161,21 @@ impl Bot {
     }
 
     async fn exchange(&self, url: &str, cookie: Option<&str>) -> (u16, Option<String>, Value) {
+        self.exchange_with(url, cookie, false).await
+    }
+
+    async fn exchange_with(
+        &self,
+        url: &str,
+        cookie: Option<&str>,
+        replace: bool,
+    ) -> (u16, Option<String>, Value) {
         let ticket = url.split_once("#t=").unwrap().1;
         let mut request = self
             .http
             .post(format!("{}/session", self.api))
             .header("origin", PUBLIC)
-            .json(&json!({ "ticket": ticket }));
+            .json(&json!({ "ticket": ticket, "replace": replace }));
         if let Some(c) = cookie {
             request = request.header("cookie", format!("okbot_app={c}"));
         }
@@ -193,7 +202,7 @@ impl Bot {
             .header("cookie", format!("okbot_app={}", session.cookie))
             .header("x-okbot-csrf", &session.csrf)
             .header("x-okbot-app", app)
-            .header("x-okbot-context", session.context.to_string())
+            .header("x-okbot-context", &session.context)
             .json(&params)
             .send()
             .await
@@ -222,7 +231,7 @@ impl Bot {
 struct Session {
     cookie: String,
     csrf: String,
-    context: usize,
+    context: String,
 }
 
 fn session_of(set_cookie: &str, body: &Value) -> Session {
@@ -240,7 +249,7 @@ fn session_of(set_cookie: &str, body: &Value) -> Session {
     Session {
         cookie,
         csrf: body["csrf"].as_str().unwrap().to_string(),
-        context: usize::try_from(body["context"].as_u64().unwrap()).unwrap(),
+        context: body["context"].as_str().unwrap().to_string(),
     }
 }
 
@@ -338,6 +347,82 @@ async fn each_presser_gets_their_own_link_and_a_ticket_works_once() {
 }
 
 #[tokio::test]
+async fn another_accounts_link_asks_first_and_places_keep_their_ids() {
+    let bot = Bot::start(true, |_| {});
+    add_tasks(&bot, 12);
+    // The newest Open button (each `/tasks` below sends one).
+    let open_button = |bot: &Bot| {
+        let prompt = bot
+            .channel
+            .prompts()
+            .into_iter()
+            .rev()
+            .find(|p| p.buttons.iter().any(|b| b.launch))
+            .expect("an Open button");
+        let button = prompt.buttons.iter().find(|b| b.launch).unwrap().id.clone();
+        (prompt.id, button)
+    };
+    bot.say("group", "ana", "/tasks", false).await;
+    let (prompt, button) = open_button(&bot);
+    let link = bot.press("group", "bob", &prompt, &button).await;
+    let (_, cookie, body) = bot.exchange(&link, None).await;
+    let bob = session_of(&cookie.unwrap(), &body);
+
+    // Carol's link opened in Bob's browser (login CSRF) does not switch accounts silently.
+    let carol = bot.press("group", "carol", &prompt, &button).await;
+    let (status, cookie, body) = bot.exchange(&carol, Some(&bob.cookie)).await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["error"]["code"], "other_account");
+    assert_eq!(body["error"]["name"], "carol");
+    assert_eq!(body["error"]["current"], "bob");
+    assert!(cookie.is_none(), "still signed in as bob");
+    let (status, _) = bot.call(&bob, "tasks", "me", json!({})).await;
+    assert_eq!(status, 200);
+    // The person agrees: the same link still works.
+    let (status, cookie, body) = bot.exchange_with(&carol, Some(&bob.cookie), true).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["account"]["name"], "carol");
+    assert!(cookie.is_some(), "a session of carol's own");
+
+    // A second place keeps the first one's id, so an open tab still reaches the same room.
+    bot.say("other", "ana", "/tasks", false).await;
+    let (prompt, button) = open_button(&bot);
+    let link = bot.press("other", "bob", &prompt, &button).await;
+    let (status, _, body) = bot.exchange(&link, Some(&bob.cookie)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["contexts"].as_array().unwrap().len(), 2);
+    assert_eq!(body["contexts"][0]["id"], bob.context.as_str());
+    assert_ne!(
+        body["context"],
+        bob.context.as_str(),
+        "the new place is open"
+    );
+    let (status, me) = bot.call(&bob, "tasks", "me", json!({})).await;
+    assert_eq!(status, 200, "{me}");
+    assert!(
+        me["result"]["context"]["label"]
+            .as_str()
+            .unwrap()
+            .ends_with("group")
+    );
+
+    // Signed out, the session stays out.
+    let response = bot
+        .http
+        .post(format!("{}/logout", bot.api))
+        .header("origin", PUBLIC)
+        .header("cookie", format!("okbot_app={}", bob.cookie))
+        .header("x-okbot-csrf", &bob.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let (status, _) = bot.call(&bob, "tasks", "me", json!({})).await;
+    assert_eq!(status, 401);
+    bot.finish().await;
+}
+
+#[tokio::test]
 async fn calls_are_checked_every_time() {
     let bot = Bot::start(true, |c| {
         c.apps.rules.insert(
@@ -375,7 +460,7 @@ async fn calls_are_checked_every_time() {
         .header("origin", PUBLIC)
         .header("cookie", format!("okbot_app={}", session.cookie))
         .header("x-okbot-app", "tasks")
-        .header("x-okbot-context", "0")
+        .header("x-okbot-context", &session.context)
         .send()
         .await
         .unwrap();
@@ -387,7 +472,7 @@ async fn calls_are_checked_every_time() {
         .header("cookie", format!("okbot_app={}", session.cookie))
         .header("x-okbot-csrf", &session.csrf)
         .header("x-okbot-app", "tasks")
-        .header("x-okbot-context", "0")
+        .header("x-okbot-context", &session.context)
         .send()
         .await
         .unwrap();

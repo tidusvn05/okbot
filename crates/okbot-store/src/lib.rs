@@ -1086,6 +1086,24 @@ impl ConversationStore for SqliteStore {
         .await
     }
 
+    async fn update_app_session(
+        &self,
+        handle: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<bool, StoreError> {
+        let handle = handle.to_string();
+        self.with(move |conn, now| {
+            let changed = conn.execute(
+                "UPDATE app_sessions SET data = ?2, updated_at = ?3, expires_at = ?4
+                 WHERE handle = ?1",
+                params![handle, data, millis(now), millis(expires)],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+    }
+
     async fn app_session(
         &self,
         handle: &str,

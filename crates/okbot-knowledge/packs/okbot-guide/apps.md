@@ -153,6 +153,7 @@ Apps are added by the operator, from the terminal. Chat users and the agent cann
 okbot app search                 # the okbot-apps registry, its index checked against its signature
 okbot app add shopping-list      # shows what it may do and asks first (--yes for scripts)
 okbot app update                 # newer versions; new permissions are asked for; yanked ones stop being served
+okbot app update --allow-downgrade   # also install an older version the registry now offers
 okbot app remove shopping-list
 okbot app add ./my-app           # your own folder: marked unverified
 okbot app add --git https://git.example.com/me/apps --rev 4b1e2c9 --path my-app
@@ -186,3 +187,12 @@ is in `okbot audit`, with the app as the source (`app:tasks`).
 - **"This link has expired or was already used"**: press the button again or send `/app tasks`.
   Each link works once, within 5 minutes.
 - **The page says you are signed out**: the session ended or was revoked. Open it from the chat again.
+- **A group is missing from the place switcher**: a group stays open in the browser for 12 hours
+  after the last press there. Press an app button in that group again.
+- **"Sign in as … ?"**: the link belongs to another account than the one signed in on this browser.
+  Choose *Stay* unless you meant to switch: someone may have sent you their link.
+- **"… tried to open another page and was closed"**: the app navigated its frame, which okbot does
+  not allow. Report it to whoever made the app.
+- **"this index is older than one this bot already used"**: the registry served an older signed
+  index than before, which may be a replay. Check the registry; deleting `apps/.okbot-index`
+  accepts it.

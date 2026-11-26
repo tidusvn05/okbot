@@ -90,16 +90,47 @@ pub(crate) struct Ticket {
     pub(crate) params: BTreeMap<String, String>,
     #[serde(default)]
     pub(crate) locale: Option<String>,
+    /// When it stops working; set when it is stored.
+    #[serde(default)]
+    pub(crate) expires: Option<Timestamp>,
 }
 
+/// How long a press in a room keeps that room open in a session. Rooms have members who
+/// leave, and the platform does not tell okbot, so a room is proven again by a fresh press.
+pub(crate) const ROOM_CONTEXT_TTL: SignedDuration = SignedDuration::from_hours(12);
+
 /// Where a session was proven: a direct chat or a room.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Context {
     pub(crate) conversation: ConversationKey,
     pub(crate) direct: bool,
+    /// When a ticket last proved it.
+    #[serde(default)]
+    pub(crate) proven: Option<Timestamp>,
 }
 
 impl Context {
+    /// Whether `other` is the same place.
+    pub(crate) fn same_place(&self, other: &Context) -> bool {
+        self.conversation == other.conversation && self.direct == other.direct
+    }
+
+    /// A stable name for the place within its session, so a tab keeps addressing the same
+    /// place however the session's list changes.
+    pub(crate) fn id(&self) -> String {
+        let key = serde_json::to_string(&self.conversation).unwrap_or_default();
+        hash(&format!("{key}\n{}", self.direct))[..16].to_string()
+    }
+
+    /// Whether it still counts: a direct chat for the session's life, a room for
+    /// [`ROOM_CONTEXT_TTL`] after its last press.
+    pub(crate) fn current(&self, now: Timestamp) -> bool {
+        self.direct
+            || self
+                .proven
+                .is_some_and(|p| now.duration_since(p) < ROOM_CONTEXT_TTL)
+    }
+
     /// A short name for the shell's switcher.
     pub(crate) fn label(&self) -> String {
         if self.direct {
@@ -452,8 +483,9 @@ pub(crate) async fn mint(shared: &Shared, ticket: Ticket) -> Result<String, Stri
         .params
         .retain(|k, v| allowed.contains(k) && v.chars().count() <= 100);
     let secret = secret();
-    let data = serde_json::to_string(&ticket).map_err(|e| e.to_string())?;
     let expires = shared.clock.now() + signed(TICKET_TTL);
+    ticket.expires = Some(expires);
+    let data = serde_json::to_string(&ticket).map_err(|e| e.to_string())?;
     if let Err(error) = shared
         .store
         .put_app_ticket(&hash(&secret), data, expires)
@@ -485,6 +517,7 @@ pub(crate) async fn launch(shared: Arc<Shared>, press: PromptAnswer) -> Option<P
         view: button.view.clone(),
         params: button.params.clone(),
         locale: None,
+        expires: None,
     };
     Some(match mint(&shared, ticket).await {
         Ok(url) => {
@@ -582,6 +615,7 @@ pub(crate) async fn offer(
             view,
             params: BTreeMap::new(),
             locale: event.locale.clone(),
+            expires: None,
         };
         match mint(shared, ticket).await {
             Ok(url) if caps.ui.buttons && url.starts_with("https://") => View::links(
@@ -748,8 +782,22 @@ mod tests {
                 thread: None,
             },
             direct,
+            proven: None,
         };
         assert_eq!(c("1", true).label(), "Direct chat");
+        assert_ne!(c("1", true).id(), c("1", false).id());
+        assert_eq!(c("1", false).id(), c("1", false).id());
+
+        // A room counts for ROOM_CONTEXT_TTL after its last press; a direct chat always.
+        let now = Timestamp::UNIX_EPOCH + SignedDuration::from_hours(100);
+        let proven = |room: &str, direct, hours_ago: i64| Context {
+            proven: Some(now - SignedDuration::from_hours(hours_ago)),
+            ..c(room, direct)
+        };
+        assert!(proven("1", false, 1).current(now));
+        assert!(!proven("1", false, 13).current(now));
+        assert!(!c("1", false).current(now), "never proven");
+        assert!(proven("1", true, 99).current(now));
         assert_eq!(c("123", false).label(), "discord:main · 123");
         assert_eq!(
             c("1234567890123", false).label(),

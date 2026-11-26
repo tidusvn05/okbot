@@ -584,6 +584,18 @@ pub trait ConversationStore: Send + Sync {
         Err(unsupported())
     }
 
+    /// Updates the state and expiry of an app session that still exists; `false` when it ended
+    /// (signed out or revoked), which it never brings back.
+    async fn update_app_session(
+        &self,
+        handle: &str,
+        data: String,
+        expires: Timestamp,
+    ) -> Result<bool, StoreError> {
+        let _ = (handle, data, expires);
+        Err(unsupported())
+    }
+
     /// The state of the app session `handle`, unless it expired.
     async fn app_session(
         &self,

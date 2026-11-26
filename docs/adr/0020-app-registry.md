@@ -33,6 +33,9 @@ The source can be changed, the network can be intercepted, and an update can tur
   shown and confirmed on install. An update that asks for a new permission is applied only when
   the operator accepts it; otherwise the installed version stays. An app needing a newer App API
   than the binary serves is listed, not installed. There are no automatic updates.
+- **No replays, no downgrades.** The bot remembers when the newest index it accepted was
+  generated (`apps/.okbot-index`) and refuses an older one, because an old index is still
+  signed. `okbot app update` never installs an older version without `--allow-downgrade`.
 - **Yanking.** The index can mark a version `yanked` with a reason. `okbot app update` reports an
   installed yanked version and marks it (`.okbot-yanked`), and with `[apps] refuse_yanked = true`
   (default) the bot stops serving it within seconds.

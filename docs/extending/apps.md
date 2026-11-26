@@ -51,13 +51,16 @@ The frame's policy allows scripts, styles, images and fonts **from the bot only*
 inline scripts or `style` attributes, no `fetch` and no form submission anywhere. Put everything
 in files and build elements with `okbot.h` or the DOM.
 
+An app is **one page**. Change what it shows with script (and `location.hash` if you like):
+loading another page into the frame, even one of the app's own, makes the shell close it.
+
 ### The SDK
 
 | Call | What |
 | --- | --- |
 | `okbot.call(method, params)` | an App API method; resolves to its result, rejects with `error.code` and `message` |
 | `okbot.me()` | `{name, platform, account, context: {label, direct}, locale, timezone, admin, permissions}` |
-| `okbot.confirm(text)` | asks the person in okbot's own dialog; `true` or `false` |
+| `okbot.confirm(text)` | asks the person in okbot's dialog, headed with your app's name; `true` or `false` (one question at a time) |
 | `okbot.openLink(url)` | opens an `https` link after the person agrees to leave |
 | `okbot.setTitle(title)` | the tab title |
 | `okbot.view` | `{path, params}` that chat opened |

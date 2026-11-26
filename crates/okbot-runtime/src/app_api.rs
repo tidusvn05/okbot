@@ -30,6 +30,8 @@ pub(crate) struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    /// More fields for the error object, for the shell.
+    details: Option<serde_json::Map<String, Value>>,
 }
 
 impl ApiError {
@@ -38,6 +40,7 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            details: None,
         }
     }
 
@@ -64,10 +67,10 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        json_response(
-            self.status,
-            &json!({"error": {"code": self.code, "message": self.message}}),
-        )
+        let mut error = self.details.unwrap_or_default();
+        error.insert("code".into(), self.code.into());
+        error.insert("message".into(), self.message.into());
+        json_response(self.status, &json!({ "error": error }))
     }
 }
 
@@ -173,11 +176,14 @@ fn expiry(shared: &Shared, session: &Session, now: Timestamp) -> Timestamp {
     by_use.min(by_age)
 }
 
+/// Keeps a session. A `fresh` one is stored; any other is only updated, so a request that was
+/// in flight when the session was signed out or revoked cannot bring it back.
 async fn save(
     shared: &Shared,
     handle: &str,
     session: &Session,
     now: Timestamp,
+    fresh: bool,
 ) -> Result<Timestamp, ApiError> {
     let expires = expiry(shared, session, now);
     let event = apps::event_for(
@@ -186,17 +192,25 @@ async fn save(
         session.contexts[0].direct,
         now,
     );
-    let person = shared.person_key(&event).await;
     let data = serde_json::to_string(session).map_err(|_| ApiError::internal(shared))?;
-    shared
-        .store
-        .put_app_session(handle, &person, data, expires)
-        .await
-        .map_err(|error| {
+    let kept = if fresh {
+        let person = shared.person_key(&event).await;
+        shared
+            .store
+            .put_app_session(handle, &person, data, expires)
+            .await
+            .map(|()| true)
+    } else {
+        shared.store.update_app_session(handle, data, expires).await
+    };
+    match kept {
+        Ok(true) => Ok(expires),
+        Ok(false) => Err(ApiError::signed_out()),
+        Err(error) => {
             tracing::error!(%error, "cannot keep an app session");
-            ApiError::internal(shared)
-        })?;
-    Ok(expires)
+            Err(ApiError::internal(shared))
+        }
+    }
 }
 
 async fn load(shared: &Shared, headers: &HeaderMap, now: Timestamp) -> Option<(String, Session)> {
@@ -208,10 +222,10 @@ async fn load(shared: &Shared, headers: &HeaderMap, now: Timestamp) -> Option<(S
         .await
         .ok()
         .flatten()?;
-    let session = serde_json::from_str::<Session>(&data)
-        .ok()
-        .filter(|s| !s.contexts.is_empty())?;
-    Some((handle, session))
+    let mut session = serde_json::from_str::<Session>(&data).ok()?;
+    // Rooms not pressed in lately drop out (apps::ROOM_CONTEXT_TTL).
+    session.contexts.retain(|c| c.current(now));
+    (!session.contexts.is_empty()).then_some((handle, session))
 }
 
 /// The apps `session` may open from context `i`.
@@ -245,33 +259,79 @@ async fn apps_for(shared: &Shared, session: &Session, context: &Context) -> Vec<
 struct SignIn {
     handle: String,
     session: Session,
-    index: usize,
+    /// The place it opened ([`Context::id`]).
+    current: String,
     open: Value,
     /// A new session's id, for the cookie.
     new_cookie: Option<String>,
 }
 
+/// The answer to a ticket for another account than the signed-in one: the ticket is put back,
+/// and the shell asks the person whether to switch.
+async fn other_account(
+    shared: &Shared,
+    secret: &str,
+    data: String,
+    ticket: &apps::Ticket,
+    current: &Session,
+) -> ApiError {
+    if let Some(expires) = ticket.expires {
+        let _ = shared
+            .store
+            .put_app_ticket(&apps::hash(secret), data, expires)
+            .await;
+    }
+    let mut details = serde_json::Map::new();
+    details.insert("name".into(), ticket.user.display_name.clone().into());
+    details.insert(
+        "platform".into(),
+        ticket.conversation.channel.platform().into(),
+    );
+    details.insert("current".into(), current.user.display_name.clone().into());
+    ApiError {
+        details: Some(details),
+        ..ApiError::new(
+            StatusCode::CONFLICT,
+            "other_account",
+            "this link signs in another account",
+        )
+    }
+}
+
 async fn sign_in(
     shared: &Shared,
-    ticket: &str,
+    secret: &str,
+    replace: bool,
     existing: Option<(String, Session)>,
     now: Timestamp,
 ) -> Result<SignIn, ApiError> {
     let mut new_cookie = None;
     let taken = shared
         .store
-        .take_app_ticket(&apps::hash(ticket), now)
+        .take_app_ticket(&apps::hash(secret), now)
         .await
         .ok()
-        .flatten()
-        .and_then(|d| serde_json::from_str::<apps::Ticket>(&d).ok());
-    let Some(ticket) = taken else {
+        .flatten();
+    let Some((data, ticket)) = taken.and_then(|d| {
+        let t = serde_json::from_str::<apps::Ticket>(&d).ok()?;
+        Some((d, t))
+    }) else {
         return Err(ApiError::new(
             StatusCode::GONE,
             "expired",
             "this link has expired or was used",
         ));
     };
+    let same = |s: &Session| {
+        s.user.id == ticket.user.id && s.channel() == Some(&ticket.conversation.channel)
+    };
+    // Someone else's link would sign this browser out of its own account and into theirs
+    // (login CSRF): the person confirms first. The ticket stays usable until then.
+    if let Some((_, current)) = existing.as_ref().filter(|(_, s)| !same(s))
+        && !replace
+    {
+        return Err(other_account(shared, secret, data, &ticket, current).await);
+    }
     // Access is checked again at the exchange: the lists may have changed since the press.
     if let Err(reason) = apps::admit(
         shared,
@@ -287,11 +347,10 @@ async fn sign_in(
     let context = Context {
         conversation: ticket.conversation.clone(),
         direct: ticket.direct,
+        proven: Some(now),
     };
     // The same account adds a place; anyone else signs in afresh (with a new cookie).
-    let (handle, mut session) = match existing.filter(|(_, s)| {
-        s.user.id == ticket.user.id && s.channel() == Some(&ticket.conversation.channel)
-    }) {
+    let (handle, mut session) = match existing.filter(|(_, s)| same(s)) {
         Some(found) => found,
         None => {
             let id = apps::secret();
@@ -314,23 +373,24 @@ async fn sign_in(
         .user
         .display_name
         .clone_from(&ticket.user.display_name);
-    let index = match session.contexts.iter().position(|c| *c == context) {
-        Some(i) => i,
+    let current = context.id();
+    match session.contexts.iter_mut().find(|c| c.same_place(&context)) {
+        Some(c) => c.proven = Some(now),
         None => {
             session.contexts.push(context);
-            // A handful of places is plenty; the oldest goes first.
+            // A handful of places is plenty; the oldest goes first. Places are addressed by
+            // id, so the others keep theirs.
             if session.contexts.len() > 8 {
                 session.contexts.remove(0);
             }
-            session.contexts.len() - 1
         }
-    };
+    }
     let open = json!({"app": ticket.app, "view": ticket.view, "params": ticket.params});
     tracing::info!(app = %ticket.app, user = %ticket.user.id, "app session signed in");
     Ok(SignIn {
         handle,
         session,
-        index,
+        current,
         open,
         new_cookie,
     })
@@ -342,41 +402,50 @@ pub(crate) async fn session(shared: &Shared, headers: &HeaderMap, body: &[u8]) -
     if !same_origin(shared, headers) {
         return ApiError::forbidden("not from this bot's pages").into_response();
     }
-    let ticket = serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|v| v.get("ticket")?.as_str().map(str::to_string))
+    let body = serde_json::from_slice::<Value>(body).unwrap_or_default();
+    let ticket = body
+        .get("ticket")
+        .and_then(Value::as_str)
+        .map(str::to_string)
         .filter(|t| !t.is_empty() && t.len() <= 100);
+    let replace = body.get("replace").and_then(Value::as_bool) == Some(true);
     let now = shared.clock.now();
     let existing = load(shared, headers, now).await;
     let mut new_cookie = None;
     let (handle, mut session, current, open) = if let Some(ticket) = ticket {
-        match sign_in(shared, &ticket, existing, now).await {
+        match sign_in(shared, &ticket, replace, existing, now).await {
             Ok(done) => {
                 new_cookie = done.new_cookie;
-                (done.handle, done.session, done.index, done.open)
+                (done.handle, done.session, done.current, done.open)
             }
             Err(error) => return error.into_response(),
         }
     } else if let Some((handle, session)) = existing {
-        (handle, session, 0, Value::Null)
+        let first = session.contexts[0].id();
+        (handle, session, first, Value::Null)
     } else {
         return ApiError::signed_out().into_response();
     };
     session.touched = now;
-    let expires = match save(shared, &handle, &session, now).await {
+    let expires = match save(shared, &handle, &session, now, new_cookie.is_some()).await {
         Ok(e) => e,
         Err(e) => return e.into_response(),
     };
     let mut contexts = Vec::new();
-    for (i, c) in session.contexts.iter().enumerate() {
+    let mut apps_here = Value::Array(Vec::new());
+    for c in &session.contexts {
+        let id = c.id();
+        let apps = Value::Array(apps_for(shared, &session, c).await);
+        if id == current {
+            apps_here = apps.clone();
+        }
         contexts.push(json!({
-            "id": i,
+            "id": id,
             "label": c.label(),
             "direct": c.direct,
-            "apps": apps_for(shared, &session, c).await,
+            "apps": apps,
         }));
     }
-    let apps_here = contexts[current]["apps"].clone();
     let body = json!({
         "bot": shared.config.bot_name,
         "account": {
@@ -464,8 +533,7 @@ async fn call_checked(
     }
     let app = header_str(headers, "x-okbot-app").unwrap_or_default();
     let context = header_str(headers, "x-okbot-context")
-        .and_then(|c| c.parse::<usize>().ok())
-        .and_then(|i| session.contexts.get(i))
+        .and_then(|id| session.contexts.iter().find(|c| c.id() == id))
         .cloned()
         .ok_or_else(|| ApiError::invalid("x-okbot-context names no place of this session"))?;
     let admitted = apps::admit(
@@ -506,7 +574,7 @@ async fn call_checked(
     // Sliding expiry, written at most once a minute.
     if now.duration_since(session.touched) > SignedDuration::from_secs(60) {
         session.touched = now;
-        save(shared, &handle, &session, now).await?;
+        save(shared, &handle, &session, now, false).await?;
     }
     let call = Call {
         shared,
