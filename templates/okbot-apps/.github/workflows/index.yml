@@ -1,0 +1,65 @@
+# Checks every app on pull requests; on main, writes and signs index.json (ADR 0020).
+name: index
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ["apps/**"]
+
+permissions:
+  contents: read
+
+env:
+  OKBOT_VERSION: v0.14.0
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install okbot
+        run: |
+          name="okbot-$OKBOT_VERSION-x86_64-unknown-linux-gnu"
+          base="https://github.com/tidusvn05/okbot/releases/download/$OKBOT_VERSION"
+          curl -sSfLO "$base/$name.tar.gz"
+          curl -sSfL "$base/SHA256SUMS" | grep " $name.tar.gz\$" | sha256sum -c -
+          tar -xzf "$name.tar.gz" && sudo install "$name/okbot" /usr/local/bin/okbot
+      - name: Check the apps as okbot installs them
+        run: |
+          okbot app index apps --commit "$GITHUB_SHA" \
+            --base "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/apps" \
+            --out /tmp/index.json
+
+  sign:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-24.04
+    # Required reviewers on this environment: a maintainer approves every signing.
+    environment: registry-signing
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install okbot
+        run: |
+          name="okbot-$OKBOT_VERSION-x86_64-unknown-linux-gnu"
+          base="https://github.com/tidusvn05/okbot/releases/download/$OKBOT_VERSION"
+          curl -sSfLO "$base/$name.tar.gz"
+          curl -sSfL "$base/SHA256SUMS" | grep " $name.tar.gz\$" | sha256sum -c -
+          tar -xzf "$name.tar.gz" && sudo install "$name/okbot" /usr/local/bin/okbot
+      - name: Index and sign
+        env:
+          OKBOT_APPS_SIGNING_KEY: ${{ secrets.OKBOT_APPS_SIGNING_KEY }}
+        run: |
+          okbot app index apps --commit "$GITHUB_SHA" \
+            --base "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/apps" \
+            --out index.json
+          okbot app sign index.json
+      - name: Publish
+        run: |
+          git config user.name "okbot-apps index"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.json index.json.sig
+          git commit -m "chore: index for $GITHUB_SHA [skip ci]"
+          git push

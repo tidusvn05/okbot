@@ -2,6 +2,7 @@
 
 mod access;
 mod agent;
+mod app;
 mod automation;
 mod bot;
 mod channel;
@@ -111,6 +112,9 @@ enum Command {
     /// accounts from the terminal.
     #[command(subcommand)]
     Mcp(mcp::McpCommand),
+    /// Apps (ADR 0019): the bot's web pages behind chat summaries, and who is signed in.
+    #[command(subcommand, alias = "apps")]
+    App(app::AppCommand),
     /// Automations: their triggers, actions and latest runs.
     #[command(subcommand, alias = "automations")]
     Automation(automation::AutomationCommand),
@@ -218,6 +222,7 @@ async fn main() -> ExitCode {
         Command::Audit(args) => access::audit(args).await,
         Command::Mcp(command) => mcp::run(command).await,
         Command::Automation(command) => automation::run(command).await,
+        Command::App(command) => app::run(command).await,
         Command::Peer(command) => team::peer(command).await,
         Command::Team(command) => team::team(command),
         Command::Start(args) => service::run(service::Action::Start, &args),

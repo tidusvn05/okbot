@@ -18,6 +18,9 @@ depend on each other; `okbot` is the only place that turns configuration into ob
 | A platform's command menu | `Channel::set_commands` | channel adapter | [below](#commands-for-your-tools) |
 | Notifications from your programs | nothing: config only | `[[notify]]` in `okbot.toml` | [../notify.md](../notify.md) |
 | Bot-started direct chats | `Channel::open_direct` | channel adapter | [channel.md](channel.md) |
+| A page behind chat summaries (an app) | `app.toml` + static files, the App API | `okbot app add`, or the okbot-apps registry | [apps.md](apps.md) |
+| Private replies to app buttons on a platform | `UiCaps::private_reply` + `InboundSink::launch` | channel adapter | [apps.md](apps.md), ADR 0019 |
+| A list of installed apps | `AppDirectory` (`okbot-apps`'s `Catalog`) | `RuntimeBuilder::apps` | rustdoc of `okbot_core::AppDirectory` |
 
 Every port has a conformance check in `okbot-testkit` where its contract can be tested generically:
 

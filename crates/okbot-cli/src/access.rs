@@ -213,10 +213,16 @@ pub(crate) async fn audit(args: AuditArgs) -> anyhow::Result<()> {
             });
             println!("{line}");
         } else {
-            let via = c
-                .command
-                .as_ref()
-                .map_or_else(|| "agent".to_string(), |n| format!("/{n}"));
+            let via = c.command.as_ref().map_or_else(
+                || "agent".to_string(),
+                |n| {
+                    if n.starts_with("app:") {
+                        n.clone()
+                    } else {
+                        format!("/{n}")
+                    }
+                },
+            );
             let outcome = match (&c.decision, &c.error) {
                 (okbot_core::ToolDecision::Allowed, None) => "ok".to_string(),
                 (okbot_core::ToolDecision::Allowed, Some(e)) => format!("failed: {e}"),

@@ -2,7 +2,7 @@
 //!
 //! This is the only place that knows every adapter crate (ADR 0001).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -199,11 +199,108 @@ pub(crate) fn runtime_config(config: &Config) -> anyhow::Result<RuntimeConfig> {
     }
     rc.automations = automations(config)?;
     rc.teams = team_policies(config);
+    rc.apps = apps_config(config)?;
     rc.limits = okbot_runtime::Limits {
         turns_per_day: config.limits.turns_per_day,
         tokens_per_day: config.limits.tokens_per_day,
     };
     Ok(rc)
+}
+
+/// `[apps]` (ADR 0019): the public address, session lifetimes (30 days on personal bots, which
+/// have one person) and the rules per app.
+pub(crate) fn apps_config(config: &Config) -> anyhow::Result<okbot_runtime::AppsConfig> {
+    let personal = config.bot.profile == okbot_config::BotProfile::Personal;
+    let duration =
+        |value: Option<&str>, what: &str, personal_default: u64, team_default: u64| match value {
+            Some(v) => okbot_runtime::parse_duration(v)
+                .with_context(|| format!("[apps] {what} = \"{v}\": use 30m, 12h or 7d")),
+            None => Ok(Duration::from_secs(if personal {
+                personal_default
+            } else {
+                team_default
+            })),
+        };
+    let day = 24 * 3600;
+    let session_idle = duration(
+        config.apps.session_idle.as_deref(),
+        "session_idle",
+        30 * day,
+        12 * 3600,
+    )?;
+    let session_max = duration(
+        config.apps.session_max.as_deref(),
+        "session_max",
+        30 * day,
+        7 * day,
+    )?
+    .max(session_idle);
+    let mut rules = HashMap::new();
+    for (name, rule) in &config.apps.rules {
+        rules.insert(
+            name.clone(),
+            okbot_runtime::AppRule {
+                disabled: rule.disabled,
+                roles: rule.roles.clone(),
+                rooms: rule
+                    .rooms
+                    .iter()
+                    .map(|r| {
+                        okbot_config::parse_account(r)
+                            .map(|(channel, room)| (channel, room.to_string()))
+                            .map_err(anyhow::Error::msg)
+                    })
+                    .collect::<anyhow::Result<_>>()?,
+                permissions: rule
+                    .permissions
+                    .as_ref()
+                    .map(|list| {
+                        list.iter()
+                            .map(|p| p.parse().map_err(anyhow::Error::msg))
+                            .collect::<anyhow::Result<_>>()
+                    })
+                    .transpose()?,
+            },
+        );
+    }
+    Ok(okbot_runtime::AppsConfig {
+        enabled: config.apps.enabled,
+        public_url: config.http.public_url.clone(),
+        session_idle,
+        session_max,
+        rules,
+    })
+}
+
+/// The apps of a bot directory (built-in ones and `<bot>/apps/`), for the runtime, or `None`
+/// when `[apps] enabled = false`.
+pub(crate) fn apps(config: &Config) -> Option<(okbot_apps::Catalog, Option<String>)> {
+    if !config.apps.enabled {
+        return None;
+    }
+    let catalog = okbot_apps::Catalog::new(Some(config.dir.join("apps")))
+        .serving_yanked(!config.apps.refuse_yanked);
+    let origin = config.http.public_url.as_deref().map(|url| {
+        let rest = url.split_once("://").map_or(url, |(_, r)| r);
+        let host = rest.split('/').next().unwrap_or(rest);
+        let scheme = url.split_once("://").map_or("https", |(s, _)| s);
+        format!("{scheme}://{host}")
+    });
+    Some((catalog, origin))
+}
+
+/// Adds the apps of `config` to `builder`.
+pub(crate) fn with_apps(
+    builder: okbot_runtime::RuntimeBuilder,
+    config: &Config,
+) -> okbot_runtime::RuntimeBuilder {
+    match apps(config) {
+        Some((catalog, origin)) => {
+            let routes = okbot_apps::router(catalog.clone(), origin);
+            builder.apps(Arc::new(catalog), routes)
+        }
+        None => builder,
+    }
 }
 
 /// Who is answered and with which rights: `[bot] admins`, each channel's `allow_users` and
@@ -825,6 +922,7 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     if let Some(charts) = charts(config)? {
         builder = builder.charts(charts);
     }
+    builder = with_apps(builder, config);
     let needs_http = config
         .channels
         .zalo
