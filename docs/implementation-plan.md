@@ -211,6 +211,9 @@ runtime.run(shutdown_token).await
 | **v0.4.0** | P12–P13 | Session resume, progressive replies, fallback metrics, attachments |
 | **v0.5.0** | P15–P20 | Personal assistant: tasks, reminders, snooze, routines, notes, saving documents; **Telegram** |
 | **v0.10.0** | P21–P22 | **Services** over OAuth MCP (Gmail, Drive, Sheets, Notion, Linear) with per-person accounts; **automations** (poll, schedule, webhook → text or restricted agent turn) |
+| **v0.14.0** | P32–P33 | **Apps**: `/tasks` summary with an Open button; the Tasks app opens signed in as the presser on every platform (design-apps.md) |
+| **v0.15.0** | P34–P35 | Built-in schedule, memory, notes, automations and connections apps; app buttons in views; the signed `okbot-apps` registry |
+| **v0.16.0** | P36 | Local apps, `okbot app dev`, `mcp.call` from apps with confirmation in the shell |
 | **v1.0.0** | P14 | Stable `okbot-core` SDK and bridge protocol (crates are on crates.io from v0.5.0) |
 
 ---
@@ -777,6 +780,81 @@ Exit criteria: Refresh on a command's view runs the command as the presser witho
 Restart press asks first and nobody else can run it; an admin's approval runs it as the presser; a
 button for another server's command or a built-in is refused; Zalo shows the view as text with
 the commands to type.
+
+### P32 — App sessions and the shell (ADR 0019)
+
+Status: done. Step 1 runs in CI (`scripts/e2e-apps.py`: Chromium, Firefox, WebKit); mobile in-app
+browsers are checked by hand. See design-apps.md §11.
+
+1. Spike first: the sandboxed opaque-origin iframe, its CSP and `postMessage` bridge in Chrome,
+   Firefox, Safari and the in-app browsers of Zalo, Telegram and Discord on mobile.
+2. Core: `AppName`, `AppPermission`, `AppManifest`, the `app` view button, the `AppSessionStore` and
+   `AppDirectory` ports, `UiCaps.verified_clicks` and `private_reply`.
+3. Store: `app_tickets` and `app_sessions` (hashes only), schema version bump.
+4. `okbot-apps`: manifest validation, built-in apps embedded, shell, `/apps/sdk/v1.js`, CSP per
+   route, `POST /apps/api/session`, App API `me` and `tasks.*`, the built-in **tasks** app.
+5. Runtime: tickets minted for the presser, `/tasks` summary (10 items, Open, `[Next 10]`),
+   `/app <name>`; Discord ephemeral delivery; console prints the URL; Zalo sends the link in the
+   direct chat only. `[apps]` in `okbot.toml`, `doctor` checks `public_url`.
+
+Exit criteria: in a Discord group, two members press the same Open button and each sees only their
+own and the room's tasks; a ticket works once and not after 5 minutes; an unfurled link still opens;
+removing a member from `allow_users` makes their next API call fail; an app frame cannot read the
+cookie or `fetch` anything; without `public_url` `/tasks` pages with `[Next 10]`.
+
+### P33 — Apps on every platform
+
+Status: done; Telegram uses the direct chat instead of `web_app`/`login_url` (design-apps.md §11).
+
+1. Slack `chat.postEphemeral`, Google Chat private messages; Telegram `web_app` (private chats) and
+   `login_url` (groups) with signed data verified into a session.
+2. `/app sessions`, `/app logout`; `okbot app sessions [--revoke <person>|--all]`; 30-day sessions
+   on personal bots.
+3. `okbot-guide` pack: apps, `[apps]`, per-platform behaviour.
+
+Exit criteria: one press opens Tasks from a Telegram private chat; a Slack presser gets a link
+nobody else in the channel sees; a revoked session fails at once.
+
+### P34 — Built-in apps
+
+Status: done, with the knowledge app of P36.
+
+1. App API `schedule.list`, `notes.*`, `memory.*`, `automations.list|runs` (admins), `connections.list`.
+2. Built-in **schedule**, **memory**, **notes**, **automations**, **connections** apps; `[apps.<name>]`
+   `rooms`, `roles`, `permissions`.
+3. The `app` button in `[[command]]` views, notifications and the agent's `show`, checked against
+   installed apps and declared views.
+
+Exit criteria: the agent's `show` with an unknown app or view is refused with a fixable error; the
+automations app is refused to a non-admin by the server even when the shell is bypassed.
+
+### P35 — App registry (ADR 0020)
+
+Status: done in okbot; the `okbot-apps` repository (from `templates/okbot-apps/`) and the signing
+key are the maintainer's to create.
+
+1. `tidusvn05/okbot-apps`: layout, CODEOWNERS, CI lint, `index.json` generation and Ed25519
+   signing in an approval-gated environment.
+2. `okbot app search|info|add|update|remove`: signature and hash checks, file rules, atomic install,
+   permission prompts and diffs, `api` and `okbot` compatibility, yanked versions in `doctor`.
+3. `[apps] registry`, `registry_keys`, `refuse_yanked`.
+
+Exit criteria: a changed file, a bad signature or an unknown key aborts the install without
+touching `apps/`; an update asking for a new permission leaves it ungranted until accepted; a yanked
+app stops being served after the next index fetch.
+
+### P36 — Local apps and MCP from apps
+
+Status: done.
+
+1. `okbot app add <dir>` and `--git <url> --rev <commit>`, shown as unverified; `okbot app dev`
+   serving a directory with reload.
+2. App API `knowledge:read` and `mcp.call` through the gateway with the presser's rights and
+   credentials; `[[mcp]] confirm` as a shell dialog.
+3. Developer guide in `docs/extending/` and a sample app.
+
+Exit criteria: an app calling a tool it was not granted is refused server-side; a destructive tool
+waits for the shell dialog; `okbot app dev` reloads an edited file.
 
 ## Part 5 — Release checklist (every release)
 
