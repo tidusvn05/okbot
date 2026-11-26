@@ -318,6 +318,7 @@ async fn answer_batch(
 
     let history = history_for(shared, event, restricted).await;
     let peer_note = crate::team::prompt_note(shared, event).await;
+    let apps_note = crate::apps::prompt_note(shared, event, mcp.views.is_some()).await;
     let now = shared.clock.now();
     let new_count = batch.len().min(history.len());
     let input = PromptInput {
@@ -336,6 +337,7 @@ async fn answer_batch(
         not_connected: &mcp.not_connected,
         peer: peer_note.as_deref(),
         interactive: mcp.views.is_some(),
+        apps: apps_note.as_deref(),
     };
     let prompt = context::build(&input);
     // An automation turn starts afresh and leaves no session behind, so its data never reaches

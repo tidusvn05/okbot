@@ -83,6 +83,25 @@ impl Gate {
             && !self.at_rate_limit(&user, now)
     }
 
+    /// Whether the bot would answer `event`'s author in its conversation at all: not a refused
+    /// bot, not blocked, allowed and in an allowed room. Neither the rate limit nor the length
+    /// counts: for App API calls (ADR 0019), which carry no text.
+    pub(crate) fn reaches(&self, event: &InboundEvent) -> bool {
+        let p = &self.policy;
+        let lists = self.lists();
+        let channel = &event.conversation.channel;
+        let user = (channel.clone(), event.author.id.clone());
+        (!event.author.is_bot || p.answer_bots)
+            && !lists.blocked_users.contains(&user)
+            && lists
+                .allow_users
+                .as_ref()
+                .is_none_or(|users| users.contains(&user))
+            && p.allow_rooms.as_ref().is_none_or(|rooms| {
+                rooms.contains(&(channel.clone(), event.conversation.room.clone()))
+            })
+    }
+
     /// Whether `user` has used up the rate limit at `now`, counting nothing.
     fn at_rate_limit(&self, user: &(ChannelId, UserId), now: Timestamp) -> bool {
         let limit = self.policy.rate_limit;

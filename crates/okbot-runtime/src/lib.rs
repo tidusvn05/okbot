@@ -8,6 +8,9 @@
 //!
 //! The runtime depends only on ports from `okbot-core`; `okbot` provides the adapters.
 
+mod app_api;
+mod app_data;
+mod apps;
 mod automation;
 mod command;
 pub mod config;
@@ -49,10 +52,10 @@ use okbot_core::{
 use tokio::sync::{Notify, mpsc};
 
 pub use config::{
-    AccessLists, ArgKind, Automation, AutomationAction, CommandArg, Confirm, ConfirmBy,
-    Credentials, ExtraMcp, Limits, McpCommand, McpRules, Member, NotifyRoute, OAuthSettings, OWNER,
-    ROLE_ADMINS, ROLE_EVERYONE, Restrict, Roles, RunAs, RuntimeConfig, ScheduleConfig, Source,
-    StdioServer, TeamPolicy, Trigger,
+    AccessLists, AppRule, AppsConfig, ArgKind, Automation, AutomationAction, CommandArg, Confirm,
+    ConfirmBy, Credentials, ExtraMcp, Limits, McpCommand, McpRules, Member, NotifyRoute,
+    OAuthSettings, OWNER, ROLE_ADMINS, ROLE_EVERYONE, Restrict, Roles, RunAs, RuntimeConfig,
+    ScheduleConfig, Source, StdioServer, TeamPolicy, Trigger,
 };
 pub use http::HttpOptions;
 pub use roles::{MAX_GRANT, parse_duration};
@@ -150,6 +153,8 @@ pub(crate) struct Shared {
     /// The runtime's own sink, for results of delegated work that arrive later (weak: the sink
     /// holds this state).
     pub(crate) sink: std::sync::OnceLock<std::sync::Weak<EventSink>>,
+    /// Installed apps (ADR 0019); none: no apps.
+    pub(crate) apps: Option<apps::Apps>,
 }
 
 impl Shared {
@@ -282,9 +287,21 @@ pub struct RuntimeBuilder {
     http: Option<HttpOptions>,
     oauth: Option<Arc<oauth::Connector>>,
     peers: Option<Arc<dyn okbot_core::Peers>>,
+    apps: Option<(Arc<dyn okbot_core::AppDirectory>, axum::Router)>,
 }
 
 impl RuntimeBuilder {
+    /// Serves apps (ADR 0019): `directory` lists them, `routes` serves their shell and files
+    /// (`okbot-apps`); the runtime adds the App API and the Open buttons.
+    pub fn apps(
+        mut self,
+        directory: Arc<dyn okbot_core::AppDirectory>,
+        routes: axum::Router,
+    ) -> Self {
+        self.apps = Some((directory, routes));
+        self
+    }
+
     /// Sets the bot's peers (ADR 0014): the agent may delegate to them.
     pub fn peers(mut self, peers: Arc<dyn okbot_core::Peers>) -> Self {
         self.peers = Some(peers);
@@ -392,6 +409,9 @@ impl RuntimeBuilder {
             oauth: self.oauth,
             peers: self.peers,
             sink: std::sync::OnceLock::new(),
+            apps: self
+                .apps
+                .map(|(directory, routes)| apps::Apps::new(directory, routes)),
         });
         Ok(Runtime {
             shared: shared.clone(),
@@ -434,6 +454,13 @@ impl InboundSink for EventSink {
         conversation: &okbot_core::ConversationKey,
     ) -> Option<okbot_core::Prompt> {
         ui::lookup(&self.shared, id, conversation).await
+    }
+
+    async fn launch(&self, press: okbot_core::PromptAnswer) -> Option<okbot_core::PrivateReply> {
+        if self.tx.is_closed() {
+            return None;
+        }
+        apps::launch(self.shared.clone(), press).await
     }
 }
 
@@ -493,6 +520,7 @@ impl Runtime {
             http: None,
             oauth: None,
             peers: None,
+            apps: None,
         }
     }
 

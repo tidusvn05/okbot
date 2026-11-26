@@ -770,6 +770,7 @@ async fn ask(
                 },
                 form: None,
                 url: None,
+                launch: false,
             })
             .collect(),
         allowed: vec![event.author.id.clone()],

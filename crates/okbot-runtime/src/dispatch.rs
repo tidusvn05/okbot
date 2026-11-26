@@ -291,8 +291,16 @@ async fn worker(
         // never a command.
         let peer = crate::team::is_peer(&first.0);
         if !peer && let Some(command) = Command::parse(&first.0.text) {
+            if let Command::App(rest) = &command {
+                crate::apps::command(&shared, rest, &first.0).await;
+                continue;
+            }
+            let offer_tasks = matches!(command, Command::Tasks(_)) && shared.tasks.is_some();
             let text = command::execute(&shared, command, &first.0).await;
             turn::reply(&shared, &first.0, &text).await;
+            if offer_tasks && !text.starts_with("No tasks") {
+                crate::apps::offer(&shared, &first.0, "tasks", None, true).await;
+            }
             continue;
         }
         if !peer && let Some((command, rest)) = crate::mcp_command::find(&shared, &first.0.text) {

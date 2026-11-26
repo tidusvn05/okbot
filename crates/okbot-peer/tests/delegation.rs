@@ -65,6 +65,7 @@ impl InboundSink for FakeRuntime {
                                 style: okbot_core::ButtonStyle::Success,
                                 form: None,
                                 url: None,
+                                launch: false,
                             },
                             PromptButton {
                                 id: "deny".into(),
@@ -72,6 +73,7 @@ impl InboundSink for FakeRuntime {
                                 style: okbot_core::ButtonStyle::Danger,
                                 form: None,
                                 url: None,
+                                launch: false,
                             },
                         ],
                         allowed: vec![event.author.id.clone()],

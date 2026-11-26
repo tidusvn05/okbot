@@ -179,7 +179,7 @@ async fn execute(shared: &Shared, command: &McpCommand, rest: &str, event: &Inbo
         .await;
     }
     text(match result {
-        Ok(Call::Done(out)) => return answer(shared, command, out),
+        Ok(Call::Done(out)) => return answer(shared, command, out, event),
         Ok(Call::Usage(usage)) => usage,
         Ok(Call::Confirm) => String::new(),
         Err(McpError::Rpc(message)) => format!("⚠️ {message}"),
@@ -191,7 +191,12 @@ async fn execute(shared: &Shared, command: &McpCommand, rest: &str, event: &Inbo
 }
 
 /// The tool's view, or its text when it carries none (or one okbot cannot show).
-fn answer(shared: &Shared, command: &McpCommand, out: mcp_client::ToolOutput) -> Reply {
+fn answer(
+    shared: &Shared,
+    command: &McpCommand,
+    out: mcp_client::ToolOutput,
+    event: &InboundEvent,
+) -> Reply {
     // Its buttons may run only the commands of the same server: a server cannot make people run
     // another server's tools.
     let same_server: Vec<McpCommand> = shared
@@ -201,7 +206,10 @@ fn answer(shared: &Shared, command: &McpCommand, out: mcp_client::ToolOutput) ->
         .filter(|c| c.mcp == command.mcp)
         .cloned()
         .collect();
-    match crate::ui::carried(out.structured.as_ref(), &same_server) {
+    let carried = crate::ui::carried(out.structured.as_ref(), &same_server).map(|v| {
+        v.and_then(|mut view| crate::apps::check_view(shared, event, &mut view).map(|()| view))
+    });
+    match carried {
         Some(Ok(view)) => return Reply::View(Box::new(view)),
         Some(Err(error)) => {
             // The log only: the server's text is not repeated in the chat.

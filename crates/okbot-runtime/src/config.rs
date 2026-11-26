@@ -224,6 +224,49 @@ pub struct RuntimeConfig {
     pub console_owner: Option<UserId>,
     /// This bot's settings in its teams (`[teams.<id>]`, ADR 0014).
     pub teams: Vec<TeamPolicy>,
+    /// Apps (`[apps]`, ADR 0019).
+    pub apps: AppsConfig,
+}
+
+/// `[apps]`: web pages behind chat summaries (ADR 0019).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppsConfig {
+    /// Apps are served and offered (they also need an app directory and an address).
+    pub enabled: bool,
+    /// `[http] public_url`: where people's browsers reach the bot. Without it only the console
+    /// opens apps, on the loopback listener.
+    pub public_url: Option<String>,
+    /// A session ends after this long unused.
+    pub session_idle: Duration,
+    /// A session ends this long after sign-in.
+    pub session_max: Duration,
+    /// Rules per app (`[apps.<name>]`).
+    pub rules: HashMap<String, AppRule>,
+}
+
+impl Default for AppsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            public_url: None,
+            session_idle: Duration::from_secs(12 * 3600),
+            session_max: Duration::from_secs(7 * 24 * 3600),
+            rules: HashMap::new(),
+        }
+    }
+}
+
+/// `[apps.<name>]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppRule {
+    /// Off for this bot.
+    pub disabled: bool,
+    /// Roles that may open it; empty: everyone the bot answers.
+    pub roles: Vec<String>,
+    /// Rooms it may be opened from (direct chats always may); empty: anywhere.
+    pub rooms: Vec<(ChannelId, String)>,
+    /// Granted permissions, when fewer than the manifest asks for.
+    pub permissions: Option<Vec<okbot_core::AppPermission>>,
 }
 
 /// What members of a team may do here, and who here may delegate to them (`[teams.<id>]`).
@@ -672,6 +715,7 @@ impl RuntimeConfig {
             limits: Limits::default(),
             console_owner: None,
             teams: Vec::new(),
+            apps: AppsConfig::default(),
         }
     }
 

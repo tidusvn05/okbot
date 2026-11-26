@@ -463,6 +463,7 @@ mod tests {
             oauth: None,
             peers: None,
             sink: std::sync::OnceLock::new(),
+            apps: None,
         };
         Setup {
             shared,
