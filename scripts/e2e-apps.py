@@ -197,6 +197,10 @@ def main() -> int:
             chat.close()
     # The second page's refused sign-in is expected to log a failed request.
     problems = [p for p in problems if "401" not in p and "403" not in p]
+    # WebKit (WPE) styles `<select>` with an internal stylesheet and reports the page's CSP as
+    # refusing it; pages render correctly. Chromium and Firefox still catch real inline styles.
+    if BROWSER == "webkit":
+        problems = [p for p in problems if "Refused to apply a stylesheet" not in p]
     for problem in problems:
         print(problem, file=sys.stderr)
     if not problems:
