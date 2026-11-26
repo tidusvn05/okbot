@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../../sdk/ui.css">
+<script src="../../sdk/v1.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1 id="title">Tasks</h1>
+  <p id="where"></p>
+</header>
+<form id="filters">
+  <input id="q" type="search" autocomplete="off">
+  <select id="status"></select>
+  <select id="kind"></select>
+</form>
+<form id="add">
+  <input id="new-title" class="grow" maxlength="200" autocomplete="off" required>
+  <input id="new-due" type="datetime-local">
+  <button id="add-button" type="submit"></button>
+</form>
+<p id="message" class="message" role="status"></p>
+<ul id="list" class="list"></ul>
+<button id="more" class="more" type="button" hidden></button>
+</body>
+</html>

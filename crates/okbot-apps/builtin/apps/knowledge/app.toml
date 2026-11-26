@@ -1,0 +1,11 @@
+name = "knowledge"
+title = { en = "Knowledge", vi = "Tri thức" }
+version = "0.14.0"
+api = 1
+description = { en = "Browse and search the documents the bot answers from, as far as you may see them.", vi = "Duyệt và tìm các tài liệu bot dùng để trả lời, trong phạm vi bạn được xem." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "knowledge:read"]
+
+[[view]]
+path = "/browse"
+title = { en = "Documents", vi = "Tài liệu" }

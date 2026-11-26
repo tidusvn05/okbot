@@ -1101,9 +1101,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -2435,6 +2435,7 @@ version = "0.14.0-dev"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "base64 0.23.1",
  "clap",
  "hex",
  "inquire",
@@ -2442,6 +2443,7 @@ dependencies = [
  "jiff",
  "okbase",
  "okbot-agent",
+ "okbot-apps",
  "okbot-channel-bridge",
  "okbot-channel-console",
  "okbot-channel-discord",
@@ -2486,6 +2488,29 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
+]
+
+[[package]]
+name = "okbot-apps"
+version = "0.14.0-dev"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "hex",
+ "include_dir",
+ "okbot-core",
+ "reqwest",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tower",
  "tracing",
 ]
 
@@ -4634,9 +4659,9 @@ dependencies = [
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",

@@ -1,0 +1,11 @@
+name = "notes"
+title = { en = "Notes", vi = "Ghi chú" }
+version = "0.14.0"
+api = 1
+description = { en = "The journal by day: search it, read it and add a line.", vi = "Nhật ký theo ngày: tìm, đọc và thêm một dòng." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "notes:read", "notes:write"]
+
+[[view]]
+path = "/days"
+title = { en = "Journal", vi = "Nhật ký" }
