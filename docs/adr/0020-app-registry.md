@@ -38,8 +38,8 @@ The source can be changed, the network can be intercepted, and an update can tur
   (default) the bot stops serving it within seconds.
 - **Tools for the registry.** `okbot app index` and `okbot app sign` are what the registry's CI
   runs (`templates/okbot-apps/` is the repository's starting point). okbot's built-in keys
-  (`OFFICIAL_KEYS`) stay empty until the maintainer makes the key. Until then the official
-  registry installs nothing and `[apps] registry_keys` names the keys of any other registry.
+  (`OFFICIAL_KEYS`) hold the maintainer's public key, and `[apps] registry_keys` names the keys
+  of any other registry.
 
 ## Consequences
 - New apps and fixes reach bots between okbot releases, and only when an operator asks for them.

@@ -22,10 +22,10 @@ pub const INDEX_FORMAT: u32 = 1;
 /// The largest index accepted.
 const MAX_INDEX: usize = 2 * 1024 * 1024;
 
-/// The keys of okbot's own registry, current first, then the next one (for rotation). Empty
-/// until the maintainer generates the signing key (`okbot app keygen`, docs/apps.md): until
-/// then the official registry installs nothing and `[apps] registry_keys` names the keys.
-pub const OFFICIAL_KEYS: &[&str] = &[];
+/// The keys of okbot's own registry (`tidusvn05/okbot-apps`), current first, then a standby key
+/// for rotation once there is one. The secret halves are kept offline by the maintainer
+/// (`okbot app keygen`, ADR 0020).
+pub const OFFICIAL_KEYS: &[&str] = &["ed25519:EZrgaFudD8Rj1/wa+NudP1cp/grZw7q8G0TJL7KRxmo="];
 
 /// The official registry's index.
 pub const OFFICIAL_INDEX: &str =
@@ -535,6 +535,13 @@ pub fn public_of(pkcs8: &[u8]) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_keys_are_valid() {
+        for key in OFFICIAL_KEYS {
+            assert_eq!(parse_key(key).unwrap().len(), 32, "{key}");
+        }
+    }
 
     fn app_dir(root: &Path, name: &str, version: &str, permissions: &str) -> PathBuf {
         let dir = root.join(name);
