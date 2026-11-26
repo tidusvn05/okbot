@@ -103,6 +103,29 @@ impl ChatApi {
         Ok(message["name"].as_str().unwrap_or_default().to_string())
     }
 
+    /// Posts a message only `viewer` (`users/<id>`) sees, in `space` (in `thread` when given):
+    /// a private message. Spaces only; in a direct chat every message is private anyway.
+    pub async fn create_private_message(
+        &self,
+        space: &str,
+        thread: Option<&str>,
+        viewer: &str,
+        text: &str,
+        cards: Option<&Value>,
+    ) -> Result<String, ApiError> {
+        let mut body = json!({ "text": text, "privateMessageViewer": { "name": viewer } });
+        if let Some(cards) = cards {
+            body["cardsV2"] = cards.clone();
+        }
+        let mut url = format!("{}/v1/{space}/messages", self.base);
+        if let Some(thread) = thread {
+            body["thread"] = json!({ "name": thread });
+            url.push_str("?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD");
+        }
+        let message = call(&self.http, &self.tokens, reqwest::Method::POST, &url, &body).await?;
+        Ok(message["name"].as_str().unwrap_or_default().to_string())
+    }
+
     /// Replaces the text of the app's message `name`, and its cards when `cards` is given (an
     /// empty list removes them).
     pub async fn update_message(

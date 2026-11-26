@@ -1,0 +1,12 @@
+name = "hello-tasks"
+title = { en = "Hello tasks", vi = "Chào việc" }
+version = "0.1.0"
+api = 1
+okbot = ">=0.14"
+description = { en = "A sample app: greets you and counts your open tasks.", vi = "App mẫu: chào bạn và đếm việc chưa xong." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "tasks:read"]
+
+[[view]]
+path = "/"
+title = { en = "Hello", vi = "Xin chào" }

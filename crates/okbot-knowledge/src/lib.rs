@@ -536,6 +536,93 @@ impl KnowledgeProvider for Knowledge {
         .await
         .map_err(other_error)?
     }
+
+    async fn documents(
+        &self,
+        who: &Requester,
+        path: &str,
+        text: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<okbot_core::DocumentInfo>, KnowledgeError> {
+        self.refresh().await;
+        let bundle = self.bundle.clone();
+        let scope = scope::for_requester(who);
+        let request = okbase::QueryRequest {
+            filter: okbase::Filter {
+                path: (!path.is_empty()).then(|| path.to_string()),
+                text: text.map(str::to_string),
+                ..okbase::Filter::default()
+            },
+            sort: Some("-updated".into()),
+            limit: Some(limit.clamp(1, 200)),
+            ..okbase::QueryRequest::default()
+        };
+        let found = tokio::task::spawn_blocking(move || bundle.query(&request, &scope))
+            .await
+            .map_err(other_error)?
+            .map_err(bundle_error)?;
+        Ok(found
+            .docs
+            .into_iter()
+            // Folder indexes are navigation, not documents.
+            .filter(|d| !(d.id.ends_with("/index") || d.id == "index"))
+            .map(|d| okbot_core::DocumentInfo {
+                id: d.id,
+                title: d.title,
+                kind: d.concept_type,
+                updated: d.updated,
+                tags: d.tags,
+            })
+            .collect())
+    }
+
+    async fn document(
+        &self,
+        who: &Requester,
+        id: &str,
+    ) -> Result<Option<okbot_core::Document>, KnowledgeError> {
+        self.refresh().await;
+        let bundle = self.bundle.clone();
+        let scope = scope::for_requester(who);
+        let request = okbase::GetRequest {
+            id: id.to_string(),
+            section: None,
+            lines: None,
+            max_tokens: Some(8000),
+        };
+        let got = tokio::task::spawn_blocking(move || bundle.get(&request, &scope))
+            .await
+            .map_err(other_error)?;
+        // Out of scope and missing look the same: okbase treats both as not found.
+        let Ok(got) = got else { return Ok(None) };
+        let field = |key: &str| {
+            got.frontmatter
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        let tags = got
+            .frontmatter
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Some(okbot_core::Document {
+            info: okbot_core::DocumentInfo {
+                id: got.id.clone(),
+                title: got.title.clone(),
+                kind: field("type"),
+                updated: field("updated"),
+                tags,
+            },
+            text: got.content,
+            truncated: got.truncated,
+        }))
+    }
 }
 
 #[async_trait]

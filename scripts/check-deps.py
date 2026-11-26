@@ -23,6 +23,7 @@ ALLOWED = {
     "okbot-knowledge": {CORE},
     "okbot-runtime": {CORE},
     "okbot-peer": {CORE},
+    "okbot-apps": {CORE},
     TESTKIT: {CORE},
 }
 

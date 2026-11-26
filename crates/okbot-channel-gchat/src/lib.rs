@@ -87,6 +87,8 @@ struct Shared {
     prompts: std::sync::Mutex<std::collections::HashMap<String, prompt::Open>>,
     /// Dialogs (forms) can be opened: HTTP delivery answers clicks synchronously.
     dialogs: bool,
+    /// For private replies to app buttons (ADR 0019).
+    api: ChatApi,
 }
 
 fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -138,6 +140,10 @@ impl Shared {
             tracing::info!(channel = %self.id, user = %click.user.id, "a prompt was clicked by someone it is not for");
             return dialog.then(|| prompt::dialog_error(add_on, "This prompt is not for you."));
         }
+        if button.is_some_and(|b| b.launch) && !click.submit {
+            self.launch(&click, open, sink.as_ref()).await;
+            return None;
+        }
         let Some(id) = click.button.filter(|b| open.prompt.answers_with(b)) else {
             return click
                 .submit
@@ -176,6 +182,52 @@ impl Shared {
             tracing::debug!(channel = %self.id, "runtime stopped; answer dropped");
         }
         dialog.then(|| prompt::close_dialog(add_on))
+    }
+
+    /// An app button (ADR 0019): the presser's own link, in a message only they see.
+    async fn launch(&self, click: &event::Click, open: prompt::Open, sink: &dyn InboundSink) {
+        let viewer = click.user.id.as_str().to_string();
+        let space = open.target.conversation.room.clone();
+        let thread = open.target.conversation.thread.clone();
+        let press = okbot_core::PromptAnswer {
+            prompt: click.prompt.clone(),
+            button: click.button.clone().unwrap_or_default(),
+            values: std::collections::BTreeMap::new(),
+            user: click.user.clone(),
+            conversation: open.target.conversation.clone(),
+            sent: SentRef {
+                target: open.target,
+                message_id: MessageId::new(open.name),
+            },
+        };
+        let reply = sink
+            .launch(press)
+            .await
+            .unwrap_or_else(|| okbot_core::PrivateReply {
+                text: "⌛ This button has expired.".into(),
+                link: None,
+            });
+        let cards = prompt::private_cards(&reply);
+        // Chat refuses private messages in a direct chat, where every message is private. Only
+        // a direct chat the event itself reports gets a plain one: never a space.
+        let sent = if click.place.as_ref().is_some_and(|p| p.direct) {
+            self.api
+                .create_message(&space, None, &reply.text, cards.as_ref())
+                .await
+        } else {
+            self.api
+                .create_private_message(
+                    &space,
+                    thread.as_deref(),
+                    &viewer,
+                    &reply.text,
+                    cards.as_ref(),
+                )
+                .await
+        };
+        if let Err(error) = sent {
+            tracing::warn!(channel = %self.id, %error, "cannot answer an app button");
+        }
     }
 
     /// Handles one event; returns the synchronous answer, if the event needs one.
@@ -279,6 +331,7 @@ impl GChatChannel {
                 sink: OnceLock::new(),
                 prompts: std::sync::Mutex::default(),
                 dialogs: matches!(config.delivery, Delivery::Http { .. }),
+                api: api.clone(),
             }),
             api,
             caps: ChannelCaps {
@@ -296,6 +349,8 @@ impl GChatChannel {
                     cards: true,
                     // Card images need a public URL (ADR 0016).
                     images: false,
+                    // `privateMessageViewer` (app authentication, which okbot uses).
+                    private_reply: true,
                 },
             },
             delivery: config.delivery,

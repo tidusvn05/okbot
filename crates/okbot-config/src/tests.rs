@@ -913,3 +913,35 @@ fn every_reserved_command_name_is_reported_at_once() {
     assert!(error.contains("Reserved names: help, reset,"), "{error}");
     assert!(!error.contains("`status`"), "{error}");
 }
+
+#[test]
+fn apps_section() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = "config_version = 1\n[bot]\nname = \"b\"\n[agent]\nchain = [\"claude\"]\n";
+    let load = |extra: &str| Config::from_text(dir.path(), &format!("{base}{extra}"));
+    let config = load("").unwrap();
+    assert!(config.apps.enabled && config.apps.rules.is_empty());
+    let config = load(
+        "[roles]\nops = []\n[apps]\nsession_idle = \"30d\"\n[apps.tasks]\nroles = [\"ops\"]\n\
+         rooms = [\"discord:main/123\"]\npermissions = [\"me\", \"tasks:read\"]\n\
+         [apps.automations]\ndisabled = true\n",
+    )
+    .unwrap();
+    assert_eq!(config.apps.session_idle.as_deref(), Some("30d"));
+    assert_eq!(config.apps.rules["tasks"].roles, ["ops"]);
+    assert!(config.apps.rules["automations"].disabled);
+    for (bad, says) in [
+        ("[apps.Tasks]\n", "app name"),
+        ("[apps.tasks]\nroles = [\"nobody\"]\n", "not in [roles]"),
+        ("[apps.tasks]\nrooms = [\"discord:main\"]\n", "room"),
+        (
+            "[apps.tasks]\npermissions = [\"shell\"]\n",
+            "unknown permission",
+        ),
+        ("[apps.tasks]\nrole = []\n", "unknown field"),
+        ("[apps]\nsesion_idle = \"1h\"\n", "sesion_idle"),
+    ] {
+        let error = load(bad).unwrap_err().to_string();
+        assert!(error.contains(says), "{bad}: {error}");
+    }
+}

@@ -171,6 +171,24 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX views_by_expiry ON views(expires_at);
     ",
+    // 8: app launch tickets and sessions (ADR 0019); only hashes of their secrets.
+    r"
+    CREATE TABLE app_tickets (
+        hash       TEXT PRIMARY KEY,
+        data       TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX app_tickets_by_expiry ON app_tickets(expires_at);
+    CREATE TABLE app_sessions (
+        handle     TEXT PRIMARY KEY,
+        person     TEXT NOT NULL,
+        data       TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX app_sessions_by_person ON app_sessions(person);
+    CREATE INDEX app_sessions_by_expiry ON app_sessions(expires_at);
+    ",
 ];
 
 /// The schema version this build writes.

@@ -157,6 +157,20 @@ impl InboundSink for Collect {
     ) -> Option<okbot_core::Prompt> {
         self.2.lock().unwrap().iter().find(|p| p.id == id).cloned()
     }
+
+    async fn launch(&self, press: okbot_core::PromptAnswer) -> Option<okbot_core::PrivateReply> {
+        Some(okbot_core::PrivateReply {
+            text: format!("link for {}", press.user.id),
+            link: Some(okbot_core::PromptButton {
+                id: "open".into(),
+                label: "Open ↗".into(),
+                style: okbot_core::ButtonStyle::Primary,
+                form: None,
+                url: Some(format!("https://bot.example.com/apps/#t={}", press.user.id)),
+                launch: false,
+            }),
+        })
+    }
 }
 
 fn message_event(text: &str) -> Value {
@@ -331,6 +345,7 @@ async fn prompts_are_card_buttons() {
         style: okbot_core::ButtonStyle::Primary,
         form: None,
         url: None,
+        launch: false,
     };
     let prompt = okbot_core::Prompt {
         id: "abc123".into(),
@@ -467,6 +482,7 @@ fn interactive_prompt() -> okbot_core::Prompt {
                 fields: vec![field],
             }),
             url: None,
+            launch: false,
         }],
         allowed: Vec::new(),
     }
@@ -615,4 +631,74 @@ async fn pubsub_has_no_forms() {
         channel.prompt(&to, &interactive_prompt()).await,
         Err(okbot_core::ChannelError::Unsupported("forms"))
     ));
+}
+
+#[tokio::test]
+async fn app_buttons_answer_the_presser_privately() {
+    let env = env().await;
+    let channel = Arc::new(GChatChannel::new(config(
+        &env,
+        Delivery::PubSub {
+            subscription: "projects/p/subscriptions/s".into(),
+        },
+    )));
+    let sink = Arc::new(Collect::default());
+    let stop = CancellationToken::new();
+    let run = tokio::spawn({
+        let (c, s, t) = (channel.clone(), sink.clone(), stop.clone());
+        async move { c.run(s, t).await }
+    });
+    let conversation =
+        okbot_core::ConversationKey::room("gchat:corp".parse().unwrap(), "spaces/AAA");
+    let to = ReplyTarget {
+        conversation,
+        in_reply_to: None,
+    };
+    let prompt = okbot_core::Prompt {
+        id: "app1".into(),
+        text: "Tasks".into(),
+        buttons: vec![okbot_core::PromptButton {
+            id: "a1".into(),
+            label: "Open Tasks".into(),
+            style: okbot_core::ButtonStyle::Primary,
+            form: None,
+            url: None,
+            launch: true,
+        }],
+        ..okbot_core::Prompt::default()
+    };
+    channel.prompt(&to, &prompt).await.unwrap();
+    env.fake.pulls.lock().unwrap().push(json!({
+        "type": "CARD_CLICKED", "user": {"name": "users/8", "displayName": "B"},
+        "action": {"actionMethodName": "okp", "parameters": [
+            {"key": "prompt", "value": "app1"}, {"key": "button", "value": "a1"}]},
+        "space": {"name": "spaces/AAA", "spaceType": "SPACE"}}));
+    let mut private = None;
+    for _ in 0..100 {
+        private = env
+            .fake
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.0 == "POST" && c.3.get("privateMessageViewer").is_some())
+            .cloned();
+        if private.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.cancel();
+    run.await.unwrap().unwrap();
+    let private = private.expect("a private message");
+    assert_eq!(private.3["privateMessageViewer"]["name"], "users/8");
+    assert_eq!(
+        private.3["cardsV2"][0]["card"]["sections"][0]["widgets"][0]["buttonList"]["buttons"][0]["onClick"]
+            ["openLink"]["url"],
+        "https://bot.example.com/apps/#t=users/8"
+    );
+    assert!(
+        sink.1.lock().unwrap().is_empty(),
+        "a launch is not an answer"
+    );
 }

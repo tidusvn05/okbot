@@ -139,7 +139,15 @@ impl Shared {
             Some((id, button)) => self.open_for(query, id, button, &user.id, sink).await,
             None => None,
         };
-        let Some((prompt, button, allowed, target, message_id)) = found else {
+        let Some(Found {
+            prompt,
+            button,
+            allowed,
+            launches,
+            target,
+            message_id,
+        }) = found
+        else {
             // An old or foreign button: stop its spinner.
             let _ = self
                 .api
@@ -154,10 +162,7 @@ impl Shared {
                 .await;
             return true;
         }
-        if let Err(error) = self.api.answer_callback(&query.id, None).await {
-            tracing::debug!(channel = %self.id, %error, "answerCallbackQuery failed");
-        }
-        let answer = okbot_core::PromptAnswer {
+        let press = okbot_core::PromptAnswer {
             prompt,
             button,
             values: std::collections::BTreeMap::new(),
@@ -168,11 +173,64 @@ impl Shared {
                 message_id: MessageId::new(message_id.to_string()),
             },
         };
-        sink.answer(answer).await.is_ok()
+        if launches {
+            self.launch(query, press, sink).await;
+            return true;
+        }
+        if let Err(error) = self.api.answer_callback(&query.id, None).await {
+            tracing::debug!(channel = %self.id, %error, "answerCallbackQuery failed");
+        }
+        sink.answer(press).await.is_ok()
     }
 
-    /// The open prompt `id` a press of `button` answers, from memory or else from the sink:
-    /// `(prompt, button, may answer, where, message id)`.
+    /// An app button (ADR 0019). Telegram cannot show a message to one member of a group, so
+    /// the presser's own link goes to their direct chat with the bot; refusals are an alert
+    /// only they see.
+    async fn launch(
+        &self,
+        query: &event::CallbackQuery,
+        press: okbot_core::PromptAnswer,
+        sink: &dyn InboundSink,
+    ) {
+        // A user's direct chat with a bot has the user's id.
+        let direct = press.user.id.as_str().to_string();
+        let reply = sink.launch(press).await;
+        let notice = match reply {
+            None => "⌛ This has expired.".to_string(),
+            Some(okbot_core::PrivateReply { text, link: None }) => text,
+            Some(okbot_core::PrivateReply {
+                text,
+                link: Some(link),
+            }) => {
+                let markup = link.url.as_ref().map(|url| {
+                    serde_json::json!({"inline_keyboard": [[{"text": link.label, "url": url}]]})
+                });
+                let to = api::Destination {
+                    chat_id: &direct,
+                    thread: None,
+                    reply_to: None,
+                };
+                match self
+                    .api
+                    .send_message(to, &text, false, markup.as_ref())
+                    .await
+                {
+                    Ok(_) if query.pressed_in(&direct) => String::new(),
+                    Ok(_) => "📩 I sent you the link in our direct chat.".into(),
+                    Err(error) => {
+                        tracing::info!(channel = %self.id, %error, "cannot send an app link to a direct chat");
+                        "Start a direct chat with me first (open my profile, press Start), then press again.".into()
+                    }
+                }
+            }
+        };
+        let notice = (!notice.is_empty()).then_some(notice);
+        if let Err(error) = self.api.answer_callback(&query.id, notice.as_deref()).await {
+            tracing::debug!(channel = %self.id, %error, "answerCallbackQuery failed");
+        }
+    }
+
+    /// The open prompt `id` a press of `button` answers, from memory or else from the sink.
     async fn open_for(
         &self,
         query: &event::CallbackQuery,
@@ -180,20 +238,19 @@ impl Shared {
         button: &str,
         user: &UserId,
         sink: &dyn InboundSink,
-    ) -> Option<(String, String, bool, ReplyTarget, i64)> {
+    ) -> Option<Found> {
         let check = |open: &prompt::Open| {
             let same_message = query
                 .message
                 .as_ref()
                 .is_none_or(|m| m.message_id == open.message_id);
-            (same_message && open.answers.iter().any(|a| a == button)).then(|| {
-                (
-                    id.to_string(),
-                    button.to_string(),
-                    open.allowed.is_empty() || open.allowed.contains(user),
-                    open.target.clone(),
-                    open.message_id,
-                )
+            (same_message && open.answers.iter().any(|a| a == button)).then(|| Found {
+                prompt: id.to_string(),
+                button: button.to_string(),
+                allowed: open.allowed.is_empty() || open.allowed.contains(user),
+                launches: open.launches.iter().any(|a| a == button),
+                target: open.target.clone(),
+                message_id: open.message_id,
             })
         };
         if let Some(open) = lock(&self.prompts).get(id) {
@@ -287,6 +344,18 @@ fn html_to_plain(html: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// A press on a prompt this channel showed.
+struct Found {
+    prompt: String,
+    button: String,
+    /// The presser may answer it.
+    allowed: bool,
+    /// The button opens an app.
+    launches: bool,
+    target: ReplyTarget,
+    message_id: i64,
+}
+
 /// Where a message to `to` goes.
 fn destination(to: &ReplyTarget) -> api::Destination<'_> {
     let conversation = &to.conversation;
@@ -358,6 +427,8 @@ impl TelegramChannel {
                     forms: false,
                     cards: true,
                     images: true,
+                    // Through the presser's direct chat with the bot (ADR 0019).
+                    private_reply: true,
                 },
             },
             delivery: config.delivery,

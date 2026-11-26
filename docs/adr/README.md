@@ -23,3 +23,5 @@ by a new ADR that supersedes the old one; old ADRs are kept.
 | [0016](0016-chart-images.md) | Chart images: a small PNG renderer for Vietnamese, English and Japanese | Accepted |
 | [0017](0017-views-for-commands-and-notifications.md) | Views and buttons for `[[command]]` results and notifications | Accepted |
 | [0018](0018-reloading-access-lists.md) | Reloading access lists (admins, allow_users, people, roles) without a restart | Accepted |
+| [0019](0019-apps-and-app-sessions.md) | Apps: sandboxed web pages behind chat summaries, opened with launch tickets | Accepted |
+| [0020](0020-app-registry.md) | An app registry in a separate, signed repository | Accepted |

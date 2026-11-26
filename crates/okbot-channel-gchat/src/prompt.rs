@@ -114,6 +114,18 @@ fn card(prompt: &Prompt, index: usize, card: &Card) -> Value {
     json!({"cardId": format!("okp-{}-c{}", prompt.id, index + 1), "card": body})
 }
 
+/// The card of an app button's private reply (ADR 0019): its link button, if any.
+pub(crate) fn private_cards(reply: &okbot_core::PrivateReply) -> Option<Value> {
+    let link = reply.link.as_ref().filter(|b| b.url.is_some())?;
+    let url = link.url.as_deref().unwrap_or_default();
+    Some(json!([{
+        "cardId": "okp-private-open",
+        "card": {"sections": [{"widgets": [{"buttonList": {"buttons": [
+            {"text": link.label, "onClick": {"openLink": {"url": url}}}
+        ]}}]}]},
+    }]))
+}
+
 /// The `cardsV2` list of a prompt: its cards, then its menu and buttons.
 pub(crate) fn cards(prompt: &Prompt) -> Value {
     let mut out: Vec<Value> = prompt
@@ -389,6 +401,7 @@ mod tests {
             style: ButtonStyle::Primary,
             form: None,
             url: Some(url.into()),
+            launch: false,
         }
     }
 
@@ -399,6 +412,7 @@ mod tests {
             style,
             form,
             url: None,
+            launch: false,
         }
     }
 

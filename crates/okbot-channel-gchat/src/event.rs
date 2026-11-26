@@ -88,6 +88,8 @@ pub(crate) struct Place {
     pub(crate) room: String,
     /// The thread, outside direct messages.
     pub(crate) thread: Option<String>,
+    /// A direct message with the app.
+    pub(crate) direct: bool,
 }
 
 /// A press of one of okbot's card buttons, a pick in a prompt's menu or a submitted dialog.
@@ -207,6 +209,7 @@ pub(crate) fn to_click(event: &Value) -> Option<Click> {
             } else {
                 message["thread"]["name"].as_str().map(str::to_string)
             },
+            direct: is_direct(space),
         }),
         _ => None,
     };
@@ -318,6 +321,7 @@ mod tests {
                 message: "spaces/AAA/messages/M9".into(),
                 room: "spaces/AAA".into(),
                 thread: Some("spaces/AAA/threads/T".into()),
+                direct: false,
             })
         );
         assert_eq!(to_click(&pick("")).unwrap().button, None, "the placeholder");

@@ -51,6 +51,7 @@ fn button(id: &str, label: &str, style: ButtonStyle) -> PromptButton {
         style,
         form: None,
         url: None,
+        launch: false,
     }
 }
 

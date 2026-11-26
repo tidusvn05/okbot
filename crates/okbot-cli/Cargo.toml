@@ -49,6 +49,7 @@ okbot-store.workspace = true
 okbot-channel-console.workspace = true
 okbot-config.workspace = true
 okbot-peer.workspace = true
+okbot-apps.workspace = true
 okbot-channel-zalo = { workspace = true, optional = true }
 okbot-channel-gchat = { workspace = true, optional = true }
 okbot-channel-discord = { workspace = true, optional = true }
@@ -60,6 +61,7 @@ jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
+base64.workspace = true
 rand.workspace = true
 reqwest = { workspace = true }
 okbase.workspace = true

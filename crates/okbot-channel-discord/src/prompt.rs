@@ -297,6 +297,39 @@ pub(crate) fn deferred() -> InteractionResponse {
     }
 }
 
+/// Acknowledges a press with a reply only the presser will see, written later (an app button,
+/// ADR 0019: minting the link may take longer than Discord's three seconds).
+pub(crate) fn deferred_private() -> InteractionResponse {
+    InteractionResponse {
+        kind: InteractionResponseType::DeferredChannelMessageWithSource,
+        data: Some(InteractionResponseData {
+            flags: Some(twilight_model::channel::message::MessageFlags::EPHEMERAL),
+            ..InteractionResponseData::default()
+        }),
+    }
+}
+
+/// The link button of a private reply, if any.
+pub(crate) fn private_components(reply: &okbot_core::PrivateReply) -> Vec<Component> {
+    let Some(url) = reply.link.as_ref().and_then(|b| b.url.as_ref()) else {
+        return Vec::new();
+    };
+    let label = reply.link.as_ref().map(|b| b.label.clone());
+    vec![Component::ActionRow(ActionRow {
+        id: None,
+        components: vec![Component::Button(Button {
+            id: None,
+            custom_id: None,
+            disabled: false,
+            emoji: None,
+            label,
+            style: DiscordStyle::Link,
+            url: Some(url.clone()),
+            sku_id: None,
+        })],
+    })]
+}
+
 /// A short reply only the clicker sees.
 pub(crate) fn private_note(text: &str) -> InteractionResponse {
     InteractionResponse {
@@ -360,6 +393,7 @@ mod tests {
                         }],
                     }),
                     url: None,
+                    launch: false,
                 },
                 PromptButton {
                     id: "no".into(),
@@ -367,6 +401,7 @@ mod tests {
                     style: ButtonStyle::Secondary,
                     form: None,
                     url: None,
+                    launch: false,
                 },
             ],
             allowed: vec![],
@@ -416,6 +451,7 @@ mod tests {
                     style: ButtonStyle::Secondary,
                     form: None,
                     url: None,
+                    launch: false,
                 },
                 PromptButton {
                     id: "b2".into(),
@@ -423,6 +459,7 @@ mod tests {
                     style: ButtonStyle::Primary,
                     form: None,
                     url: Some("https://example.com/docs".into()),
+                    launch: false,
                 },
             ],
             allowed: vec![],

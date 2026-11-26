@@ -1,0 +1,16 @@
+name = "tasks"
+title = { en = "Tasks", vi = "Công việc" }
+version = "0.14.0"
+api = 1
+description = { en = "Every to-do, reminder and routine, with filters, done, snooze and pause.", vi = "Tất cả việc cần làm, nhắc nhở và routine, có lọc, đánh dấu xong, hoãn và tạm dừng." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "tasks:read", "tasks:write"]
+
+[[view]]
+path = "/open"
+title = { en = "Open tasks", vi = "Việc chưa xong" }
+params = ["kind"]
+
+[[view]]
+path = "/all"
+title = { en = "All tasks", vi = "Tất cả" }

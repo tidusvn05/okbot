@@ -6,7 +6,7 @@
 //! [`DiscordConfig::message_content`] asks for it. Replies never ping anyone: allowed mentions are
 //! always empty, whatever the agent writes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -476,6 +476,36 @@ impl DiscordChannel {
         }
     }
 
+    /// An app button (ADR 0019): acknowledged at once, then answered with the presser's own
+    /// link, privately.
+    async fn launch(
+        &self,
+        sink: &Arc<dyn InboundSink>,
+        interaction: &Interaction,
+        press: okbot_core::PromptAnswer,
+    ) {
+        self.respond(interaction, &prompt::deferred_private()).await;
+        let reply = sink
+            .launch(press)
+            .await
+            .unwrap_or_else(|| okbot_core::PrivateReply {
+                text: "⌛ This button has expired.".into(),
+                link: None,
+            });
+        let Some(app) = self.app.get() else { return };
+        let components = prompt::private_components(&reply);
+        if let Err(error) = self
+            .http
+            .interaction(*app)
+            .update_response(&interaction.token)
+            .content(Some(&reply.text))
+            .components(Some(&components))
+            .await
+        {
+            tracing::warn!(channel = %self.id, %error, "cannot answer an app button");
+        }
+    }
+
     /// A slash command, or a button press or a submitted modal on one of our prompts. `Err` when the runtime stopped.
     async fn interaction(
         &self,
@@ -546,6 +576,25 @@ impl DiscordChannel {
             .await;
             return Ok(());
         }
+        // An app button: the presser's own link, privately; the prompt stays as it is.
+        let press = |values| okbot_core::PromptAnswer {
+            prompt: prompt_id.to_string(),
+            button: button_id.to_string(),
+            values,
+            user: author.clone(),
+            conversation: conversation.clone(),
+            sent: SentRef {
+                target: ReplyTarget {
+                    conversation: conversation.clone(),
+                    in_reply_to: None,
+                },
+                message_id: MessageId::new(message.id.to_string()),
+            },
+        };
+        if open.button(button_id).is_some_and(|b| b.launch) {
+            self.launch(sink, interaction, press(BTreeMap::new())).await;
+            return Ok(());
+        }
         // Link buttons send nothing; anything else unknown is stale.
         if !open.answers_with(button_id) {
             self.respond(interaction, &prompt::deferred()).await;
@@ -560,21 +609,7 @@ impl DiscordChannel {
             return Ok(());
         }
         self.respond(interaction, &prompt::deferred()).await;
-        sink.answer(okbot_core::PromptAnswer {
-            prompt: prompt_id.to_string(),
-            button: button_id.to_string(),
-            values: values.unwrap_or_default(),
-            user: author,
-            conversation: conversation.clone(),
-            sent: SentRef {
-                target: ReplyTarget {
-                    conversation,
-                    in_reply_to: None,
-                },
-                message_id: MessageId::new(message.id.to_string()),
-            },
-        })
-        .await
+        sink.answer(press(values.unwrap_or_default())).await
     }
 
     /// A chosen slash command: acknowledged at once, then delivered as the text `/name value…`.

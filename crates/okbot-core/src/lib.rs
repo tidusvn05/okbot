@@ -14,6 +14,7 @@
 //! | [`TaskStore`] | okbase integration | the runtime (chat commands, scheduler) |
 //! | [`Renderer`] | Markdown dialect renderer | the runtime |
 //! | [`Peers`] | the peer adapter (ADR 0014) | the runtime (delegation) |
+//! | [`AppDirectory`] | the apps adapter (ADR 0019) | the runtime (app buttons, App API) |
 //! | [`Clock`] | [`SystemClock`], test clocks | everything that reads time |
 //!
 //! # Writing a channel
@@ -55,6 +56,7 @@
 #![deny(missing_docs)]
 
 mod agent;
+mod app;
 mod caps;
 mod channel;
 mod chart;
@@ -76,6 +78,10 @@ pub use agent::{
     AgentBackend, AgentError, AgentProgress, AgentReply, AgentTurn, McpServer, ProgressFn, Resume,
     TokenUsage,
 };
+pub use app::{
+    AppDirectory, AppInfo, AppPermission, AppSource, AppView, MAX_APP_NAME, PrivateReply,
+    localized, valid_app_name,
+};
 pub use caps::{
     AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ReplyMode, ToolPolicy, UiCaps,
 };
@@ -87,7 +93,8 @@ pub use chart::{
 pub use clock::{Clock, SystemClock};
 pub use id::{ChannelId, ConversationKey, IdError, MessageId, RunId, UserId, UserRef};
 pub use knowledge::{
-    KnowledgeContext, KnowledgeError, KnowledgeProvider, Person, Requester, RunGrant, RunInfo,
+    Document, DocumentInfo, KnowledgeContext, KnowledgeError, KnowledgeProvider, Person, Requester,
+    RunGrant, RunInfo,
 };
 pub use memory::{MemoryEntry, MemoryError, MemoryNote, MemoryScope, MemoryStore};
 pub use message::{
@@ -105,9 +112,9 @@ pub use prompt::{
 pub use render::Renderer;
 pub use secret::{Redactor, Secret};
 pub use store::{
-    AgentRunRecord, AutomationRun, ConversationStore, Fire, FireState, MessageRole, NewMessage,
-    PAIRING_MAX_FAILURES, RoleGrant, SealedEntry, StoreError, StoredMessage, ToolCallRecord,
-    ToolDecision, Usage, person_key,
+    AgentRunRecord, AppSessionEntry, AutomationRun, ConversationStore, Fire, FireState,
+    MessageRole, NewMessage, PAIRING_MAX_FAILURES, RoleGrant, SealedEntry, StoreError,
+    StoredMessage, ToolCallRecord, ToolDecision, Usage, person_key,
 };
 pub use task::{
     NewTask, Repeat, Task, TaskChange, TaskError, TaskKind, TaskStatus, TaskStore, format_time,

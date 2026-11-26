@@ -54,6 +54,8 @@ pub(crate) enum Command {
     Disconnect(String),
     /// `/connections`: which accounts are connected.
     Connections,
+    /// `/app [name [view] | sessions | logout]`: open an app (ADR 0019).
+    App(String),
 }
 
 impl Command {
@@ -89,6 +91,7 @@ impl Command {
             "connect" => Some(Self::Connect(rest)),
             "disconnect" => Some(Self::Disconnect(rest)),
             "connections" => Some(Self::Connections),
+            "app" | "apps" => Some(Self::App(rest)),
             _ => None,
         }
     }
@@ -126,6 +129,8 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
             }
         },
         Command::Stop => "Nothing is running.".to_string(),
+        // Sent by dispatch itself: its answer is a view.
+        Command::App(_) => String::new(),
         Command::Remember(_) | Command::Forget(_) | Command::Memories => {
             memory(s, command, event).await
         }
@@ -325,16 +330,34 @@ async fn tasks(s: &Shared, command: Command, event: &InboundEvent) -> String {
                 .enumerate()
                 .map(|(i, t)| format!("{}. {}", i + 1, task_line(t, &tz)))
                 .collect();
-            if shown.is_empty() {
-                "No tasks. Ask me to remind you of something or to add a to-do.".into()
-            } else {
-                format!(
-                    "{}\n\n`/done <number>` finishes one; `/pause` and `/resume` stop and start one.",
-                    shown.join("\n")
-                )
-            }
+            task_summary(&shown, all)
         }
     }
+}
+
+/// Task lines as a reply: the first few, then where the rest is (`/tasks all`, or the app,
+/// which dispatch offers after it).
+fn task_summary(shown: &[String], all: bool) -> String {
+    if shown.is_empty() {
+        return "No tasks. Ask me to remind you of something or to add a to-do.".into();
+    }
+    let total = shown.len();
+    let first = crate::apps::SUMMARY_ITEMS;
+    let summary = !all && total > first;
+    let mut text = String::new();
+    if summary {
+        let _ = writeln!(text, "**{first} of {total} open tasks**");
+        text.push_str(&shown[..first].join("\n"));
+        let _ = write!(
+            text,
+            "\n… and {} more: `/tasks all` lists them here.",
+            total - first
+        );
+    } else {
+        text.push_str(&shown.join("\n"));
+    }
+    text.push_str("\n\n`/done <number>` finishes one; `/pause` and `/resume` stop and start one.");
+    text
 }
 
 /// When a snooze ends: `10m`, `2h`, `1d`, `10 phút`, `2 giờ`, a bare number of minutes, a local
@@ -531,6 +554,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/snooze [10m|2h|15:30]`: remind me again of the last reminder\n\
          - `/pause <number>`, `/resume <number>`: stop or start a task; new routines start paused\n\
          - `/note <text>`: add a line to today's notes\n\
+         - `/app [name]`: open an app with everything at once (tasks, …); `/app logout` signs your browsers out\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/roles`: your roles in this assistant\n\
          - `/help`: this message"

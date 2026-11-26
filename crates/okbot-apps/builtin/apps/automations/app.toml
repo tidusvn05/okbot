@@ -1,0 +1,11 @@
+name = "automations"
+title = { en = "Automations", vi = "Tự động hoá" }
+version = "0.14.0"
+api = 1
+description = { en = "Each automation: its trigger, what it does and its latest runs and errors. For administrators.", vi = "Từng automation: khi nào chạy, làm gì, các lần chạy gần nhất và lỗi. Dành cho admin." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "automations:read"]
+
+[[view]]
+path = "/runs"
+title = { en = "Automations", vi = "Tự động hoá" }

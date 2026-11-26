@@ -1,0 +1,48 @@
+/* okbot App SDK styles (ADR 0019): `<link rel="stylesheet" href="../../sdk/ui.css">`. */
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f8; --fg: #1c1c1f; --muted: #6b6b76; --line: #dedee3; --accent: #4f46e5; --card: #fff;
+  --ok: #15803d; --warn: #b45309;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151518; --fg: #ececf1; --muted: #9a9aa6; --line: #2c2c33; --accent: #8b85ff; --card: #1d1d22; --ok: #4ade80; --warn: #fbbf24; }
+}
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 52rem; padding: 1rem; background: var(--bg); color: var(--fg); }
+header h1 { margin: 0; font-size: 1.35rem; }
+header p { margin: .2rem 0 1rem; color: var(--muted); font-size: .9rem; }
+form { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
+input, select, button {
+  font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .45rem; padding: .4rem .6rem;
+}
+form input[type="search"], form .grow { flex: 1 1 14rem; }
+button { cursor: pointer; }
+button.primary, form button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.message { min-height: 1.2rem; color: var(--muted); font-size: .9rem; margin: .3rem 0; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.list li {
+  background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: .7rem .8rem;
+  display: grid; grid-template-columns: 1fr auto; gap: .3rem .8rem; align-items: start;
+}
+.list li.done .t { text-decoration: line-through; color: var(--muted); }
+.t { font-weight: 600; overflow-wrap: anywhere; }
+.meta { grid-column: 1; color: var(--muted); font-size: .85rem; display: flex; gap: .6rem; flex-wrap: wrap; }
+.meta .late { color: var(--warn); font-weight: 600; }
+.notes { grid-column: 1 / -1; color: var(--muted); font-size: .9rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: .3rem; flex-wrap: wrap; justify-content: flex-end; }
+.actions button { padding: .25rem .55rem; font-size: .85rem; }
+.badge { font-size: .75rem; border: 1px solid var(--line); border-radius: 1rem; padding: 0 .45rem; }
+.more { margin: .8rem auto; display: block; }
+.more[hidden] { display: none; }
+@media (max-width: 36rem) {
+  .list li { grid-template-columns: 1fr; }
+  .actions { grid-row: auto; grid-column: 1; justify-content: flex-start; }
+}
+.list li.single { grid-template-columns: 1fr; }
+.empty { color: var(--muted); text-align: center; padding: 2rem 0; }
+.day { margin: 1rem 0 .4rem; font-size: .85rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.doc { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.ok { color: var(--ok); } .warn { color: var(--warn); }
+a.back { color: var(--accent); cursor: pointer; text-decoration: none; display: inline-block; margin-bottom: .6rem; }
+.list li.click { cursor: pointer; } .list li.click:hover { border-color: var(--accent); }

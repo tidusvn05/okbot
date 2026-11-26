@@ -30,6 +30,14 @@ pub(crate) struct CallbackQuery {
 }
 
 impl CallbackQuery {
+    /// The press came from the chat `chat` (a direct chat has the user's id).
+    pub(crate) fn pressed_in(&self, chat: &str) -> bool {
+        self.message
+            .as_ref()
+            .and_then(|m| m.chat.as_ref())
+            .is_some_and(|c| c.id.to_string() == chat)
+    }
+
     /// Who pressed.
     pub(crate) fn user(&self) -> UserRef {
         UserRef {

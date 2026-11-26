@@ -96,6 +96,54 @@ struct ShowArgs {
     form: Option<FormArgs>,
     #[serde(default)]
     links: Vec<Link>,
+    /// Buttons that open an app's page for whoever presses them (ADR 0019).
+    #[serde(default)]
+    apps: Vec<AppArgs>,
+}
+
+/// An app button as the agent or a program writes it: an installed app and one of its views.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppArgs {
+    #[serde(default)]
+    label: Option<String>,
+    app: String,
+    #[serde(default)]
+    view: Option<String>,
+    #[serde(default)]
+    params: BTreeMap<String, String>,
+}
+
+/// At most this many app buttons per view.
+const MAX_APPS: usize = 2;
+
+impl AppArgs {
+    /// The button, checked for shape; whether the app and view exist is checked against the
+    /// installed apps ([`crate::apps::check_view`]).
+    fn button(self) -> Result<AppButton, String> {
+        if !okbot_core::valid_app_name(&self.app) {
+            return Err(format!("app {:?}: not an app name", self.app));
+        }
+        let view = self.view.unwrap_or_default();
+        if !(view.is_empty() || view.starts_with('/')) || view.len() > 64 {
+            return Err(format!("app view {view:?}: a path such as /open"));
+        }
+        if self.params.len() > 5 {
+            return Err("an app button has at most 5 params".into());
+        }
+        for (k, v) in &self.params {
+            too_long("app param", k, 32)?;
+            too_long("app param value", v, 100)?;
+        }
+        let label = self.label.unwrap_or_default();
+        too_long("app button label", &label, 80)?;
+        Ok(AppButton {
+            label,
+            app: self.app,
+            view,
+            params: self.params,
+        })
+    }
 }
 
 /// A view from a program (ADR 0017): a `[[command]]`'s tool or a notification's caller. No
@@ -116,9 +164,18 @@ struct ViewArgs {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ButtonArgs {
+    #[serde(default)]
     label: String,
     /// `/name args…` of a `[[command]]`.
-    command: String,
+    #[serde(default)]
+    command: Option<String>,
+    /// Or an app to open (ADR 0019), with `view` and `params`.
+    #[serde(default)]
+    app: Option<String>,
+    #[serde(default)]
+    view: Option<String>,
+    #[serde(default)]
+    params: BTreeMap<String, String>,
     #[serde(default)]
     style: Option<ButtonStyle>,
 }
@@ -295,9 +352,25 @@ pub(crate) struct View {
     /// Buttons that run a `[[command]]` (never from the agent).
     #[serde(default)]
     commands: Vec<CommandButton>,
+    /// Buttons that open an app, each presser with their own link (ADR 0019).
+    #[serde(default)]
+    apps: Vec<AppButton>,
     /// Who may press; anyone when empty.
     #[serde(default)]
     allowed: Vec<UserId>,
+}
+
+/// A button that opens a view of an app for whoever presses it (ADR 0019).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AppButton {
+    pub(crate) label: String,
+    /// An installed app.
+    pub(crate) app: String,
+    /// One of its declared views.
+    pub(crate) view: String,
+    /// Parameters the view declares.
+    #[serde(default)]
+    pub(crate) params: BTreeMap<String, String>,
 }
 
 /// A button that runs a `[[command]]` as the person who presses it.
@@ -557,6 +630,23 @@ fn chart_markdown(chart: &Chart) -> String {
 }
 
 /// The command line a button runs: one line, `/name …` of one of `commands`.
+fn check_links(links: &[Link]) -> Result<(), String> {
+    if links.len() > MAX_LINKS {
+        return Err(format!("at most {MAX_LINKS} links"));
+    }
+    for l in links {
+        too_long("link label", &l.label, 80)?;
+        if l.label.trim().is_empty()
+            || !l.url.starts_with("https://")
+            || l.url.len() > 512
+            || l.url.contains(char::is_whitespace)
+        {
+            return Err("links need a label and an https URL".into());
+        }
+    }
+    Ok(())
+}
+
 fn command_line(line: &str, commands: &[McpCommand]) -> Result<String, String> {
     let line = line.trim();
     if line.contains(['\n', '\r']) || line.chars().count() > MAX_COMMAND_LINE {
@@ -598,20 +688,36 @@ impl View {
             ));
         }
         let mut buttons: Vec<CommandButton> = Vec::new();
+        let mut apps = Vec::new();
         for b in args.buttons {
-            if b.label.trim().is_empty() {
-                return Err("button labels must not be empty".into());
+            match (b.command, b.app) {
+                (Some(command), None) => {
+                    if b.label.trim().is_empty() {
+                        return Err("button labels must not be empty".into());
+                    }
+                    too_long("button label", &b.label, 80)?;
+                    if buttons.iter().any(|c| c.label == b.label) {
+                        return Err(format!("button {:?} is listed twice", b.label));
+                    }
+                    buttons.push(CommandButton {
+                        command: command_line(&command, commands)?,
+                        label: b.label,
+                        style: b.style.unwrap_or(ButtonStyle::Secondary),
+                        approval: None,
+                    });
+                }
+                (None, Some(app)) => apps.push(AppArgs {
+                    label: Some(b.label).filter(|l| !l.trim().is_empty()),
+                    app,
+                    view: b.view,
+                    params: b.params,
+                }),
+                _ => {
+                    return Err(
+                        "a button has either `command` (a [[command]]) or `app` (ADR 0019)".into(),
+                    );
+                }
             }
-            too_long("button label", &b.label, 80)?;
-            if buttons.iter().any(|c| c.label == b.label) {
-                return Err(format!("button {:?} is listed twice", b.label));
-            }
-            buttons.push(CommandButton {
-                command: command_line(&b.command, commands)?,
-                label: b.label,
-                style: b.style.unwrap_or(ButtonStyle::Secondary),
-                approval: None,
-            });
         }
         Self::checked(
             ShowArgs {
@@ -621,6 +727,7 @@ impl View {
                 placeholder: None,
                 form: None,
                 links: args.links,
+                apps,
             },
             buttons,
         )
@@ -647,7 +754,46 @@ impl View {
                 style: ButtonStyle::Danger,
                 approval: Some(approval),
             }],
+            apps: Vec::new(),
             allowed,
+        }
+    }
+
+    /// Its app buttons, for [`crate::apps::check_view`] to fill in and check.
+    pub(crate) fn apps_mut(&mut self) -> &mut Vec<AppButton> {
+        &mut self.apps
+    }
+
+    /// A line and links to open, as link buttons where the platform has them.
+    pub(crate) fn links(text: String, links: Vec<(String, String)>) -> Self {
+        Self {
+            text,
+            cards: Vec::new(),
+            choices: Vec::new(),
+            placeholder: None,
+            form: None,
+            links: links
+                .into_iter()
+                .map(|(label, url)| Link { label, url })
+                .collect(),
+            commands: Vec::new(),
+            apps: Vec::new(),
+            allowed: Vec::new(),
+        }
+    }
+
+    /// A line and a button that opens an app for whoever presses it (ADR 0019).
+    pub(crate) fn app(text: String, button: AppButton) -> Self {
+        Self {
+            text,
+            cards: Vec::new(),
+            choices: Vec::new(),
+            placeholder: None,
+            form: None,
+            links: Vec::new(),
+            commands: Vec::new(),
+            apps: vec![button],
+            allowed: Vec::new(),
         }
     }
 
@@ -719,19 +865,15 @@ impl View {
             too_long("placeholder", p, 150)?;
         }
         let form = args.form.map(ViewForm::from_args).transpose()?;
-        if args.links.len() > MAX_LINKS {
-            return Err(format!("at most {MAX_LINKS} links"));
+        if args.apps.len() > MAX_APPS {
+            return Err(format!("at most {MAX_APPS} app buttons"));
         }
-        for l in &args.links {
-            too_long("link label", &l.label, 80)?;
-            if l.label.trim().is_empty()
-                || !l.url.starts_with("https://")
-                || l.url.len() > 512
-                || l.url.contains(char::is_whitespace)
-            {
-                return Err("links need a label and an https URL".into());
-            }
-        }
+        let apps = args
+            .apps
+            .into_iter()
+            .map(AppArgs::button)
+            .collect::<Result<Vec<_>, _>>()?;
+        check_links(&args.links)?;
         let view = Self {
             text: args.text.trim().to_string(),
             cards,
@@ -740,6 +882,7 @@ impl View {
             form,
             links: args.links,
             commands,
+            apps,
             allowed: Vec::new(),
         };
         if view.text.is_empty()
@@ -748,6 +891,7 @@ impl View {
             && view.form.is_none()
             && view.links.is_empty()
             && view.commands.is_empty()
+            && view.apps.is_empty()
         {
             return Err("nothing to show".into());
         }
@@ -839,6 +983,21 @@ impl View {
         }
     }
 
+    /// App buttons where the platform cannot answer a presser privately: the command that gets a
+    /// link in a direct chat.
+    fn apps_markdown(&self) -> String {
+        self.apps
+            .iter()
+            .map(|a| {
+                format!(
+                    "- {}: send `/app {}` to me in a direct chat",
+                    a.label, a.app
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn links_markdown(&self) -> String {
         self.links
             .iter()
@@ -854,6 +1013,7 @@ impl View {
         blocks.push(self.choices_markdown());
         blocks.extend(self.form.iter().map(Self::form_markdown));
         blocks.push(self.commands_markdown());
+        blocks.push(self.apps_markdown());
         blocks.push(self.links_markdown());
         join(blocks)
     }
@@ -943,6 +1103,7 @@ struct Native {
     form: bool,
     links: bool,
     commands: bool,
+    apps: bool,
 }
 
 impl Native {
@@ -950,10 +1111,13 @@ impl Native {
         let links = ui.buttons && !view.links.is_empty();
         let form = ui.buttons && ui.forms && view.form.is_some();
         let commands = ui.buttons && !view.commands.is_empty();
+        // A press must be answered to the presser alone: their link is theirs.
+        let apps = ui.buttons && ui.private_reply && !view.apps.is_empty();
         let n = view.choices.len();
         let extra = if links { view.links.len() } else { 0 }
             + usize::from(form)
-            + if commands { view.commands.len() } else { 0 };
+            + if commands { view.commands.len() } else { 0 }
+            + if apps { view.apps.len() } else { 0 };
         let buttons = ui.buttons && n > 0 && n + extra <= okbot_core::MAX_BUTTONS;
         Self {
             cards: ui.cards && !view.cards.is_empty(),
@@ -962,11 +1126,18 @@ impl Native {
             form,
             links,
             commands,
+            apps,
         }
     }
 
     fn any(self) -> bool {
-        self.cards || self.buttons || self.select || self.form || self.links || self.commands
+        self.cards
+            || self.buttons
+            || self.select
+            || self.form
+            || self.links
+            || self.commands
+            || self.apps
     }
 }
 
@@ -994,6 +1165,9 @@ fn build(
     } else {
         view.commands_markdown()
     });
+    if !native.apps {
+        text.push(view.apps_markdown());
+    }
     if !native.links {
         text.push(view.links_markdown());
     }
@@ -1060,6 +1234,7 @@ fn actions(prompt: &mut Prompt, view: &View, native: Native) {
                 style: c.style,
                 form: None,
                 url: None,
+                launch: false,
             }));
     }
     if native.select {
@@ -1084,6 +1259,7 @@ fn actions(prompt: &mut Prompt, view: &View, native: Native) {
             style: ButtonStyle::Primary,
             form: Some(f.form.clone()),
             url: None,
+            launch: false,
         });
     }
     if native.commands {
@@ -1095,6 +1271,19 @@ fn actions(prompt: &mut Prompt, view: &View, native: Native) {
                 style: c.style,
                 form: None,
                 url: None,
+                launch: false,
+            }));
+    }
+    if native.apps {
+        prompt
+            .buttons
+            .extend(view.apps.iter().enumerate().map(|(i, a)| PromptButton {
+                id: format!("a{}", i + 1),
+                label: a.label.clone(),
+                style: ButtonStyle::Primary,
+                form: None,
+                url: None,
+                launch: true,
             }));
     }
     if native.links {
@@ -1106,6 +1295,7 @@ fn actions(prompt: &mut Prompt, view: &View, native: Native) {
                 style: ButtonStyle::Secondary,
                 form: None,
                 url: Some(l.url.clone()),
+                launch: false,
             }));
     }
 }
@@ -1122,6 +1312,9 @@ struct State {
     /// What each command button runs.
     #[serde(default)]
     commands: BTreeMap<String, CommandButton>,
+    /// What each app button opens.
+    #[serde(default)]
+    apps: BTreeMap<String, AppButton>,
     conversation: ConversationKey,
     is_direct: bool,
     sent: SentRef,
@@ -1239,11 +1432,18 @@ async fn show(
         .enumerate()
         .map(|(i, c)| (format!("c{}", i + 1), c.clone()))
         .collect();
+    let apps = view
+        .apps
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (format!("a{}", i + 1), a.clone()))
+        .collect();
     let state = State {
         form: view.form.as_ref().map(|f| f.form.clone()),
         prompt,
         labels,
         commands,
+        apps,
         conversation: to.conversation.clone(),
         is_direct,
         sent,
@@ -1286,6 +1486,29 @@ pub(crate) async fn lookup(
                 && s.conversation.room == conversation.room
         })
         .map(|s| s.prompt)
+}
+
+/// The app button pressed in `answer`, with where its view is and whether that is a direct chat.
+/// The view stays: every presser gets their own link (ADR 0019).
+pub(crate) async fn launch_target(
+    shared: &Shared,
+    answer: &PromptAnswer,
+) -> Option<(AppButton, ConversationKey, bool)> {
+    let data = shared
+        .store
+        .view(&answer.prompt, shared.clock.now())
+        .await
+        .ok()
+        .flatten()?;
+    let state = serde_json::from_str::<State>(&data).ok()?;
+    if state.conversation.channel != answer.conversation.channel
+        || state.conversation.room != answer.conversation.room
+        || !state.prompt.may_answer(&answer.user.id)
+    {
+        return None;
+    }
+    let button = state.apps.get(&answer.button)?.clone();
+    Some((button, state.conversation, state.is_direct))
 }
 
 /// The clicker's next message: `→ ` and the choice, or the form's title and values. The arrow
@@ -1442,7 +1665,8 @@ async fn close(shared: &Shared, state: &State, outcome: &str) {
     let mut prompt = state.prompt.clone();
     prompt.text = join(vec![prompt.text, outcome.join("\n")]);
     prompt.select = None;
-    prompt.buttons.retain(|b| b.url.is_some());
+    // Links and app buttons stay: they open something for whoever presses, and decide nothing.
+    prompt.buttons.retain(|b| b.url.is_some() || b.launch);
     if let Err(error) = channel.update_prompt(&state.sent, &prompt).await {
         tracing::warn!(%error, "cannot close a view");
     }
@@ -1516,7 +1740,16 @@ fn tools() -> Value {
                     "required": ["title", "fields"]},
                 "links": {"type": "array", "maxItems": MAX_LINKS, "items": {"type": "object",
                     "properties": {"label": {"type": "string"}, "url": {"type": "string"}},
-                    "required": ["label", "url"]}}
+                    "required": ["label", "url"]}},
+                "apps": {"type": "array", "maxItems": MAX_APPS,
+                    "description": "Buttons that open one of the apps listed in your instructions; each person who presses gets their own sign-in link. Never write app URLs yourself.",
+                    "items": {"type": "object",
+                    "properties": {
+                        "app": {"type": "string"},
+                        "view": {"type": "string", "description": "One of the app's views, such as /open."},
+                        "label": {"type": "string"},
+                        "params": {"type": "object", "additionalProperties": {"type": "string"}}},
+                    "required": ["app"]}}
             }
         },
         "annotations": {"readOnlyHint": true}
@@ -1618,7 +1851,8 @@ pub(crate) async fn post(shared: &Shared, grant: &Grant, shown: &Shown, body: &[
 fn call_show(shared: &Shared, grant: &Grant, shown: &Shown, args: Value) -> Result<String, String> {
     let args: ShowArgs =
         serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
-    let view = View::from_args(args)?;
+    let mut view = View::from_args(args)?;
+    crate::apps::check_view(shared, &grant.event, &mut view)?;
     // Checked against this platform now, so the agent can still fix it.
     if let Some(channel) = shared.channels.get(&grant.event.conversation.channel)
         && let Some(prompt) = build(shared.renderer.as_ref(), &view, channel.caps(), None).prompt
@@ -1872,6 +2106,7 @@ mod tests {
                     approval: None,
                 },
             )]),
+            apps: BTreeMap::new(),
             form: view.form.as_ref().map(|f| f.form.clone()),
             prompt,
             conversation: key.clone(),
@@ -2101,5 +2336,68 @@ mod tests {
             refused.contains("not a [[command]] this view may run"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn app_buttons_need_private_replies() {
+        let view = View::app(
+            "-# Tasks: everything.".into(),
+            AppButton {
+                label: "Open Tasks".into(),
+                app: "tasks".into(),
+                view: "/open".into(),
+                params: BTreeMap::new(),
+            },
+        );
+        let private = UiCaps {
+            buttons: true,
+            private_reply: true,
+            ..UiCaps::default()
+        };
+        let prompt = build(&renderer(), &view, &caps(private), None)
+            .prompt
+            .expect("a prompt");
+        let button = &prompt.buttons[0];
+        assert!(button.launch && button.url.is_none(), "{button:?}");
+        assert!(prompt.is_answerable(), "kept, so presses find it");
+        let public = UiCaps {
+            buttons: true,
+            ..UiCaps::default()
+        };
+        let built = build(&renderer(), &view, &caps(public), None);
+        assert!(built.prompt.is_none(), "no button everyone would share");
+        let text: String = built.lead.iter().map(|m| m.text.clone()).collect();
+        assert!(text.contains("/app tasks"), "{text}");
+        assert!(
+            view.markdown().contains("/app tasks"),
+            "the history says how to open it"
+        );
+    }
+
+    #[test]
+    fn the_agent_names_apps_never_urls() {
+        let view =
+            args(json!({"text": "12 open tasks", "apps": [{"app": "tasks", "view": "/all"}]}))
+                .unwrap();
+        assert_eq!(view.apps.len(), 1);
+        assert_eq!(view.apps[0].view, "/all");
+        assert!(
+            args(json!({"apps": [{"app": "Tasks"}]})).is_err(),
+            "not an app name"
+        );
+        assert!(args(json!({"apps": [{"app": "tasks", "view": "all"}]})).is_err());
+        assert!(args(json!({"apps": [{"app": "tasks", "url": "https://x"}]})).is_err());
+        assert!(
+            args(json!({"apps": [{"app": "a"}, {"app": "b"}, {"app": "c"}]})).is_err(),
+            "at most two"
+        );
+        let commands = Vec::new();
+        let program = View::from_json(
+            json!({"buttons": [{"label": "Board", "app": "tasks", "params": {"kind": "todo"}}]}),
+            &commands,
+        )
+        .unwrap();
+        assert_eq!(program.apps[0].params["kind"], "todo");
+        assert!(View::from_json(json!({"buttons": [{"label": "x"}]}), &commands).is_err());
     }
 }

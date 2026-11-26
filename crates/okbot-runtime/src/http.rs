@@ -262,6 +262,14 @@ fn oauth_and_automation_routes(
     router
 }
 
+/// The apps' shell and files (taken once: one server serves them).
+fn apps_routes(apps: &crate::apps::Apps) -> Option<Router> {
+    apps.routes
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+}
+
 /// Binds and returns the server future, which ends when `stop` is cancelled.
 pub(crate) async fn serve(
     options: HttpOptions,
@@ -280,7 +288,13 @@ pub(crate) async fn serve(
         addr
     };
     let _ = shared.interact_url.set(format!("http://{local}/interact"));
-    let app = router(&shared, options.max_body, Some(sink));
+    if let Some(apps) = &shared.apps {
+        let _ = apps.loopback.set(format!("http://{local}"));
+    }
+    let mut app = router(&shared, options.max_body, Some(sink));
+    if let Some(routes) = shared.apps.as_ref().and_then(apps_routes) {
+        app = crate::app_api::routes(app, &shared).merge(routes);
+    }
     Ok(async move {
         if let Err(error) = axum::serve(listener, app)
             .with_graceful_shutdown(async move { stop.cancelled().await })
@@ -386,6 +400,7 @@ mod tests {
             oauth: None,
             peers: None,
             sink: std::sync::OnceLock::new(),
+            apps: None,
         })
     }
 

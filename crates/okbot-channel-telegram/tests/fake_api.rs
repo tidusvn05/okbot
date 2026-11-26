@@ -165,6 +165,23 @@ impl InboundSink for Collect {
     ) -> Option<okbot_core::Prompt> {
         self.2.lock().unwrap().iter().find(|p| p.id == id).cloned()
     }
+
+    async fn launch(&self, press: okbot_core::PromptAnswer) -> Option<okbot_core::PrivateReply> {
+        Some(okbot_core::PrivateReply {
+            text: "Your own link".into(),
+            link: Some(okbot_core::PromptButton {
+                id: "open".into(),
+                label: "Open ↗".into(),
+                style: okbot_core::ButtonStyle::Primary,
+                form: None,
+                url: Some(format!(
+                    "https://bot.example.com/apps/#t=for-{}",
+                    press.user.id
+                )),
+                launch: false,
+            }),
+        })
+    }
 }
 
 #[expect(
@@ -487,6 +504,7 @@ async fn prompts_use_inline_buttons() {
         style: okbot_core::ButtonStyle::Primary,
         form,
         url: None,
+        launch: false,
     };
     let mut prompt = okbot_core::Prompt {
         id: "abc123".into(),
@@ -572,6 +590,7 @@ fn size_prompt() -> okbot_core::Prompt {
                 style: okbot_core::ButtonStyle::Secondary,
                 form: None,
                 url: None,
+                launch: false,
             },
             okbot_core::PromptButton {
                 id: "b2".into(),
@@ -579,6 +598,7 @@ fn size_prompt() -> okbot_core::Prompt {
                 style: okbot_core::ButtonStyle::Primary,
                 form: None,
                 url: Some("https://example.com/sizes".into()),
+                launch: false,
             },
         ],
         select: Some(okbot_core::Select {
@@ -866,4 +886,75 @@ async fn a_failed_photo_is_an_error() {
         calls(&fake, "sendMessage").is_empty(),
         "the runtime decides what to send"
     );
+}
+
+#[tokio::test]
+async fn app_buttons_send_the_link_to_the_pressers_direct_chat() {
+    let (fake, base) = fake_api().await;
+    let channel = Arc::new(TelegramChannel::new(config(
+        &base,
+        Delivery::Polling {
+            timeout: Duration::from_secs(1),
+        },
+    )));
+    let sink = Arc::new(Collect::default());
+    let stop = CancellationToken::new();
+    let run = tokio::spawn({
+        let (channel, sink, stop) = (channel.clone(), sink.clone(), stop.clone());
+        async move { channel.run(sink, stop).await }
+    });
+    wait_for(|| !calls(&fake, "getUpdates").is_empty()).await;
+    let to = ReplyTarget {
+        conversation: okbot_core::ConversationKey::room("telegram:shop".parse().unwrap(), "-1001"),
+        in_reply_to: None,
+    };
+    let prompt = okbot_core::Prompt {
+        id: "vapp".into(),
+        text: "Tasks".into(),
+        buttons: vec![okbot_core::PromptButton {
+            id: "a1".into(),
+            label: "Open Tasks".into(),
+            style: okbot_core::ButtonStyle::Primary,
+            form: None,
+            url: None,
+            launch: true,
+        }],
+        ..okbot_core::Prompt::default()
+    };
+    channel.prompt(&to, &prompt).await.unwrap();
+    fake.updates
+        .lock()
+        .unwrap()
+        .push_back(json!({"update_id": 30, "callback_query": {
+            "id": "q30",
+            "from": {"id": 8, "is_bot": false, "first_name": "Bob"},
+            "message": {"message_id": 77, "date": 1, "chat": {"id": -1001, "type": "supergroup"}},
+            "data": "okp:vapp:a1",
+        }}));
+    wait_for(|| !calls(&fake, "answerCallbackQuery").is_empty()).await;
+    let sent = calls(&fake, "sendMessage");
+    let dm = sent
+        .iter()
+        .find(|m| m["chat_id"] == 8)
+        .expect("a direct message");
+    assert_eq!(
+        dm["reply_markup"]["inline_keyboard"][0][0]["url"],
+        "https://bot.example.com/apps/#t=for-8"
+    );
+    assert!(
+        sent.iter()
+            .all(|m| m["chat_id"] != -1001 || m["text"] == "Tasks"),
+        "no link in the group"
+    );
+    let notice = &calls(&fake, "answerCallbackQuery")[0];
+    assert!(
+        notice["text"].as_str().unwrap().contains("direct chat"),
+        "{notice}"
+    );
+    assert!(
+        sink.1.lock().unwrap().is_empty(),
+        "a launch is not an answer"
+    );
+    stop.cancel();
+    run.await.unwrap().unwrap();
 }

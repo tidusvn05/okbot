@@ -156,6 +156,14 @@ pub(crate) async fn post(shared: &Shared, name: &str, bearer: Option<&str>, body
             Err(error) => return Reply::error(StatusCode::BAD_REQUEST, format!("view: {error}")),
         },
     };
+    // App buttons name installed apps (ADR 0019); each presser's access is checked at the press.
+    let view = match view {
+        Some(mut view) => match crate::apps::check_apps(shared, &mut view) {
+            Ok(()) => Some(view),
+            Err(error) => return Reply::error(StatusCode::BAD_REQUEST, format!("view: {error}")),
+        },
+        None => None,
+    };
     if request.text.trim().is_empty() && view.is_none() {
         return Reply::error(StatusCode::BAD_REQUEST, "text is empty");
     }
@@ -523,6 +531,7 @@ mod tests {
             oauth: None,
             peers: None,
             sink: std::sync::OnceLock::new(),
+            apps: None,
         };
         Setup {
             shared,

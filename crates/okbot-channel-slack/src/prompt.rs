@@ -172,6 +172,31 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// The blocks of an app button's private reply (ADR 0019): its text and its link button.
+pub(crate) fn private_blocks(reply: &okbot_core::PrivateReply) -> Value {
+    let mut blocks = vec![json!({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": reply.text},
+    })];
+    if let Some((label, url)) = reply
+        .link
+        .as_ref()
+        .and_then(|b| Some((b.label.as_str(), b.url.as_deref()?)))
+    {
+        blocks.push(json!({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": plain(label, 75),
+                "url": url,
+                "style": "primary",
+                "action_id": format!("{LINK}:private:open"),
+            }],
+        }));
+    }
+    Value::Array(blocks)
+}
+
 /// What a `block_actions` press means.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Press<'a> {
@@ -346,6 +371,7 @@ mod tests {
             style,
             form: None,
             url: None,
+            launch: false,
         }
     }
 
@@ -604,5 +630,31 @@ mod tests {
         );
         assert!(target.conversation.thread.is_none());
         assert!(located(&channel, &json!({})).is_none());
+    }
+
+    #[test]
+    fn private_replies_carry_their_link() {
+        let reply = okbot_core::PrivateReply {
+            text: "Tasks: your own link".into(),
+            link: Some(okbot_core::PromptButton {
+                id: "open".into(),
+                label: "Open Tasks ↗".into(),
+                style: ButtonStyle::Primary,
+                form: None,
+                url: Some("https://bot.example.com/apps/#t=x".into()),
+                launch: false,
+            }),
+        };
+        let blocks = private_blocks(&reply);
+        assert_eq!(blocks[0]["text"]["text"], "Tasks: your own link");
+        assert_eq!(
+            blocks[1]["elements"][0]["url"],
+            "https://bot.example.com/apps/#t=x"
+        );
+        let refused = okbot_core::PrivateReply {
+            text: "You may not open Tasks.".into(),
+            link: None,
+        };
+        assert_eq!(private_blocks(&refused).as_array().unwrap().len(), 1);
     }
 }

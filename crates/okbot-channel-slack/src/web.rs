@@ -166,9 +166,25 @@ impl SlackWeb {
         thread_ts: Option<&str>,
         text: &str,
     ) -> Result<(), SlackError> {
+        self.post_ephemeral_blocks(channel, user, thread_ts, text, None)
+            .await
+    }
+
+    /// `chat.postEphemeral` with Block Kit `blocks` (`text` is the notification fallback).
+    pub async fn post_ephemeral_blocks(
+        &self,
+        channel: &str,
+        user: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+        blocks: Option<&Value>,
+    ) -> Result<(), SlackError> {
         let mut body = json!({ "channel": channel, "user": user, "text": text });
         if let Some(ts) = thread_ts {
             body["thread_ts"] = json!(ts);
+        }
+        if let Some(blocks) = blocks {
+            body["blocks"] = blocks.clone();
         }
         self.call("chat.postEphemeral", &self.bot_token, &body)
             .await

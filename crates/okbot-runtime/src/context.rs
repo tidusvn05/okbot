@@ -46,6 +46,8 @@ pub(crate) struct PromptInput<'a> {
     pub(crate) peer: Option<&'a str>,
     /// The agent may show cards, buttons, menus and forms (ADR 0015).
     pub(crate) interactive: bool,
+    /// The apps its views may open here (ADR 0019), as a line for the prompt.
+    pub(crate) apps: Option<&'a str>,
 }
 
 /// The system prompt and the conversation prompt.
@@ -164,7 +166,14 @@ pub(crate) fn build(input: &PromptInput<'_>) -> Prompt {
     section(&mut system, "rules", &format!("{RULES}{tools}"));
     section(&mut system, "format", &format_rules(input.caps));
     if input.interactive {
-        section(&mut system, "interactive", crate::ui::PROMPT_NOTE);
+        match input.apps {
+            Some(apps) => section(
+                &mut system,
+                "interactive",
+                &format!("{}\n\n{apps}", crate::ui::PROMPT_NOTE),
+            ),
+            None => section(&mut system, "interactive", crate::ui::PROMPT_NOTE),
+        }
     }
     section(&mut system, "knowledge", &input.knowledge.catalog);
     if let Some(excerpts) = input.excerpts {
@@ -274,6 +283,7 @@ mod tests {
             not_connected: &[],
             peer: None,
             interactive: false,
+            apps: None,
         }
     }
 

@@ -318,6 +318,20 @@ impl FakeChannel {
         sink.answer(answer).await.expect("runtime accepts answers");
     }
 
+    /// Presses an app button (ADR 0019) as `press.user`; returns what only they would see.
+    pub async fn launch(
+        &self,
+        press: okbot_core::PromptAnswer,
+    ) -> Option<okbot_core::PrivateReply> {
+        let sink = self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("the runtime started this channel");
+        sink.launch(press).await
+    }
+
     /// Asks the runtime for an open prompt, as a channel that restarted would.
     pub async fn recover(
         &self,

@@ -554,6 +554,7 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
     check_slack(&config, &mut r).await;
     check_telegram(&config, &mut r).await;
     check_bridge(&config, &mut r);
+    check_apps(&config, &mut r);
     let state = config.state_dir();
     match std::fs::create_dir_all(&state).and_then(|()| {
         okbot_store::SqliteStore::open(&state.join("okbot.db")).map_err(std::io::Error::other)
@@ -583,6 +584,59 @@ async fn check_bot(dir: &std::path::Path, args: &DoctorArgs) -> (String, Report)
         Err(error) => r.add("state", Status::Fail, error.to_string()),
     }
     (config.bot.name.clone(), r)
+}
+
+/// Apps (ADR 0019): where browsers open them, and installed apps that are not served.
+fn check_apps(config: &Config, r: &mut Report) {
+    use okbot_core::AppDirectory as _;
+    if !config.apps.enabled {
+        return;
+    }
+    if let Err(error) = crate::bot::apps_config(config) {
+        r.add("apps", Status::Fail, format!("{error:#}"));
+        return;
+    }
+    let catalog = okbot_apps::Catalog::new(Some(config.dir.join("apps")));
+    let names: Vec<String> = catalog.apps().into_iter().map(|a| a.name).collect();
+    match &config.http.public_url {
+        Some(url) => r.add(
+            "apps",
+            Status::Ok,
+            format!("{} at {url}/apps/", names.join(", ")),
+        ),
+        // Not a fault: many bots have no public address, and chat keeps its text lists.
+        None => r.add(
+            "apps",
+            Status::Ok,
+            "only in `okbot chat`: without [http] public_url chat shows no Open buttons",
+        ),
+    }
+    for name in config.apps.rules.keys() {
+        if !names.contains(name) {
+            r.add(
+                "apps",
+                Status::Warn,
+                format!("[apps.{name}]: no such app is installed"),
+            );
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(config.dir.join("apps")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !entry.path().is_dir() {
+            continue;
+        }
+        let source = okbot_apps::source_of(&entry.path());
+        if let Err(error) = okbot_apps::check_folder(&entry.path(), source) {
+            r.add(
+                "apps",
+                Status::Fail,
+                format!("apps/{name} is not served: {error}"),
+            );
+        }
+    }
 }
 
 /// The git work tree that contains `dir`, if any (a `.git` directory or file in an ancestor).

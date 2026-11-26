@@ -1,0 +1,15 @@
+name = "schedule"
+title = { en = "Schedule", vi = "Lịch" }
+version = "0.14.0"
+api = 1
+description = { en = "Reminders and routine runs of the coming days, repeats included; automation times for administrators.", vi = "Nhắc nhở và routine trong những ngày tới, kể cả lặp lại; giờ chạy automation cho admin." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "schedule:read", "tasks:read", "tasks:write"]
+
+[[view]]
+path = "/week"
+title = { en = "Next 7 days", vi = "7 ngày tới" }
+
+[[view]]
+path = "/month"
+title = { en = "Next 30 days", vi = "30 ngày tới" }

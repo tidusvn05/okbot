@@ -160,6 +160,10 @@ fn runtime_config(
             config.mcp.push(extra);
         }
         config.commands = crate::bot::commands(&bot)?;
+        // The terminal opens apps on this machine's loopback listener, not the public address
+        // the bot's server answers on.
+        config.apps = crate::bot::apps_config(&bot)?;
+        config.apps.public_url = None;
         // The terminal user may delegate to the bot's teams (ADR 0014).
         config.teams = crate::bot::team_policies(&bot);
         for team in &mut config.teams {
@@ -220,15 +224,35 @@ async fn knowledge(
 }
 
 /// Where to serve okbot's HTTP endpoints, if anywhere.
+fn loopback_apps(bot: Option<&okbot_config::Config>) -> Option<okbot_apps::Catalog> {
+    bot.and_then(crate::bot::apps).map(|(catalog, _)| catalog)
+}
+
+/// Apps on the loopback listener: the frame policy's `'self'` covers it.
+fn with_loopback_apps(
+    builder: okbot_runtime::RuntimeBuilder,
+    apps: Option<okbot_apps::Catalog>,
+) -> okbot_runtime::RuntimeBuilder {
+    match apps {
+        Some(catalog) => {
+            let routes = okbot_apps::router(catalog.clone(), None);
+            builder.apps(Arc::new(catalog), routes)
+        }
+        None => builder,
+    }
+}
+
 fn http_addr(args: &ChatArgs, bot: Option<&okbot_config::Config>) -> Option<SocketAddr> {
     let signed = bot.is_some_and(|b| {
         b.mcp
             .iter()
             .any(|m| m.auth == okbot_config::McpAuth::Signed)
     });
-    // Signed MCP servers show prompts through POST /interact: a loopback port is enough.
+    // Signed MCP servers show prompts through POST /interact, and apps open in a browser on this
+    // machine: a loopback port is enough.
+    let apps = bot.is_some_and(|b| b.apps.enabled);
     args.http
-        .or_else(|| signed.then(|| SocketAddr::from(([127, 0, 0, 1], 0))))
+        .or_else(|| (signed || apps).then(|| SocketAddr::from(([127, 0, 0, 1], 0))))
 }
 
 /// The console: with line editing in an interactive terminal, plain lines otherwise (scripts).
@@ -334,7 +358,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     };
     let console = Arc::new(console(options, &state_dir)?);
     let closed = console.closed();
-    let http = http_addr(&args, bot.as_ref());
+    let (http, apps) = (http_addr(&args, bot.as_ref()), loopback_apps(bot.as_ref()));
     let connector = connector(bot.as_ref()).await?;
     let peers = peers(bot.as_ref(), store.clone()).await?;
     let charts = bot.as_ref().map(crate::bot::charts).transpose()?.flatten();
@@ -354,7 +378,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
             .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
     }
     if let Some(addr) = http {
-        builder = builder.http(HttpOptions::new(addr));
+        builder = with_loopback_apps(builder, apps).http(HttpOptions::new(addr));
     }
     if let Some(connector) = connector {
         builder = builder.oauth(connector);

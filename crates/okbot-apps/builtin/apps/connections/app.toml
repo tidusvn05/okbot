@@ -1,0 +1,11 @@
+name = "connections"
+title = { en = "Accounts", vi = "Tài khoản" }
+version = "0.14.0"
+api = 1
+description = { en = "Your accounts connected to the bot's services (Gmail, Notion, …), never their tokens.", vi = "Tài khoản của bạn đã kết nối với các dịch vụ của bot (Gmail, Notion, …), không bao giờ hiện token." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "connections:read"]
+
+[[view]]
+path = "/accounts"
+title = { en = "Connected accounts", vi = "Tài khoản đã kết nối" }

@@ -381,3 +381,33 @@ async fn linked_accounts_share_personal_memory() {
         .collect();
     assert!(!texts.iter().any(|t| t.contains("cà phê")), "{texts:?}");
 }
+
+/// Apps list and read documents (ADR 0019) through the same scope as the agent.
+#[tokio::test]
+async fn apps_see_documents_only_within_the_scope() {
+    let (_dir, k) = open(false);
+    let lan = who("u1", "r1");
+    let minh = who("u2", "r1");
+    let lan_notes = k
+        .note(&lan, MemoryScope::User, "Gặp anh Minh về dự án X")
+        .await
+        .unwrap();
+    k.note(&minh, MemoryScope::User, "Minh's own note")
+        .await
+        .unwrap();
+    let mine = k.documents(&lan, "notes/", None, 50).await.unwrap();
+    assert_eq!(mine.len(), 1, "{mine:?}");
+    assert_eq!(mine[0].id, lan_notes);
+    let read = k.document(&lan, &lan_notes).await.unwrap().unwrap();
+    assert!(read.text.contains("dự án X"), "{}", read.text);
+    assert!(
+        k.document(&minh, &lan_notes).await.unwrap().is_none(),
+        "another person's notes do not exist for them"
+    );
+    let shared = k.documents(&minh, "", Some("okbot"), 50).await.unwrap();
+    assert!(
+        shared
+            .iter()
+            .all(|d| !d.id.starts_with("notes/users/zalo-shop/u1"))
+    );
+}

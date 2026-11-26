@@ -117,3 +117,31 @@ jobs:
           if HOME="$PWD/home" OKBOT_DOWNLOAD_URL="file://$PWD/rel" sh install.sh --version v0.0.0; then
             echo "::error::a tampered archive was installed"; exit 1
           fi
+
+  apps-browser:
+    # The built-in apps in real browser engines (ADR 0019): sign-in from the `#t=` fragment,
+    # the sandboxed frame under its CSP, the SDK bridge and the shell's confirm dialog.
+    # WebKit is the engine of iOS in-app browsers (Zalo, Telegram, Discord on iPhone).
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p okbot
+      # A venv: the runner's Python is externally managed (PEP 668).
+      - run: python3 -m venv .e2e && .e2e/bin/pip install playwright==1.65.2
+      - run: .e2e/bin/playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium-headless-shell' || matrix.browser }}
+      - run: .e2e/bin/python scripts/e2e-apps.py target/debug/okbot
+        env:
+          OKBOT_E2E_BROWSER: ${{ matrix.browser }}
+          OKBOT_E2E_SHOTS: shots
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: apps-${{ matrix.browser }}
+          path: shots/
+          if-no-files-found: ignore

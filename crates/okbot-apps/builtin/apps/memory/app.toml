@@ -1,0 +1,11 @@
+name = "memory"
+title = { en = "Memory", vi = "Ghi nhớ" }
+version = "0.14.0"
+api = 1
+description = { en = "What the bot remembers about you, this room and everyone, and forgetting it.", vi = "Những gì bot nhớ về bạn, phòng này và mọi người, và xoá chúng." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "memory:read", "memory:write"]
+
+[[view]]
+path = "/all"
+title = { en = "Everything remembered", vi = "Mọi ghi nhớ" }

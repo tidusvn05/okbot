@@ -198,24 +198,52 @@ fn available(shared: &Shared, who: &Who) -> String {
 }
 
 /// `/connections`: the accounts the asker may connect and whether they are.
-pub(crate) async fn connections(shared: &Shared, event: &InboundEvent) -> String {
+/// One account `/connections` and the connections app list (ADR 0012, 0019).
+pub(crate) struct Connection {
+    pub(crate) server: String,
+    /// The person's own account (else the bot's shared one).
+    pub(crate) personal: bool,
+    pub(crate) connected: bool,
+}
+
+/// The OAuth accounts the author of `event` may connect, and whether they are; `None` when
+/// connecting is not set up.
+pub(crate) async fn connection_list(
+    shared: &Shared,
+    event: &InboundEvent,
+) -> Option<Vec<Connection>> {
     let who = Who::new(shared.roles_of(event).await, event);
     let person = shared.person_key(event).await;
     let servers: Vec<&ExtraMcp> = oauth_servers(shared)
         .filter(|m| may_connect(m, &who))
         .collect();
     if servers.is_empty() {
-        return "This bot has no accounts to connect.".into();
+        return Some(Vec::new());
     }
-    let Some(connector) = &shared.oauth else {
+    let connector = shared.oauth.as_ref()?;
+    let mut out = Vec::new();
+    for server in servers {
+        let subject = oauth::subject_for(server, &person);
+        out.push(Connection {
+            server: server.server.name.clone(),
+            personal: server.personal_credentials(),
+            connected: connector.connected(server, &subject).await.unwrap_or(false),
+        });
+    }
+    Some(out)
+}
+
+pub(crate) async fn connections(shared: &Shared, event: &InboundEvent) -> String {
+    let Some(list) = connection_list(shared, event).await else {
         return "Connecting accounts is not set up on this bot.".into();
     };
+    if list.is_empty() {
+        return "This bot has no accounts to connect.".into();
+    }
     let mut lines = Vec::new();
-    for server in servers {
-        let name = &server.server.name;
-        let subject = oauth::subject_for(server, &person);
-        let connected = connector.connected(server, &subject).await.unwrap_or(false);
-        let line = match (server.personal_credentials(), connected) {
+    for c in list {
+        let name = &c.server;
+        let line = match (c.personal, c.connected) {
             (true, true) => format!("- **{name}**: connected (`/disconnect {name}`)"),
             (true, false) => format!("- **{name}**: not connected (`/connect {name}`)"),
             (false, true) => format!("- **{name}**: the bot's shared account is connected"),
