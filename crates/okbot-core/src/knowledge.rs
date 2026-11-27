@@ -64,6 +64,8 @@ pub struct RunInfo<'a> {
     /// The run reads untrusted data (an automation, ADR 0013): the bot's own tools only read
     /// (no memory, task, note or knowledge writes).
     pub read_only: bool,
+    /// Apps that long listings should point at, when the requester may open them here.
+    pub see_also: &'a [crate::AppLink],
 }
 
 /// Knowledge placed in the system prompt.

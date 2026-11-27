@@ -6,6 +6,9 @@ description = { en = "Each automation: its trigger, what it does and its latest 
 license = "MIT OR Apache-2.0"
 permissions = ["me", "automations:read"]
 
+[agent]
+use_when = { en = "which automations ran, failed or are due (administrators)", vi = "automation nào đã chạy, bị lỗi hay sắp chạy (admin)" }
+
 [[view]]
 path = "/runs"
 title = { en = "Automations", vi = "Tự động hoá" }

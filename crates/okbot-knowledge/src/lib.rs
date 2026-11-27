@@ -476,6 +476,7 @@ impl KnowledgeProvider for Knowledge {
             attachments: run.attachments.to_vec(),
             admin: run.admin && !run.read_only,
             read_only: run.read_only,
+            see_also: run.see_also.to_vec(),
         };
         let (token, guard) = self.tokens.issue(scope::for_requester(who), context, ttl);
         Ok(RunGrant::new(

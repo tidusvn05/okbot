@@ -288,6 +288,7 @@ async fn grants_include_the_memory_server() {
                 attachments: &[],
                 admin: false,
                 read_only: false,
+                see_also: &[],
             },
         )
         .await

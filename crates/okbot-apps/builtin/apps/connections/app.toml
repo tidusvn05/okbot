@@ -6,6 +6,9 @@ description = { en = "Your accounts connected to the bot's services (Gmail, Noti
 license = "MIT OR Apache-2.0"
 permissions = ["me", "connections:read"]
 
+[agent]
+use_when = { en = "which accounts the person connected, from a direct chat", vi = "người dùng đã kết nối những tài khoản nào, trong chat riêng" }
+
 [[view]]
 path = "/accounts"
 title = { en = "Connected accounts", vi = "Tài khoản đã kết nối" }

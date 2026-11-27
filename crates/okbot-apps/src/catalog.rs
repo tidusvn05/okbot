@@ -314,8 +314,15 @@ mod tests {
     #[test]
     fn builtin_apps_are_valid() {
         let apps = builtin();
-        assert!(apps.iter().any(|a| a.manifest.info.name == "tasks"));
+        assert_eq!(apps.len(), 7, "a broken built-in manifest is only logged");
         for app in apps {
+            for lang in ["en", "vi"] {
+                assert!(
+                    app.manifest.info.use_when.contains_key(lang),
+                    "{} tells the agent when it helps ({lang})",
+                    app.manifest.info.name
+                );
+            }
             assert!(
                 app.file(ENTRY).is_some(),
                 "{} has an entry page",

@@ -175,6 +175,8 @@ pub struct AppView {
     pub title: BTreeMap<String, String>,
     /// Query parameters chat may pass.
     pub params: Vec<String>,
+    /// When this view helps, by language, for the agent (design-app-hints §2).
+    pub use_when: BTreeMap<String, String>,
 }
 
 /// An installed app, as the runtime sees it.
@@ -192,6 +194,30 @@ pub struct AppInfo {
     pub views: Vec<AppView>,
     /// Where it comes from.
     pub source: AppSource,
+    /// When the app helps, by language, for the agent (design-app-hints §2).
+    pub use_when: BTreeMap<String, String>,
+}
+
+/// Data the bot's own agent tools list, whose long results point at an app
+/// (design-app-hints §5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DataArea {
+    /// To-dos, reminders and routines (`task_list`).
+    Tasks,
+    /// What the bot remembers (`memory_list`).
+    Memory,
+}
+
+/// The app and view a long listing of `area` should point the agent at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppLink {
+    /// What is listed.
+    pub area: DataArea,
+    /// The app's name.
+    pub app: String,
+    /// One of its views.
+    pub view: String,
 }
 
 /// The title in `locale` (`vi`, `vi-VN`), else English, else the first one, else `fallback`.

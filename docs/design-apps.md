@@ -533,7 +533,8 @@ What the code does where it differs from the sections above:
 - **Contexts** live in the session (up to 8). The shell sends the chosen one in
   `x-okbot-context`, and each call checks it again.
 - **The agent** names apps in `show` through `apps: [{app, view, params, label}]` (at most 2),
-  and is told the apps it may link in the `<interactive>` section. Programs write
+  and is told the apps it may link in the `<interactive>` section, with each app's `use_when`
+  since 0.15 ([`design-app-hints.md`](design-app-hints.md)). Programs write
   `{"label", "app", "view", "params"}` among their view's `buttons`.
 - **`knowledge:read`** and the knowledge app shipped with P34. They needed only
   `KnowledgeProvider::documents` and `document`, which the notes app uses too.

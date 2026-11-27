@@ -28,6 +28,8 @@ pub(crate) struct RunContext {
     pub(crate) admin: bool,
     /// Only reading tools ([`okbot_core::RunInfo::read_only`]).
     pub(crate) read_only: bool,
+    /// Apps long listings point at ([`okbot_core::RunInfo::see_also`]).
+    pub(crate) see_also: Vec<okbot_core::AppLink>,
 }
 
 /// Issued tokens. Tokens are 256-bit random values, valid until revoked or expired.
@@ -141,6 +143,7 @@ mod tests {
             attachments: Vec::new(),
             admin: false,
             read_only: false,
+            see_also: Vec::new(),
         }
     }
 

@@ -5,7 +5,7 @@ description: Web pages the bot serves behind chat summaries (tasks and more), op
 tags: [onboarding]
 lang: en
 status: stable
-updated: 2026-11-26
+updated: 2026-11-27
 aliases: [apps, app, miniapp, mini app, ứng dụng, xem thêm, see more, /app, Open Tasks, web page, trang web, đăng nhập, sign in, session]
 generated: {by: okbot-guide-pack, at: "2026-11-26"}
 ---
@@ -89,8 +89,10 @@ in place of `command`:
 
 The app and its view must be installed here. Otherwise the view is refused (a notification gets
 a 400 that names the apps), and without a public address there are no app buttons at all. With
-`reply_mode = "interactive"` the agent is told which apps it may link, and when a list is too long
-for chat it summarises it and adds the button instead. The agent names an app and a view, and
+`reply_mode = "interactive"` the agent is told which apps it may link and when each helps (the
+`use_when` of its manifest), and when a list is too long for chat it summarises it and adds the
+button instead. A long task or memory listing reminds it at that moment. With more than 8 apps,
+the agent looks the others up with the `apps` tool. The agent names an app and a view, and
 never writes a link: every presser gets their own link with their own rights.
 
 ## Sessions

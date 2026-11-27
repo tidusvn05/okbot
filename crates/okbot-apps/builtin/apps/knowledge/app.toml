@@ -6,6 +6,9 @@ description = { en = "Browse and search the documents the bot answers from, as f
 license = "MIT OR Apache-2.0"
 permissions = ["me", "knowledge:read"]
 
+[agent]
+use_when = { en = "browsing the documents, or a search with many results", vi = "duyệt tài liệu, hoặc tìm kiếm có nhiều kết quả" }
+
 [[view]]
 path = "/browse"
 title = { en = "Documents", vi = "Tài liệu" }
