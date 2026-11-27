@@ -303,7 +303,7 @@ async fn answer_batch(
     let timeout = shared.config.agent_timeout;
 
     let (knowledge, grant, excerpts) =
-        gather_knowledge(shared, batch, &requester, tools, admin, restricted).await;
+        gather_knowledge(shared, batch, event, &requester, tools, admin, restricted).await;
     let run_id = run_id();
     let mcp = with_extra_mcp(
         shared,
@@ -556,6 +556,7 @@ async fn store_user_messages(shared: &Shared, batch: &[Tracked]) {
 async fn gather_knowledge(
     shared: &Shared,
     batch: &[Tracked],
+    event: &InboundEvent,
     requester: &Requester,
     tools: okbot_core::ToolPolicy,
     admin: bool,
@@ -579,12 +580,17 @@ async fn gather_knowledge(
                 )
             })
             .collect();
+        // `read_only` is an automation's turn, which shows no views.
+        let see_also =
+            crate::apps::see_also(shared, event, crate::ui::enabled(shared, event, read_only))
+                .await;
         let run = okbot_core::RunInfo {
             tools,
             ttl: shared.config.agent_timeout + Duration::from_secs(30),
             attachments: &attachments,
             admin: admin && !read_only,
             read_only,
+            see_also: &see_also,
         };
         let grant = k.grant(requester, &run).await.unwrap_or_else(|error| {
             tracing::warn!(%error, "knowledge tools unavailable");

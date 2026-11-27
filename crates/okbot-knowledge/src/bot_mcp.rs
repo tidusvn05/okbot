@@ -37,6 +37,38 @@ remind_at. Use the id (`t-…`) from task_list or from a reminder message.\n\
 /// Largest attachment fetched for the agent.
 const MAX_ATTACHMENT_BYTES: usize = 8 << 20;
 
+/// Items past which a listing points at its app.
+const SEE_ALSO_ITEMS: usize = 10;
+/// Characters past which a listing points at its app.
+const SEE_ALSO_CHARS: usize = 4000;
+
+/// `text` with a line naming the app for `area`, when it lists more than a chat message should
+/// show and the person may open that app here.
+fn with_see_also(
+    mut text: String,
+    area: okbot_core::DataArea,
+    links: &[okbot_core::AppLink],
+) -> String {
+    use std::fmt::Write as _;
+    let Some(link) = links.iter().find(|l| l.area == area) else {
+        return text;
+    };
+    let items = text.lines().filter(|l| l.starts_with("- ")).count();
+    if items <= SEE_ALSO_ITEMS && text.chars().count() <= SEE_ALSO_CHARS {
+        return text;
+    }
+    let _ = write!(
+        text,
+        "\n\nsee_also: {items} {}. In your answer, summarise the few that matter now and add \
+         an `apps` button (app \"{}\", view \"{}\") with `show` of the `ui` server instead of \
+         listing them all.",
+        if items == 1 { "item" } else { "items" },
+        link.app,
+        link.view
+    );
+    text
+}
+
 /// The memory MCP server; one instance serves every run, the token tells who is asking.
 #[derive(Clone)]
 pub(crate) struct BotServer {
@@ -229,7 +261,27 @@ async fn fetch_image(
 const READ_TOOLS: &[&str] = &["memory_list", "task_list", "attachment_view"];
 
 impl BotServer {
+    /// Runs a tool; a long listing ends with the app to point the person at (design-app-hints §5).
     async fn call(
+        &self,
+        name: &str,
+        args: &Map<String, Value>,
+        token: Option<&str>,
+    ) -> Result<String, String> {
+        let text = self.run(name, args, token).await?;
+        let area = match name {
+            "task_list" => okbot_core::DataArea::Tasks,
+            "memory_list" => okbot_core::DataArea::Memory,
+            _ => return Ok(text),
+        };
+        let links = token
+            .and_then(|t| self.tokens.context(t))
+            .map(|c| c.see_also)
+            .unwrap_or_default();
+        Ok(with_see_also(text, area, &links))
+    }
+
+    async fn run(
         &self,
         name: &str,
         args: &Map<String, Value>,
@@ -411,6 +463,36 @@ pub(crate) fn router(server: BotServer) -> axum::Router {
 mod tests {
     use super::*;
     use okbot_core::Attachment;
+
+    #[test]
+    fn long_listings_point_at_their_app() {
+        let links = [okbot_core::AppLink {
+            area: okbot_core::DataArea::Tasks,
+            app: "tasks".into(),
+            view: "/open".into(),
+        }];
+        let list = |n: usize| {
+            (0..n)
+                .map(|i| format!("- task {i}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let short = with_see_also(list(10), okbot_core::DataArea::Tasks, &links);
+        assert!(!short.contains("see_also"));
+        let long = with_see_also(list(11), okbot_core::DataArea::Tasks, &links);
+        assert!(
+            long.ends_with("see_also: 11 items. In your answer, summarise the few that matter now and add an `apps` button (app \"tasks\", view \"/open\") with `show` of the `ui` server instead of listing them all."),
+            "{long}"
+        );
+        let other = with_see_also(list(11), okbot_core::DataArea::Memory, &links);
+        assert!(!other.contains("see_also"), "no app for memory here");
+        let wide = with_see_also(
+            format!("- {}", "x".repeat(4001)),
+            okbot_core::DataArea::Tasks,
+            &links,
+        );
+        assert!(wide.contains("see_also: 1 item."));
+    }
 
     async fn serve() -> String {
         let app = axum::Router::new()

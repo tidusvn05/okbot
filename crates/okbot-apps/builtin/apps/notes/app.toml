@@ -6,6 +6,9 @@ description = { en = "The journal by day: search it, read it and add a line.", v
 license = "MIT OR Apache-2.0"
 permissions = ["me", "notes:read", "notes:write"]
 
+[agent]
+use_when = { en = "reading or searching the journal over several days", vi = "đọc hoặc tìm trong nhật ký qua nhiều ngày" }
+
 [[view]]
 path = "/days"
 title = { en = "Journal", vi = "Nhật ký" }

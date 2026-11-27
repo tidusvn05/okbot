@@ -197,6 +197,7 @@ async fn read_only_runs_cannot_change_memory_or_tasks() {
                 attachments: &[],
                 admin: true,
                 read_only: true,
+                see_also: &[],
             },
         )
         .await
@@ -252,6 +253,7 @@ async fn mcp_tools_respect_the_requester_scope() {
                 attachments: &[],
                 admin: false,
                 read_only: false,
+                see_also: &[],
             },
         )
         .await

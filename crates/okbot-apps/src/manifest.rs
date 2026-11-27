@@ -81,6 +81,15 @@ struct ViewFile {
     title: Option<Text>,
     #[serde(default)]
     params: Vec<String>,
+    #[serde(default)]
+    use_when: Option<Text>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentFile {
+    #[serde(default)]
+    use_when: Option<Text>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +111,8 @@ struct ManifestFile {
     permissions: Vec<String>,
     #[serde(default, rename = "view")]
     views: Vec<ViewFile>,
+    #[serde(default)]
+    agent: AgentFile,
 }
 
 /// A parsed, checked manifest.
@@ -129,6 +140,29 @@ fn check_text(what: &str, map: &BTreeMap<String, String>, max: usize) -> Result<
         }
         if text.trim().is_empty() || text.chars().count() > max {
             return Err(format!("{what} ({lang}): 1 to {max} characters"));
+        }
+    }
+    Ok(())
+}
+
+/// The longest `use_when` of an app.
+pub(crate) const MAX_APP_HINT: usize = 160;
+/// The longest `use_when` of a view.
+pub(crate) const MAX_VIEW_HINT: usize = 120;
+
+/// A hint for the agent is one line of plain text: no tags, code, JSON or links it might copy
+/// into an answer, and nothing that could open a new prompt section (design-app-hints §2).
+fn check_hint(what: &str, map: &BTreeMap<String, String>, max: usize) -> Result<(), String> {
+    check_text(what, map, max)?;
+    for (lang, text) in map {
+        if text
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '<' | '>' | '`' | '{' | '}'))
+            || text.contains("://")
+        {
+            return Err(format!(
+                "{what} ({lang}): one line of plain text, without < > ` {{ }} or links"
+            ));
         }
     }
     Ok(())
@@ -235,15 +269,24 @@ impl Manifest {
             }
             let title = v.title.map(Text::into_map).unwrap_or_default();
             check_text(&format!("view `{}` title", v.path), &title, 40)?;
+            let use_when = v.use_when.map(Text::into_map).unwrap_or_default();
+            check_hint(
+                &format!("view `{}` use_when", v.path),
+                &use_when,
+                MAX_VIEW_HINT,
+            )?;
             views.push(AppView {
                 path: v.path,
                 title,
                 params: v.params,
+                use_when,
             });
         }
         if views.len() > 20 {
             return Err("at most 20 views".into());
         }
+        let use_when = file.agent.use_when.map(Text::into_map).unwrap_or_default();
+        check_hint("agent use_when", &use_when, MAX_APP_HINT)?;
         Ok(Self {
             info: AppInfo {
                 name: file.name,
@@ -252,6 +295,7 @@ impl Manifest {
                 permissions,
                 views,
                 source,
+                use_when,
             },
             description,
             icon: file.icon,
@@ -291,6 +335,24 @@ params = ["tag"]
         );
         assert_eq!(m.info.views[0].params, ["tag"]);
         assert_eq!(m.info.default_view(), "/open");
+        assert!(m.info.use_when.is_empty());
+    }
+
+    #[test]
+    fn reads_hints_for_the_agent() {
+        let text = GOOD.replacen(
+            "permissions = [",
+            "agent = { use_when = { en = \"more than 5 items\", vi = \"hơn 5 món\" } }\npermissions = [",
+            1,
+        ) + "use_when = \"what is still to buy\"\n";
+        let m = Manifest::parse(&text, AppSource::Local).unwrap();
+        assert_eq!(m.info.use_when["vi"], "hơn 5 món");
+        assert_eq!(m.info.views[0].use_when["en"], "what is still to buy");
+        let long = GOOD.to_string() + &format!("use_when = \"{}\"\n", "x".repeat(121));
+        let error = Manifest::parse(&long, AppSource::Local)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("1 to 120"), "{error}");
     }
 
     #[test]
@@ -304,6 +366,32 @@ params = ["tag"]
             (("path = \"/open\"", "path = \"open\""), "view"),
             (("params = [\"tag\"]", "params = [\"Tag\"]"), "param"),
             (("api = 1", "api = 1\nscripts = []"), "unknown field"),
+            (
+                ("params = [\"tag\"]", "use_when = \"see <b>this</b>\""),
+                "plain text",
+            ),
+            (
+                (
+                    "params = [\"tag\"]",
+                    "use_when = \"open https://x.example\"",
+                ),
+                "links",
+            ),
+            (
+                ("params = [\"tag\"]", "use_when = \"\"\"a\nb\"\"\""),
+                "one line",
+            ),
+            (
+                ("params = [\"tag\"]", "use_when = \"use `show`\""),
+                "plain text",
+            ),
+            (
+                (
+                    "permissions = [",
+                    "agent = { use_when = \"{\\\"x\\\": 1}\" }\npermissions = [",
+                ),
+                "agent use_when",
+            ),
         ] {
             let text = GOOD.replacen(change.0, change.1, 1);
             let error = Manifest::parse(&text, AppSource::Local)

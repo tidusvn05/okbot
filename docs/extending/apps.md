@@ -33,11 +33,30 @@ description = { en = "One paragraph." }
 license = "MIT"
 permissions = ["me", "tasks:read"]
 
+[agent]                         # optional (okbot 0.15): when the agent should offer the app
+use_when = { en = "more than 10 items, or editing several at once" }
+
 [[view]]                        # pages chat may open: `/app my-app open`
 path = "/open"
 title = { en = "Open items" }
 params = ["kind"]               # query values chat (or a view button) may pass
+use_when = { en = "what is still open" }   # optional: when this view is the one to open
 ```
+
+### Telling the agent when the app helps
+
+With interactive replies on, the agent is told about each app the person may open in the chat:
+its title, its views and the `use_when` texts. It then answers a long list with a short summary
+and an app button. Write `use_when` as the situation, not as an order: "more than 10 orders, or
+comparing them", not "ALWAYS use this app".
+
+- One line of plain text per language: at most 160 characters for the app and 120 for a view.
+  No `<`, `>`, backticks, braces or links.
+- The agent reads it as a description, not as instructions. Hints of local (unverified) apps are
+  left out; registry and built-in apps keep theirs.
+- At most 8 apps are described in the prompt. The agent finds the others through the `apps` tool
+  of the `ui` server.
+- Older okbot versions refuse a manifest with `[agent]` or `use_when`: add `okbot = ">=0.15"`.
 
 ## The page
 

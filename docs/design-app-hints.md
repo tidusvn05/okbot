@@ -58,12 +58,11 @@ Validation, at install, in `okbot app index` and in `okbot app dev`. It sits nex
 | Language codes as for `title` | same `localized()` choice |
 
 The fields go into `AppInfo` (`okbot-core`) as `use_when: BTreeMap<String, String>` on the app and
-on `AppView`. That is an addition only. `index.json` carries them, so they are signed with the
-rest of the entry.
+on `AppView`. That is an addition only. They live in `app.toml`, whose SHA-256 the signed index
+pins, so they are signed with the rest of the app.
 
 **Trust tiers (ADR 0020).** Built-in and registry hints are passed to the agent. A local app
-(*unverified*) is listed with its name, title and views only, because nobody reviewed its text. The
-operator can pass it anyway with `[apps.<name>] trust_hint = true`.
+(*unverified*) is listed with its name, title and views only, because nobody reviewed its text.
 
 ## 3. In the system prompt
 
@@ -102,24 +101,27 @@ The agent reads tasks, memory and notes through the `bot` MCP server of `okbot-k
 (`task_list`, `memory_list`, …), and documents through `kb`. When such a result is long, the
 reminder belongs in the result itself:
 
-```json
-{"tasks": [ … 34 items … ],
- "see_also": {"app": "tasks", "view": "/open",
-              "note": "34 items: summarise the most urgent and add this app button with show"}}
+```text
+- t-1 File the report — due Fri 17:00
+… 34 lines …
+
+see_also: 34 items. In your answer, summarise the few that matter now and add …
 ```
 
 - **Who decides.** `okbot-knowledge` does not know about apps (ports and adapters), so the runtime
   tells it. `RunInfo` gains `see_also: &[AppLink]`, where `AppLink { area: DataArea, app, view }`
-  and `DataArea` is one of `Tasks`, `Schedule`, `Memory`, `Notes`, `Knowledge` (and `Artifacts`,
-  ADR 0021). The runtime fills it from the built-in apps the requester may open in this room. It
-  is empty when apps are off, the room has no public URL, or interactive replies are off.
+  and `DataArea` is `Tasks` or `Memory` in v1 (`Artifacts` comes with ADR 0021). The runtime
+  fills it from the built-in apps the requester may open in this room. It is empty when apps are
+  off, the room has no public URL, or interactive replies are off. Notes and knowledge are listed
+  by okbase's `kb` tools, whose results okbot does not write, so they get no `see_also` in v1.
 - **When.** A list result with more than 10 items, or more than 4,000 characters of text.
 - **Which apps.** Only the built-in app for each area in v1. A registry app cannot claim an area,
   so a third-party app cannot take over the "tasks" suggestion. An operator may point an area at
   another app with `[apps] see_also = { tasks = "my-board" }` later, if someone asks for it.
-- **Mapping:** `task_list` → `tasks` (`/open`, or `/all` with `all`); routine and reminder listings
-  → `schedule` (`/week`); `memory_list` → `memory`; note listings → `notes`; knowledge search with
-  many hits → `knowledge`.
+- **Mapping:** `task_list` → `tasks` (`/open`); `memory_list` → `memory` (its first view).
+- **Form.** The results are text, so the hint is a last line:
+  `see_also: 34 items. In your answer, summarise the few that matter now and add an apps button
+  (app "tasks", view "/open") with show of the ui server instead of listing them all.`
 
 ## 6. Built-in hints
 
@@ -145,9 +147,9 @@ Shipped in each built-in manifest, `en` and `vi`:
 ## 8. Work
 
 1. `okbot-core`: `AppInfo.use_when`, `AppView.use_when`, `RunInfo.see_also`, `AppLink`, `DataArea`.
-2. `okbot-apps`: manifest fields and checks; index entries; built-in hints.
+2. `okbot-apps`: manifest fields and checks; built-in hints.
 3. `okbot-runtime`: `prompt_note` with hints and budget; `ui.apps`; `see_also` for the run.
-4. `okbot-knowledge`: `see_also` in long `bot` and `kb` results.
+4. `okbot-knowledge`: `see_also` in long `task_list` and `memory_list` results.
 5. Tests: manifest validation (each rule); an insta snapshot of the note under and over the
    budget; `ui.apps` with `admit`; a `task_list` result with 11 tasks carries `see_also`, and one
    with 3 does not; an unverified app's hint is left out.

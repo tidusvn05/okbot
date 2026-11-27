@@ -6,10 +6,15 @@ description = { en = "Reminders and routine runs of the coming days, repeats inc
 license = "MIT OR Apache-2.0"
 permissions = ["me", "schedule:read", "tasks:read", "tasks:write"]
 
+[agent]
+use_when = { en = "what is coming in the next days or weeks, or moving several reminders", vi = "lịch những ngày hay tuần tới, hoặc dời nhiều nhắc nhở" }
+
 [[view]]
 path = "/week"
 title = { en = "Next 7 days", vi = "7 ngày tới" }
+use_when = { en = "the next 7 days", vi = "7 ngày tới" }
 
 [[view]]
 path = "/month"
 title = { en = "Next 30 days", vi = "30 ngày tới" }
+use_when = { en = "the next 30 days", vi = "30 ngày tới" }

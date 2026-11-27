@@ -79,8 +79,8 @@ pub use agent::{
     TokenUsage,
 };
 pub use app::{
-    AppDirectory, AppInfo, AppPermission, AppSource, AppView, MAX_APP_NAME, PrivateReply,
-    localized, valid_app_name,
+    AppDirectory, AppInfo, AppLink, AppPermission, AppSource, AppView, DataArea, MAX_APP_NAME,
+    PrivateReply, localized, valid_app_name,
 };
 pub use caps::{
     AgentCaps, ChannelCaps, LengthUnit, MarkdownDialect, ReplyMode, ToolPolicy, UiCaps,

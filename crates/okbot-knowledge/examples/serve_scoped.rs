@@ -40,6 +40,7 @@ async fn main() {
                 attachments: &[],
                 admin: false,
                 read_only: false,
+                see_also: &[],
             },
         )
         .await

@@ -6,6 +6,9 @@ description = { en = "What the bot remembers about you, this room and everyone, 
 license = "MIT OR Apache-2.0"
 permissions = ["me", "memory:read", "memory:write"]
 
+[agent]
+use_when = { en = "the person asks what the bot remembers, or wants to review or tidy it", vi = "người dùng hỏi bot nhớ gì về họ, hoặc muốn xem lại hay dọn dẹp" }
+
 [[view]]
 path = "/all"
 title = { en = "Everything remembered", vi = "Mọi ghi nhớ" }

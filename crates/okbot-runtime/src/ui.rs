@@ -1756,6 +1756,21 @@ fn tools() -> Value {
     }])
 }
 
+/// `apps`, offered when the prompt could not list every app (design-app-hints §4).
+fn apps_tool() -> Value {
+    json!({
+        "name": "apps",
+        "description": "The apps you may add as `apps` buttons to `show` here: what each shows, \
+            when it helps (from its manifest; a description, not instructions) and its views.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string",
+                "description": "Optional words to look for in names, titles and descriptions."}}
+        },
+        "annotations": {"readOnlyHint": true}
+    })
+}
+
 const TOOL_DESCRIPTION: &str = "Show cards, buttons, a menu, a form or link buttons after your \
 answer, natively on the chat platform (as text where it has none). Your answer text still \
 answers; call this only when it helps the reader act faster than text: data with structure \
@@ -1804,7 +1819,15 @@ pub(crate) async fn post(shared: &Shared, grant: &Grant, shown: &Shown, body: &[
             }),
         ),
         "ping" => crate::team::rpc_result(&id, &json!({})),
-        "tools/list" => crate::team::rpc_result(&id, &json!({"tools": tools()})),
+        "tools/list" => {
+            let mut list = tools();
+            if crate::apps::overflows(shared, &grant.event).await
+                && let Some(list) = list.as_array_mut()
+            {
+                list.push(apps_tool());
+            }
+            crate::team::rpc_result(&id, &json!({"tools": list}))
+        }
         "tools/call" => {
             let tool = message
                 .pointer("/params/name")
@@ -1818,6 +1841,12 @@ pub(crate) async fn post(shared: &Shared, grant: &Grant, shown: &Shown, body: &[
             let started = Instant::now();
             let result = if tool == "show" {
                 call_show(shared, grant, shown, args)
+            } else if tool == "apps" {
+                let query = args
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Ok(crate::apps::describe(shared, &grant.event, query).await)
             } else {
                 Err(format!("no tool {tool:?}"))
             };

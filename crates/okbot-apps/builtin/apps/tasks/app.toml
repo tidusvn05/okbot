@@ -6,11 +6,16 @@ description = { en = "Every to-do, reminder and routine, with filters, done, sno
 license = "MIT OR Apache-2.0"
 permissions = ["me", "tasks:read", "tasks:write"]
 
+[agent]
+use_when = { en = "more than 10 tasks, or the person wants to review, filter or edit many at once", vi = "hơn 10 việc, hoặc người dùng muốn xem lại, lọc hay sửa nhiều việc cùng lúc" }
+
 [[view]]
 path = "/open"
 title = { en = "Open tasks", vi = "Việc chưa xong" }
+use_when = { en = "what is still to do; kind is todo, reminder or routine", vi = "việc chưa xong; kind là todo, reminder hoặc routine" }
 params = ["kind"]
 
 [[view]]
 path = "/all"
 title = { en = "All tasks", vi = "Tất cả" }
+use_when = { en = "everything, done and cancelled included", vi = "tất cả, kể cả việc đã xong và đã huỷ" }
