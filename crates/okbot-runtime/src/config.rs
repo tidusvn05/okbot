@@ -242,6 +242,8 @@ pub struct AppsConfig {
     pub session_max: Duration,
     /// Rules per app (`[apps.<name>]`).
     pub rules: HashMap<String, AppRule>,
+    /// HTML artifacts may run their scripts in the viewer (`[artifacts] scripts`, ADR 0021).
+    pub artifact_scripts: bool,
 }
 
 impl Default for AppsConfig {
@@ -252,6 +254,7 @@ impl Default for AppsConfig {
             session_idle: Duration::from_secs(12 * 3600),
             session_max: Duration::from_secs(7 * 24 * 3600),
             rules: HashMap::new(),
+            artifact_scripts: true,
         }
     }
 }

@@ -744,7 +744,7 @@ impl TaskStore for Knowledge {
 
 impl Knowledge {
     /// The agent may save and read artifacts.
-    pub(crate) fn artifacts_enabled(&self) -> bool {
+    pub fn artifacts_enabled(&self) -> bool {
         self.options.artifacts.is_some()
     }
 

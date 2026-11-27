@@ -14,6 +14,11 @@ use crate::manifest::content_type;
 
 static SHELL: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin/shell");
 static SDK: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/builtin/sdk");
+/// Mermaid's browser build, gzipped (`builtin/vendor/mermaid/README.md`).
+static MERMAID: &[u8] = include_bytes!("../builtin/vendor/mermaid/mermaid.min.js.gz");
+
+/// The only app whose frame may hold the artifact viewer: the built-in one (ADR 0021).
+const VIEWER_APP: &str = "artifacts";
 
 /// The shell page's policy: its own scripts and styles, frames and API calls to the bot only,
 /// never framed itself.
@@ -23,15 +28,21 @@ pub const SHELL_CSP: &str = "default-src 'none'; script-src 'self'; style-src 's
 
 /// An app file's policy: files from the bot only, no network, no forms sent anywhere, framed
 /// only by the shell, and sandboxed even when opened on its own (an opaque origin without the
-/// session cookie).
-pub fn frame_csp(origin: Option<&str>) -> String {
+/// session cookie). `viewer`: the frame may hold the bot's artifact viewer (`/apps/view/…`),
+/// for the built-in artifacts app only.
+pub fn frame_csp(origin: Option<&str>, viewer: bool) -> String {
     let src = match origin {
         Some(o) => format!("'self' {o}"),
         None => "'self'".into(),
     };
+    let frames = if viewer {
+        format!("frame-src {src}; ")
+    } else {
+        String::new()
+    };
     format!(
         "default-src 'none'; script-src {src}; style-src {src}; img-src {src} data:; \
-         font-src {src}; connect-src 'none'; form-action 'none'; base-uri 'none'; \
+         font-src {src}; connect-src 'none'; {frames}form-action 'none'; base-uri 'none'; \
          frame-ancestors {src}; sandbox allow-scripts allow-forms"
     )
 }
@@ -83,11 +94,11 @@ fn shell_file(path: &str) -> Response {
     response
 }
 
-fn sandboxed(body: Vec<u8>, path: &str, origin: Option<&str>) -> Response {
+fn sandboxed(body: Vec<u8>, path: &str, origin: Option<&str>, viewer: bool) -> Response {
     let Some(kind) = content_type(path) else {
         return not_found();
     };
-    let mut response = with_headers(body, kind, &frame_csp(origin), "no-cache");
+    let mut response = with_headers(body, kind, &frame_csp(origin, viewer), "no-cache");
     // The frame's origin is opaque: module scripts and fonts it loads are cross-origin requests.
     response.headers_mut().insert(
         header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -116,8 +127,13 @@ pub fn router(catalog: Catalog, origin: Option<String>) -> Router {
             get(move |Path(file): Path<String>| {
                 let origin = origin_sdk.clone();
                 async move {
+                    if file == "mermaid.min.js" {
+                        return mermaid(origin.as_deref());
+                    }
                     match SDK.get_file(&file) {
-                        Some(f) => sandboxed(f.contents().to_vec(), &file, origin.as_deref()),
+                        Some(f) => {
+                            sandboxed(f.contents().to_vec(), &file, origin.as_deref(), false)
+                        }
                         None => not_found(),
                     }
                 }
@@ -130,18 +146,34 @@ pub fn router(catalog: Catalog, origin: Option<String>) -> Router {
                 let origin = origin.clone();
                 async move {
                     let found = tokio_blocking(move || {
-                        catalog
-                            .get(&app)
-                            .and_then(|a| a.file(&path).map(|b| (b, path)))
+                        let a = catalog.get(&app)?;
+                        let viewer = app == VIEWER_APP
+                            && a.manifest.info.source == okbot_core::AppSource::Builtin;
+                        a.file(&path).map(|b| (b, path, viewer))
                     })
                     .await;
                     match found {
-                        Some((body, path)) => sandboxed(body, &path, origin.as_deref()),
+                        Some((body, path, viewer)) => {
+                            sandboxed(body, &path, origin.as_deref(), viewer)
+                        }
                         None => not_found(),
                     }
                 }
             }),
         )
+}
+
+/// Mermaid's build, sent gzipped as stored (every browser takes gzip). The viewer's URL for it
+/// carries okbot's version, so it may be cached for a week.
+fn mermaid(origin: Option<&str>) -> Response {
+    let mut response = sandboxed(MERMAID.to_vec(), "mermaid.min.js", origin, false);
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=604800"),
+    );
+    response
 }
 
 /// Runs file reads off the async threads.
@@ -186,6 +218,19 @@ mod tests {
         assert!(csp.contains("sandbox allow-scripts allow-forms"), "{csp}");
         assert!(!csp.contains("allow-same-origin"), "{csp}");
         assert!(csp.contains("https://bot.example.com"), "{csp}");
+        assert!(!csp.contains("frame-src"), "{csp}");
+        let artifacts = get(&router, "/apps/frame/artifacts/index.html").await;
+        let csp = artifacts.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            csp.contains("frame-src 'self' https://bot.example.com"),
+            "{csp}"
+        );
+        let mermaid = get(&router, "/apps/sdk/mermaid.min.js").await;
+        assert_eq!(mermaid.status(), 200);
+        assert_eq!(mermaid.headers()[header::CONTENT_ENCODING], "gzip");
         assert_eq!(get(&router, "/apps/sdk/v1.js").await.status(), 200);
         assert_eq!(get(&router, "/apps/shell/shell.js").await.status(), 200);
         for missing in [

@@ -783,7 +783,13 @@ impl View {
     }
 
     /// A line and a button that opens an app for whoever presses it (ADR 0019).
+    #[cfg(test)]
     pub(crate) fn app(text: String, button: AppButton) -> Self {
+        Self::app_buttons(text, vec![button])
+    }
+
+    /// Lines and buttons that open an app for whoever presses them (ADR 0019).
+    pub(crate) fn app_buttons(text: String, buttons: Vec<AppButton>) -> Self {
         Self {
             text,
             cards: Vec::new(),
@@ -792,7 +798,7 @@ impl View {
             form: None,
             links: Vec::new(),
             commands: Vec::new(),
-            apps: vec![button],
+            apps: buttons,
             allowed: Vec::new(),
         }
     }

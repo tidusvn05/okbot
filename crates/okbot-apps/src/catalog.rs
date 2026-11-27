@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn builtin_apps_are_valid() {
         let apps = builtin();
-        assert_eq!(apps.len(), 7, "a broken built-in manifest is only logged");
+        assert_eq!(apps.len(), 8, "a broken built-in manifest is only logged");
         for app in apps {
             for lang in ["en", "vi"] {
                 assert!(

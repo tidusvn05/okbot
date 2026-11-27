@@ -299,7 +299,15 @@ async fn worker(
             let text = command::execute(&shared, command, &first.0).await;
             turn::reply(&shared, &first.0, &text).await;
             if offer_tasks && !text.starts_with("No tasks") {
-                crate::apps::offer(&shared, &first.0, "tasks", None, true).await;
+                crate::apps::offer(
+                    &shared,
+                    &first.0,
+                    "tasks",
+                    None,
+                    std::collections::BTreeMap::new(),
+                    true,
+                )
+                .await;
             }
             continue;
         }

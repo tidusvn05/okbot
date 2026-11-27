@@ -13,7 +13,9 @@ use okbot_core::{
     PromptAnswer, SystemClock, UiCaps, UserRef,
 };
 use okbot_runtime::{AccessLists, HttpOptions, Runtime, RuntimeConfig};
-use okbot_testkit::{FakeAgent, FakeChannel, MemoryStore, MemoryTasks, PlainRenderer, inbound};
+use okbot_testkit::{
+    FakeAgent, FakeChannel, MemoryArtifacts, MemoryStore, MemoryTasks, PlainRenderer, inbound,
+};
 use serde_json::{Value, json};
 
 struct Apps;
@@ -52,6 +54,30 @@ impl AppDirectory for Apps {
                     "mcp:ops/restart".parse().unwrap(),
                 ],
             ),
+            AppInfo {
+                views: vec![
+                    AppView {
+                        path: "/".into(),
+                        title: BTreeMap::new(),
+                        params: Vec::new(),
+                        use_when: BTreeMap::new(),
+                    },
+                    AppView {
+                        path: "/a".into(),
+                        title: BTreeMap::new(),
+                        params: vec!["id".into(), "v".into()],
+                        use_when: BTreeMap::new(),
+                    },
+                ],
+                ..app(
+                    "artifacts",
+                    vec![
+                        AppPermission::Me,
+                        AppPermission::ArtifactsRead,
+                        AppPermission::ArtifactsWrite,
+                    ],
+                )
+            },
         ]
     }
 }
@@ -61,6 +87,7 @@ const PUBLIC: &str = "https://bot.example.com";
 struct Bot {
     channel: Arc<FakeChannel>,
     tasks: Arc<MemoryTasks>,
+    artifacts: Arc<MemoryArtifacts>,
     store: Arc<MemoryStore>,
     handle: okbot_runtime::RuntimeHandle,
     stop: CancellationToken,
@@ -100,6 +127,7 @@ impl Bot {
             },
         ));
         let tasks = Arc::new(MemoryTasks::new(Arc::new(SystemClock)));
+        let artifacts = Arc::new(MemoryArtifacts::new(Arc::new(SystemClock)));
         let addr = free_port();
         let store = Arc::new(MemoryStore::new(Arc::new(SystemClock)));
         let runtime = Runtime::builder(config)
@@ -107,6 +135,7 @@ impl Bot {
             .agent(agent)
             .renderer(Arc::new(PlainRenderer))
             .tasks(tasks.clone())
+            .artifacts(artifacts.clone())
             .channel(channel.clone())
             .apps(Arc::new(Apps), axum::Router::new())
             .http(HttpOptions::new(addr))
@@ -121,6 +150,7 @@ impl Bot {
         Self {
             channel,
             tasks,
+            artifacts,
             store,
             handle,
             stop,
@@ -835,5 +865,241 @@ async fn the_tasks_app_filters_by_place_and_author_and_sorts_by_what_comes_next(
         "{body}"
     );
     assert_eq!(body["result"]["mine"], false, "bob wrote it");
+    bot.finish().await;
+}
+
+/// The person `user` writing in `room` of the test channel, as stores see them.
+fn requester(room: &str, user: &str, personal: bool) -> okbot_core::Requester {
+    okbot_core::Requester {
+        conversation: okbot_testkit::conversation("fake:test", room),
+        user: UserRef {
+            id: okbot_core::UserId::new(user),
+            display_name: user.into(),
+            is_bot: false,
+        },
+        internal: false,
+        person: None,
+        personal,
+    }
+}
+
+fn new_artifact(
+    title: &str,
+    kind: okbot_core::ArtifactKind,
+    content: &str,
+) -> okbot_core::NewArtifact {
+    okbot_core::NewArtifact {
+        id: None,
+        title: title.into(),
+        kind,
+        summary: format!("{title}, for tests"),
+        content: content.into(),
+        scope: okbot_core::MemoryScope::User,
+        note: String::new(),
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one walk through the app's calls
+async fn artifacts_open_in_a_viewer_of_their_own() {
+    use okbot_core::{ArtifactKind, ArtifactStore as _};
+    let bot = Bot::start(false, |_| {});
+    let ana = requester("dm", "ana", true);
+    let page = "<!doctype html><h1>Plan</h1><script>document.title='x'</script>";
+    bot.artifacts
+        .save(&ana, new_artifact("Plan", ArtifactKind::Html, page))
+        .await
+        .unwrap();
+    bot.artifacts
+        .save(
+            &ana,
+            new_artifact("Notes", ArtifactKind::Markdown, "# Hi\n\n- one"),
+        )
+        .await
+        .unwrap();
+    bot.artifacts
+        .save(
+            &ana,
+            new_artifact(
+                "Flow",
+                ArtifactKind::Mermaid,
+                "graph TD; A-->B</pre><script>x()</script>",
+            ),
+        )
+        .await
+        .unwrap();
+
+    // `/app artifacts <id>` opens that artifact's view.
+    bot.say("dm", "ana", "/app artifacts a-1", true).await;
+    let url = bot
+        .channel
+        .prompts()
+        .into_iter()
+        .flat_map(|p| p.buttons)
+        .find_map(|b| b.url)
+        .expect("a link in the direct chat");
+    let (_, cookie, body) = bot.exchange(&url, None).await;
+    assert_eq!(body["open"]["view"], "/a", "{body}");
+    assert_eq!(body["open"]["params"]["id"], "a-1", "{body}");
+    let session = session_of(&cookie.unwrap(), &body);
+    let call =
+        |method: &'static str, params: Value| bot.call(&session, "artifacts", method, params);
+
+    let (status, body) = call("artifacts.list", json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["result"]["items"].as_array().unwrap().len(), 3);
+    let (_, body) = call("artifacts.list", json!({"kind": "markdown"})).await;
+    assert_eq!(body["result"]["items"][0]["title"], "Notes");
+
+    // Text kinds come with their content; pages only through the viewer.
+    let (_, body) = call("artifacts.get", json!({"id": "a-2"})).await;
+    assert_eq!(body["result"]["content"], "# Hi\n\n- one");
+    assert_eq!(body["result"]["artifact"]["viewer"], false);
+    let (_, body) = call("artifacts.get", json!({"id": "a-1"})).await;
+    assert_eq!(body["result"]["content"], Value::Null);
+    assert_eq!(body["result"]["artifact"]["mine"], true);
+
+    let origin = bot.api.trim_end_matches("/apps/api").to_string();
+    let get = |path: String| {
+        let http = bot.http.clone();
+        let origin = origin.clone();
+        async move { http.get(format!("{origin}{path}")).send().await.unwrap() }
+    };
+    let (status, body) = call("artifacts.open", json!({"id": "a-1"})).await;
+    assert_eq!(status, 200, "{body}");
+    let view = body["result"]["url"].as_str().unwrap().to_string();
+    assert!(view.starts_with("/apps/view/"), "{view}");
+    let response = get(view.clone()).await;
+    assert_eq!(response.status(), 200);
+    let csp = response.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    for part in [
+        "default-src 'none'",
+        "script-src 'unsafe-inline'",
+        "connect-src 'none'",
+        "form-action 'none'",
+        "sandbox allow-scripts",
+    ] {
+        assert!(csp.contains(part), "{part}: {csp}");
+    }
+    assert!(!csp.contains("allow-same-origin"), "{csp}");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert!(response.headers().get("content-disposition").is_none());
+    assert_eq!(response.text().await.unwrap(), page);
+
+    // A download names the file; Mermaid is drawn by okbot's own scripts, its source escaped.
+    let (_, body) = call("artifacts.open", json!({"id": "a-1", "download": true})).await;
+    let response = get(body["result"]["url"].as_str().unwrap().to_string()).await;
+    let disposition = response.headers()["content-disposition"].to_str().unwrap();
+    assert!(
+        disposition.starts_with("attachment; filename=\"a-1.html\""),
+        "{disposition}"
+    );
+    assert_eq!(body["result"]["file"], "Plan.html");
+    let (_, body) = call("artifacts.open", json!({"id": "a-3"})).await;
+    let response = get(body["result"]["url"].as_str().unwrap().to_string()).await;
+    let csp = response.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        csp.contains("script-src 'self' https://bot.example.com;"),
+        "{csp}"
+    );
+    let html = response.text().await.unwrap();
+    assert!(html.contains("../sdk/mermaid.min.js"), "{html}");
+    assert!(!html.contains("<script>x()"), "{html}");
+
+    // Rename and delete; a deleted artifact's link stops working.
+    let (status, body) = call("artifacts.rename", json!({"id": "a-1", "title": "Plan Q3"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["result"]["title"], "Plan Q3");
+    let (status, body) = call("artifacts.delete", json!({"id": "a-1"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(get(view).await.status(), 404);
+    assert_eq!(get("/apps/view/nope".into()).await.status(), 404);
+    let (status, _) = call("artifacts.get", json!({"id": "a-1"})).await;
+    assert_eq!(status, 404);
+
+    // Another app was not granted artifacts.
+    let (status, _) = bot
+        .call(&session, "tasks", "artifacts.list", json!({}))
+        .await;
+    assert_eq!(status, 403);
+    bot.finish().await;
+}
+
+/// An agent that saves an artifact as the person it answers, as `artifact_save` would, in the
+/// bot's store (set once the bot is built).
+struct SavingAgent(std::sync::OnceLock<Arc<MemoryArtifacts>>);
+
+#[okbot_core::async_trait]
+impl okbot_core::AgentBackend for SavingAgent {
+    fn name(&self) -> &'static str {
+        "saving"
+    }
+
+    fn caps(&self) -> okbot_core::AgentCaps {
+        FakeAgent::echo("x").caps()
+    }
+
+    async fn run(
+        &self,
+        _turn: okbot_core::AgentTurn,
+    ) -> Result<okbot_core::AgentReply, okbot_core::AgentError> {
+        use okbot_core::ArtifactStore as _;
+        let mut new = new_artifact("Sales plan", okbot_core::ArtifactKind::Html, "<p>plan</p>");
+        new.scope = okbot_core::MemoryScope::Room;
+        self.0
+            .get()
+            .unwrap()
+            .save(&requester("team", "ana", false), new)
+            .await
+            .unwrap();
+        Ok(okbot_core::AgentReply {
+            text: "Here is the plan.".into(),
+            backend: "saving".into(),
+            model: None,
+            session_id: None,
+            usage: None,
+            duration: Duration::ZERO,
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_reply_that_saved_an_artifact_gets_an_open_button() {
+    let agent = Arc::new(SavingAgent(std::sync::OnceLock::new()));
+    let bot = Bot::with_agent(true, agent.clone(), |_| {});
+    agent.0.set(bot.artifacts.clone()).unwrap();
+    bot.say("team", "ana", "make a sales plan page", false)
+        .await;
+    let prompts = bot.channel.prompts();
+    let prompt = prompts
+        .iter()
+        .find(|p| p.buttons.iter().any(|b| b.label == "Open Sales plan"))
+        .unwrap_or_else(|| panic!("an Open button: {prompts:?}"));
+    assert!(
+        prompt.text.contains("Sales plan · html · v1"),
+        "{}",
+        prompt.text
+    );
+    let button = prompt
+        .buttons
+        .iter()
+        .find(|b| b.label == "Open Sales plan")
+        .unwrap();
+    assert!(button.launch, "each presser gets their own link");
+    let url = bot.press("team", "bob", &prompt.id, &button.id).await;
+    let (_, _, body) = bot.exchange(&url, None).await;
+    assert_eq!(body["open"]["app"], "artifacts", "{body}");
+    assert_eq!(body["open"]["params"]["id"], "a-1", "{body}");
+
+    // Only artifacts the asker saved: bob's turn saves one as ana, so it gets no button.
+    let before = bot.channel.prompts().len();
+    bot.say("team", "bob", "thanks", false).await;
+    assert_eq!(bot.channel.prompts().len(), before);
     bot.finish().await;
 }

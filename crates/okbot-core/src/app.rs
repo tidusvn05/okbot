@@ -51,6 +51,10 @@ pub enum AppPermission {
     AutomationsRead,
     /// Connected accounts, never their tokens.
     ConnectionsRead,
+    /// List, read and open artifacts (ADR 0021).
+    ArtifactsRead,
+    /// Rename and delete artifacts.
+    ArtifactsWrite,
     /// One tool of one `[[mcp]]` server, through the gateway.
     Mcp {
         /// The `[[mcp]]` server.
@@ -62,7 +66,7 @@ pub enum AppPermission {
 
 impl AppPermission {
     /// Every permission without arguments, as written in manifests.
-    pub const FIXED: [(&'static str, Self); 11] = [
+    pub const FIXED: [(&'static str, Self); 13] = [
         ("me", Self::Me),
         ("tasks:read", Self::TasksRead),
         ("tasks:write", Self::TasksWrite),
@@ -74,6 +78,8 @@ impl AppPermission {
         ("schedule:read", Self::ScheduleRead),
         ("automations:read", Self::AutomationsRead),
         ("connections:read", Self::ConnectionsRead),
+        ("artifacts:read", Self::ArtifactsRead),
+        ("artifacts:write", Self::ArtifactsWrite),
     ];
 
     /// A line for people deciding whether to grant it.
@@ -90,6 +96,8 @@ impl AppPermission {
             Self::ScheduleRead => "read reminders and schedules".into(),
             Self::AutomationsRead => "read automations and their runs (admins)".into(),
             Self::ConnectionsRead => "list connected accounts (never their tokens)".into(),
+            Self::ArtifactsRead => "list and open the pages and files made for you".into(),
+            Self::ArtifactsWrite => "rename and delete those pages and files".into(),
             Self::Mcp { server, tool } => format!("call `{tool}` of the `{server}` server"),
         }
     }

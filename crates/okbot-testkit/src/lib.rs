@@ -80,8 +80,10 @@ pub fn bot_message(key: &ConversationKey, text: &str, at: Timestamp) -> NewMessa
 }
 
 mod fakes;
+mod memory_artifacts;
 mod memory_store;
 mod memory_tasks;
 pub use fakes::{CollectSink, FakeAgent, FakeChannel, PlainRenderer, fake_cli, inbound, turn};
+pub use memory_artifacts::MemoryArtifacts;
 pub use memory_store::MemoryStore;
 pub use memory_tasks::MemoryTasks;

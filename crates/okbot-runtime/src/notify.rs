@@ -517,6 +517,7 @@ mod tests {
             knowledge: None,
             memory: None,
             tasks: None,
+            artifacts: None,
             renderer: Arc::new(PlainRenderer),
             charts: None,
             clock,

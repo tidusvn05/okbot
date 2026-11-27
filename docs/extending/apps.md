@@ -81,6 +81,7 @@ loading another page into the frame, even one of the app's own, makes the shell 
 | `okbot.me()` | `{name, platform, account, context: {label, direct}, locale, timezone, admin, permissions}` |
 | `okbot.confirm(text)` | asks the person in okbot's dialog, headed with your app's name; `true` or `false` (one question at a time) |
 | `okbot.openLink(url)` | opens an `https` link after the person agrees to leave |
+| `okbot.download({id, v})` | saves an artifact's file after the person agrees in okbot's dialog (`artifacts:read`) |
 | `okbot.setTitle(title)` | the tab title |
 | `okbot.view` | `{path, params}` that chat opened |
 | `okbot.lang` | `en` or `vi`, chosen by the shell |
@@ -107,10 +108,18 @@ loading another page into the frame, even one of the app's own, makes the shell 
 | `knowledge.search` `{query}`, `knowledge.get` `{id}` | `knowledge:read` | within the person's scope |
 | `automations.list` | `automations:read` | administrators only |
 | `connections.list` | `connections:read` | from a direct chat only; never tokens |
+| `artifacts.list` `{query, kind, scope: personal\|room}` | `artifacts:read` | the person's and the room's, newest first; `{items, personal}` |
+| `artifacts.get` `{id, v}` | `artifacts:read` | metadata, versions and, for markdown, csv, json and text, the content |
+| `artifacts.open` `{id, v, download}` | `artifacts:read` | a viewer link (`url`, 10 minutes) for html, svg and mermaid; see below |
+| `artifacts.rename` `{id, title}`, `artifacts.delete` `{id}` | `artifacts:write` | |
 | `mcp.call` `{server, tool, arguments}` | `mcp:<server>/<tool>` | see below |
 
 Methods that change data are recorded in `okbot audit` as `bot.<method>` with the source
 `app:<name>`.
+
+Only okbot's built-in artifacts app may show the viewer link in a frame: its frame alone gets
+`frame-src` for the bot. Other apps can list and read artifacts, and download them with
+`okbot.download`.
 
 Times are RFC 3339 with the bot's offset, or `YYYY-MM-DD HH:MM` in the bot's time zone.
 

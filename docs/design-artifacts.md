@@ -103,9 +103,9 @@ Instructions, added to the `bot` server's:
   the owner's total (`quota_person`, default 50 MB) and the bot's (`quota_bot`, default 1 GB).
 - **Versions.** Only the newest `keep_versions` (default 10) are kept. Older ones are deleted
   when a new one is saved, and their entries stay in `index.md` marked `pruned`.
-- **The button comes from okbot, not the agent.** The runtime sees each `artifact_save` of the turn
-  (the knowledge adapter reports it through the run grant) and attaches **Open <title>** to the
-  reply, at most 2. This works with interactive replies off too, on every platform with buttons.
+- **The button comes from okbot, not the agent.** After the reply, the runtime lists the asker's
+  artifacts and takes the ones whose newest version they saved during the turn, and attaches
+  **Open <title>** for them, at most 2. This works with interactive replies off too, on every platform with buttons.
   Elsewhere the reply ends with `/app artifacts <id>`. The agent can still add one with `show`.
 - **Audit.** Each save, rename and delete is a `ToolCallRecord` with server `bot`. Writes from the
   app are audited with command `app:artifacts`, as other app writes are.
@@ -149,14 +149,16 @@ Response headers:
 ```
 Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';
   img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none';
-  form-action 'none'; base-uri 'none'; frame-ancestors <bot origin>;
-  sandbox allow-scripts
+  form-action 'none'; base-uri 'none'; sandbox allow-scripts
 Cache-Control: no-store
 Referrer-Policy: no-referrer
 X-Content-Type-Options: nosniff
 Cross-Origin-Resource-Policy: same-origin
 ```
 
+- **No `frame-ancestors`.** The viewer's parent is the app's sandboxed frame. Its origin is
+  opaque and matches no source, so browsers would refuse every frame (checked in Chromium). The
+  link's secret, valid for 10 minutes and bound to one version, decides who sees the page.
 - **No network.** `connect-src 'none'` and no remote `img-src`, `font-src` or `script-src`. An
   artifact cannot fetch, beacon or load a tracking pixel.
 - **No cookies, no API.** `sandbox` without `allow-same-origin` gives it an opaque origin. The
@@ -170,8 +172,9 @@ Cross-Origin-Resource-Policy: same-origin
   `[artifacts] scripts = false` serves `script-src 'none'` instead.
 - **Only the artifacts app may frame it.** Its manifest is built-in, and okbot adds
   `frame-src 'self'` to the app frame's CSP for that built-in only. Registry apps cannot.
-- **Download.** The shell, not the sandbox, offers a download through a trusted dialog. It calls
-  `artifacts.open` with `download: true` and gets `Content-Disposition: attachment`.
+- **Download.** The shell, not the sandbox, offers a download through a trusted dialog
+  (`okbot.download`). It calls `artifacts.open` with `download: true` and gets
+  `Content-Disposition: attachment`, named after the title.
 
 ## 6. Configuration
 
