@@ -356,6 +356,21 @@ async fn the_agent_saves_artifacts_as_files_and_finds_them_by_their_summary() {
     assert!(reply.to_string().contains("Supplier comparison"), "{reply}");
     assert!(!reply.to_string().contains("see_also"), "one item is short");
 
+    // Search finds the artifact by its summary, never by a version's content, and only for
+    // those who see it.
+    let found = k
+        .excerpts(&who("u1", "r1"), "suppliers price delivery")
+        .await
+        .unwrap();
+    assert!(found.contains("Supplier comparison"), "{found}");
+    assert!(found.contains("[artifacts/"), "{found}");
+    assert!(!found.contains("<td>"), "{found}");
+    let other = k
+        .excerpts(&who("u2", "r2"), "suppliers price delivery")
+        .await
+        .unwrap();
+    assert!(!other.contains("Supplier comparison"), "{other}");
+
     let root = dir.path().join("kb");
     let files: Vec<String> = walk(&root, "artifacts");
     assert!(files.iter().any(|f| f.ends_with("/v2.html")), "{files:?}");

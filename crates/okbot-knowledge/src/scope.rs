@@ -5,7 +5,9 @@ use okbot_core::Requester;
 
 use crate::paths;
 
-/// The scope for `who`: shared folders, the room's notes and the user's own profile and notes.
+/// The scope for `who`: shared folders, the room's notes, tasks and artifacts, and the user's own
+/// profile, notes, tasks and artifacts. Artifact versions are never indexed (`.okbaseignore`), so
+/// only their titles and summaries are found.
 ///
 /// okbase's `deny` always wins over `allow`, so the scope is an allow-list: memory of other users
 /// and rooms simply never matches.
@@ -17,7 +19,7 @@ pub(crate) fn for_requester(who: &Requester) -> Scope {
         .collect();
     let mut owned = vec![paths::room_dir(channel, &who.conversation.room)];
     owned.extend(paths::personal_dirs(who));
-    for area in ["tasks", "notes"] {
+    for area in ["tasks", "notes", "artifacts"] {
         let dirs: Vec<String> = owned.iter().map(|d| paths::in_area(area, d)).collect();
         patterns.extend(dirs);
     }
@@ -94,6 +96,10 @@ mod tests {
         assert!(!s.permits_path("tasks/rooms/zalo-shop/r2/t-abc123"));
         assert!(s.permits_path("notes/users/zalo-shop/u1/2026/2026-10-14"));
         assert!(!s.permits_path("notes/users/zalo-shop/u2/2026/2026-10-14"));
+        assert!(s.permits_path("artifacts/users/zalo-shop/u1/a-23456789ab"));
+        assert!(s.permits_path("artifacts/rooms/zalo-shop/r1/a-23456789ab"));
+        assert!(!s.permits_path("artifacts/users/zalo-shop/u2/a-23456789ab"));
+        assert!(!s.permits_path("artifacts/rooms/zalo-shop/r2/a-23456789ab"));
     }
 
     #[test]
