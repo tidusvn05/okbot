@@ -25,3 +25,4 @@ by a new ADR that supersedes the old one; old ADRs are kept.
 | [0018](0018-reloading-access-lists.md) | Reloading access lists (admins, allow_users, people, roles) without a restart | Accepted |
 | [0019](0019-apps-and-app-sessions.md) | Apps: sandboxed web pages behind chat summaries, opened with launch tickets | Accepted |
 | [0020](0020-app-registry.md) | An app registry in a separate, signed repository | Accepted |
+| [0021](0021-artifacts.md) | Artifacts: files the agent makes, kept in the bundle, shown in a sandbox | Proposed |
