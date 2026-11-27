@@ -261,7 +261,8 @@ def main() -> int:
                 arts.get_by_role("button", name="Download").click()
                 with page.expect_download() as download:
                     page.locator(".dialog button.primary").click()
-                if download.value.suggested_filename != "E2E page.html":
+                # WebKit swaps spaces for underscores in a suggested name.
+                if download.value.suggested_filename not in ("E2E page.html", "E2E_page.html"):
                     problems.append(f"download named {download.value.suggested_filename!r}")
                 viewer.locator("#leave").click()
                 expect(arts.locator("iframe.viewer")).to_have_count(0)
@@ -300,8 +301,12 @@ def main() -> int:
             chat.close()
     # The second page's refused sign-in is expected to log a failed request.
     problems = [p for p in problems if "401" not in p and "403" not in p]
-    # The artifact page's fetch is meant to be refused (connect-src 'none').
-    problems = [p for p in problems if not ("/apps/view/" in p and "connect" in p.lower())]
+    # The artifact page's fetch is meant to be refused (connect-src 'none'). WebKit reports it
+    # without the page's URL, naming only the address the page tried.
+    problems = [
+        p for p in problems
+        if not ("connect" in p.lower() and ("/apps/view/" in p or "/apps/api/session" in p))
+    ]
     # WebKit (WPE) styles `<select>` with an internal stylesheet and reports the page's CSP as
     # refusing it; pages render correctly. Chromium and Firefox still catch real inline styles.
     if BROWSER == "webkit":
