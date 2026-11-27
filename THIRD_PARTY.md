@@ -9,5 +9,10 @@ Sans and Noto Sans JP under the SIL Open Font License 1.1: see `crates/okbot-cha
 (`FONTS-OFL.txt` in release archives) and `crates/okbot-chart/fonts/build.py`. Building without
 the `charts-ja` feature leaves out the Japanese one.
 
+The built-in artifacts app serves Mermaid 12.3.0 (`crates/okbot-apps/builtin/vendor/mermaid/`,
+gzipped and embedded in the binary) under the MIT License, copyright Knut Sveidqvist: see
+`crates/okbot-apps/builtin/vendor/mermaid/LICENSE` (`MERMAID-LICENSE.txt` in release archives).
+Its `README.md` there records the npm package and checksums.
+
 The default knowledge bundle (`crates/okbot-knowledge/template/`) is original to okbot and
 licensed like the rest of the repository.

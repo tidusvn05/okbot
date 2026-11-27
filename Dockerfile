@@ -21,6 +21,9 @@ RUN apt-get update \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 10001 okbot
 COPY --from=build /src/target/release/okbot /usr/local/bin/okbot
+COPY --from=build /src/LICENSE-MIT /src/LICENSE-APACHE /src/THIRD_PARTY.md /usr/share/doc/okbot/
+COPY --from=build /src/crates/okbot-chart/fonts/OFL.txt /usr/share/doc/okbot/FONTS-OFL.txt
+COPY --from=build /src/crates/okbot-apps/builtin/vendor/mermaid/LICENSE /usr/share/doc/okbot/MERMAID-LICENSE.txt
 USER okbot
 WORKDIR /bot
 VOLUME ["/bot", "/home/okbot"]
