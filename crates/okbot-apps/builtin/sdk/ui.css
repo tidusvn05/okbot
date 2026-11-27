@@ -13,7 +13,7 @@ body { margin: 0 auto; max-width: 52rem; padding: 1rem; background: var(--bg); c
 header h1 { margin: 0; font-size: 1.35rem; }
 header p { margin: .2rem 0 1rem; color: var(--muted); font-size: .9rem; }
 form { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; }
-input, select, button {
+input, select, button, textarea {
   font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .45rem; padding: .4rem .6rem;
 }
 form input[type="search"], form .grow { flex: 1 1 14rem; }
@@ -46,3 +46,27 @@ button.primary, form button[type="submit"] { background: var(--accent); border-c
 .ok { color: var(--ok); } .warn { color: var(--warn); }
 a.back { color: var(--accent); cursor: pointer; text-decoration: none; display: inline-block; margin-bottom: .6rem; }
 .list li.click { cursor: pointer; } .list li.click:hover { border-color: var(--accent); }
+textarea { width: 100%; resize: vertical; }
+form.edit { display: grid; grid-template-columns: 1fr; gap: .45rem; margin: 0; }
+form.edit label { display: grid; gap: .2rem; font-size: .85rem; color: var(--muted); }
+form.edit label input, form.edit label textarea { color: var(--fg); }
+.row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .3rem 0; }
+.hint { color: var(--muted); font-size: .85rem; margin: 0; }
+input:disabled, textarea:disabled, button:disabled { opacity: .55; cursor: default; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .3rem; margin: .6rem 0; }
+.cal-head { font-size: .75rem; font-weight: 700; color: var(--muted); text-align: center; }
+.cal-day {
+  min-height: 4.6rem; padding: .3rem; text-align: left; display: flex; flex-direction: column; gap: .15rem;
+  border-radius: .5rem; overflow: hidden;
+}
+.cal-day .n { font-size: .8rem; font-weight: 700; }
+.cal-day.today .n { color: var(--accent); }
+.cal-day.picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cal-day.out { background: transparent; border-style: dashed; }
+.cal-day .ev { font-size: .7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 2px solid var(--accent); padding-left: .25rem; }
+.cal-day .ev.routine { border-color: var(--ok); } .cal-day .ev.automation { border-color: var(--warn); }
+.cal-day .ev.more { border: 0; color: var(--muted); }
+@media (max-width: 36rem) {
+  .cal-day { min-height: 3.2rem; } .cal-day .ev { display: none; }
+  .cal-day.has::after { content: "•"; color: var(--accent); font-size: 1.2rem; line-height: 1; }
+}

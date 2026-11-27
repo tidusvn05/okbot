@@ -21,8 +21,8 @@ Built-in apps:
 
 | App | What it shows | Chat |
 | --- | --- | --- |
-| `tasks` | every to-do, reminder and routine, with search, filters, done, snooze, pause, resume, cancel and add | `/tasks`, `/app tasks` |
-| `schedule` | reminders and routine runs of the next 7 or 30 days, repeats included; scheduled automations for administrators | `/app schedule` |
+| `tasks` | every to-do, reminder and routine: search, filter by kind, by place (only mine, this room) or by who made it, sort by what comes next; add, edit (title, notes, due, reminder time, repeat), done, snooze (1 h, 3 h, tomorrow 9:00), pause, resume, cancel | `/tasks`, `/app tasks` |
+| `schedule` | reminders and routine runs of the next 7 or 30 days, repeats included, as an agenda or a calendar; add a reminder (once, daily, weekdays, weekly, monthly), change its time, snooze, pause; scheduled automations for administrators | `/app schedule` |
 | `memory` | what the bot remembers about you, this room and everyone; forget a note | `/app memory` |
 | `notes` | the journal by day: search, read, add a line | `/app notes` |
 | `knowledge` | the documents the bot answers from, as far as you may see them | `/app knowledge` |

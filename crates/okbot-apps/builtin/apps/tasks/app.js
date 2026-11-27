@@ -1,30 +1,45 @@
 // The built-in Tasks app (ADR 0019): every task the bot keeps for you and this room.
 "use strict";
 (() => {
-  const W = {
+  const t = okbot.words({
     en: {
       title: "Tasks", search: "Search", open: "Open", all: "All", done: "Done",
       any: "Every kind", todo: "To-dos", reminder: "Reminders", routine: "Routines",
-      add: "Add", newTitle: "New to-do", personal: "personal", room: "this room",
-      directNote: "Your own tasks and this chat's.", roomNote: "Tasks of {room}. Your own tasks are shown when you open this from a direct chat.",
-      markDone: "Done", snooze: "Snooze 1h", pause: "Pause", resume: "Resume", cancel: "Cancel",
+      anywhere: "Everyone's", mine: "Made by me", personal: "Only mine", room: "This room",
+      next: "Coming first", created: "Newest", sorted: "As stored",
+      add: "Add", newTitle: "New to-do", newReminder: "Remind me to…", personalBadge: "personal", roomBadge: "this room",
+      directNote: "Your own tasks and this chat's. Times in {tz}.",
+      roomNote: "Tasks of {room}. Your own tasks are shown when you open this from a direct chat. Times in {tz}.",
+      markDone: "Done", snooze: "Snooze", in1h: "1 hour", in3h: "3 hours", tomorrow: "Tomorrow 9:00",
+      edit: "Edit", save: "Save", close: "Close", pause: "Pause", resume: "Resume", cancel: "Cancel",
+      fTitle: "Title", fNotes: "Notes", fDue: "Due", fRemind: "Remind at", fRepeat: "Repeat",
+      repeatHint: "daily 08:00, weekdays 08:00, weekly mon,fri 09:00, monthly 1 09:00, every 3h",
+      routineNote: "A routine's prompt and schedule are changed in chat.",
       due: "due {at}", at: "⏰ {at}", late: "overdue", more: "Show more", empty: "No tasks here.",
       saved: "Saved.", sureCancel: "Cancel “{title}”?", loading: "Loading…", count: "{n} tasks", one: "1 task",
-      paused: "paused", cancelled: "cancelled", failed: "Could not do that: {why}",
+      paused: "paused", cancelled: "cancelled", byOther: "by someone else", needTime: "A reminder needs a time.",
+      failed: "Could not do that: {why}",
     },
     vi: {
       title: "Công việc", search: "Tìm", open: "Chưa xong", all: "Tất cả", done: "Đã xong",
       any: "Mọi loại", todo: "Việc cần làm", reminder: "Nhắc nhở", routine: "Routine",
-      add: "Thêm", newTitle: "Việc mới", personal: "cá nhân", room: "phòng này",
-      directNote: "Việc của bạn và của chat này.", roomNote: "Việc của {room}. Việc cá nhân chỉ hiện khi bạn mở từ chat riêng.",
-      markDone: "Xong", snooze: "Hoãn 1 giờ", pause: "Tạm dừng", resume: "Chạy lại", cancel: "Huỷ",
+      anywhere: "Của mọi người", mine: "Tôi tạo", personal: "Chỉ của tôi", room: "Phòng này",
+      next: "Sắp đến trước", created: "Mới tạo", sorted: "Theo thứ tự lưu",
+      add: "Thêm", newTitle: "Việc mới", newReminder: "Nhắc tôi…", personalBadge: "cá nhân", roomBadge: "phòng này",
+      directNote: "Việc của bạn và của chat này. Giờ theo {tz}.",
+      roomNote: "Việc của {room}. Việc cá nhân chỉ hiện khi bạn mở từ chat riêng. Giờ theo {tz}.",
+      markDone: "Xong", snooze: "Hoãn", in1h: "1 giờ", in3h: "3 giờ", tomorrow: "9:00 ngày mai",
+      edit: "Sửa", save: "Lưu", close: "Đóng", pause: "Tạm dừng", resume: "Chạy lại", cancel: "Huỷ",
+      fTitle: "Tiêu đề", fNotes: "Ghi chú", fDue: "Hạn", fRemind: "Nhắc lúc", fRepeat: "Lặp lại",
+      repeatHint: "daily 08:00, weekdays 08:00, weekly mon,fri 09:00, monthly 1 09:00, every 3h",
+      routineNote: "Prompt và lịch của routine được đổi trong chat.",
       due: "hạn {at}", at: "⏰ {at}", late: "quá hạn", more: "Xem thêm", empty: "Không có việc nào.",
       saved: "Đã lưu.", sureCancel: "Huỷ “{title}”?", loading: "Đang tải…", count: "{n} việc", one: "1 việc",
-      paused: "tạm dừng", cancelled: "đã huỷ", failed: "Không làm được: {why}",
+      paused: "tạm dừng", cancelled: "đã huỷ", byOther: "người khác tạo", needTime: "Nhắc nhở cần có giờ.",
+      failed: "Không làm được: {why}",
     },
-  };
-  const words = W[okbot.lang] ?? W.en;
-  const t = (k, v = {}) => words[k].replace(/\{(\w+)\}/g, (_, x) => v[x] ?? "");
+  });
+  const { h } = okbot;
   const $ = (id) => document.getElementById(id);
 
   let me = null;
@@ -33,24 +48,23 @@
   const state = {
     status: okbot.view.path === "/all" ? "all" : "active",
     kind: okbot.view.params.kind ?? "",
+    place: "",
+    sort: "next",
     q: "",
   };
 
-  const option = (select, value, label) => {
-    const o = document.createElement("option");
-    o.value = value;
-    o.textContent = label;
-    select.append(o);
-  };
+  const option = (select, value, label) => select.append(h("option", { value }, label));
+  const say = (text) => { $("message").textContent = text ?? ""; };
+  const when = (iso) => okbot.when(iso, me?.timezone);
+  // Times come in the bot's zone (`2026-11-27T09:00:00+07:00`): their first 16 characters are what
+  // a datetime-local field shows, and the App API reads that back in the same zone.
+  const local = (iso) => (iso ? iso.slice(0, 16) : "");
 
-  function when(iso) {
-    const d = new Date(iso);
-    return d.toLocaleString(okbot.lang === "vi" ? "vi-VN" : undefined, {
-      timeZone: me?.timezone, weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
-    });
+  function tomorrowAt9() {
+    const d = new Intl.DateTimeFormat("en-CA", { timeZone: me.timezone, year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date(Date.now() + 86400000));
+    return `${d} 09:00`;
   }
-
-  function say(text) { $("message").textContent = text ?? ""; }
 
   async function act(fn) {
     try {
@@ -62,52 +76,76 @@
     }
   }
 
+  function editor(task, li) {
+    const routine = task.kind === "routine";
+    const field = (label, input) => h("label", {}, h("span", {}, label), input);
+    const title = h("input", { value: task.title, maxlength: 200, required: true });
+    const notes = h("textarea", { rows: 3, maxlength: 2000, disabled: routine });
+    notes.value = task.notes ?? "";
+    const due = h("input", { type: "datetime-local", value: local(task.due) });
+    const remind = h("input", { type: "datetime-local", value: local(task.remind_at) });
+    const repeat = h("input", { value: task.repeat ?? "", placeholder: t("repeatHint"), disabled: routine });
+    const form = h("form", { class: "edit", onsubmit: (e) => {
+      e.preventDefault();
+      const change = { id: task.id };
+      if (title.value.trim() !== task.title) change.title = title.value.trim();
+      if (!routine && notes.value !== (task.notes ?? "")) change.notes = notes.value;
+      if (due.value !== local(task.due)) change.due = due.value;
+      if (remind.value !== local(task.remind_at)) change.remind_at = remind.value;
+      if (!routine && repeat.value.trim() !== (task.repeat ?? "")) change.repeat = repeat.value.trim();
+      act(() => okbot.call("tasks.update", change));
+    } },
+      field(t("fTitle"), title),
+      field(t("fNotes"), notes),
+      field(t("fDue"), due),
+      field(t("fRemind"), remind),
+      field(t("fRepeat"), repeat),
+      routine ? h("p", { class: "hint" }, t("routineNote")) : null,
+      h("div", { class: "row" },
+        h("button", { type: "submit", class: "primary" }, t("save")),
+        h("button", { type: "button", onclick: () => li.replaceWith(item(task)) }, t("close"))));
+    li.replaceChildren(form);
+    li.classList.add("single");
+    title.focus();
+  }
+
   function item(task) {
-    const li = document.createElement("li");
-    if (!["open", "paused"].includes(task.status)) li.className = "done";
-    const title = document.createElement("div");
-    title.className = "t";
-    title.textContent = task.title;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const add = (text, cls) => {
-      const s = document.createElement("span");
-      s.textContent = text;
-      if (cls) s.className = cls;
-      meta.append(s);
-    };
-    add(words[task.kind] ?? task.kind, "badge");
-    add(task.scope === "room" ? t("room") : t("personal"), "badge");
-    if (task.remind_at) add(t("at", { at: when(task.remind_at) }) + (task.repeat ? " · " + task.repeat : ""));
-    if (task.due) add(t("due", { at: when(task.due) }), task.overdue ? "late" : "");
-    if (task.overdue) add(t("late"), "late");
-    if (task.status === "paused") add(t("paused"));
-    if (task.status === "cancelled") add(t("cancelled"));
-    li.append(title, meta);
-    if (task.notes) {
-      const n = document.createElement("div");
-      n.className = "notes";
-      n.textContent = task.notes;
-      li.append(n);
-    }
-    if (can.write && ["open", "paused"].includes(task.status)) {
-      const actions = document.createElement("div");
-      actions.className = "actions";
-      const button = (label, fn, primary) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.textContent = label;
-        if (primary) b.className = "primary";
-        b.onclick = () => act(fn);
-        actions.append(b);
-      };
-      if (task.kind !== "routine") button(t("markDone"), () => okbot.call("tasks.done", { id: task.id }), true);
-      if (task.kind === "reminder" && task.status === "open") button(t("snooze"), () => okbot.call("tasks.snooze", { id: task.id, until: "1h" }));
-      if (task.status === "open") button(t("pause"), () => okbot.call("tasks.pause", { id: task.id }));
-      else button(t("resume"), () => okbot.call("tasks.resume", { id: task.id }));
-      button(t("cancel"), async () => {
-        if (await okbot.confirm(t("sureCancel", { title: task.title }))) await okbot.call("tasks.cancel", { id: task.id });
-      });
+    const active = ["open", "paused"].includes(task.status);
+    const li = h("li", { class: active ? "" : "done" });
+    const meta = h("div", { class: "meta" },
+      h("span", { class: "badge" }, t(task.kind)),
+      h("span", { class: "badge" }, task.scope === "room" ? t("roomBadge") : t("personalBadge")),
+      task.remind_at ? h("span", {}, t("at", { at: when(task.remind_at) }) + (task.repeat ? " · " + task.repeat : "")) : null,
+      task.due ? h("span", { class: task.overdue ? "late" : "" }, t("due", { at: when(task.due) })) : null,
+      task.overdue ? h("span", { class: "late" }, t("late")) : null,
+      task.status === "paused" ? h("span", {}, t("paused")) : null,
+      task.status === "cancelled" ? h("span", {}, t("cancelled")) : null,
+      task.scope === "room" && !task.mine ? h("span", {}, t("byOther")) : null);
+    li.append(h("div", { class: "t" }, task.title), meta);
+    if (task.notes) li.append(h("div", { class: "notes" }, task.notes));
+    if (can.write && active) {
+      const button = (label, fn, primary) =>
+        h("button", { type: "button", class: primary ? "primary" : "", onclick: () => act(fn) }, label);
+      const actions = h("div", { class: "actions" });
+      if (task.kind !== "routine") actions.append(button(t("markDone"), () => okbot.call("tasks.done", { id: task.id }), true));
+      if (task.kind !== "routine" && task.remind_at && task.status === "open") {
+        const snooze = h("select", { "aria-label": t("snooze"), onchange: () => {
+          const until = snooze.value === "tomorrow" ? tomorrowAt9() : snooze.value;
+          snooze.value = "";
+          act(() => okbot.call("tasks.snooze", { id: task.id, until }));
+        } });
+        option(snooze, "", t("snooze"));
+        option(snooze, "1h", t("in1h"));
+        option(snooze, "3h", t("in3h"));
+        option(snooze, "tomorrow", t("tomorrow"));
+        actions.append(snooze);
+      }
+      actions.append(h("button", { type: "button", onclick: () => editor(task, li) }, t("edit")));
+      if (task.status === "open") actions.append(button(t("pause"), () => okbot.call("tasks.pause", { id: task.id })));
+      else actions.append(button(t("resume"), () => okbot.call("tasks.resume", { id: task.id })));
+      actions.append(h("button", { type: "button", onclick: async () => {
+        if (await okbot.confirm(t("sureCancel", { title: task.title }))) act(() => okbot.call("tasks.cancel", { id: task.id }));
+      } }, t("cancel")));
       li.append(actions);
     }
     return li;
@@ -117,8 +155,12 @@
     if (fresh) { cursor = null; $("list").replaceChildren(); }
     say(t("loading"));
     try {
+      const place = state.place;
       const page = await okbot.call("tasks.list", {
-        status: state.status, kind: state.kind || undefined, query: state.q || undefined, cursor, limit: 50,
+        status: state.status, kind: state.kind || undefined, query: state.q || undefined,
+        scope: place === "personal" || place === "room" ? place : undefined,
+        mine: place === "mine" ? true : undefined,
+        sort: state.sort || undefined, cursor, limit: 50,
       });
       for (const task of page.items) $("list").append(item(task));
       cursor = page.next ?? null;
@@ -129,9 +171,36 @@
     }
   }
 
+  function addForm() {
+    const kind = $("new-kind");
+    option(kind, "todo", t("todo"));
+    option(kind, "reminder", t("reminder"));
+    const placeholder = () => { $("new-title").placeholder = kind.value === "reminder" ? t("newReminder") : t("newTitle"); };
+    kind.onchange = placeholder;
+    placeholder();
+    $("add-button").textContent = t("add");
+    $("add").onsubmit = (e) => {
+      e.preventDefault();
+      const title = $("new-title").value.trim();
+      if (!title) return;
+      const time = $("new-time").value;
+      if (kind.value === "reminder" && !time) { say(t("needTime")); return; }
+      const args = kind.value === "reminder"
+        ? { kind: "reminder", title, remind_at: time }
+        : { kind: "todo", title, due: time || undefined };
+      act(async () => {
+        await okbot.call("tasks.add", args);
+        $("new-title").value = "";
+        $("new-time").value = "";
+      });
+    };
+  }
+
   async function start() {
     $("title").textContent = t("title");
     okbot.setTitle(t("title"));
+    me = await okbot.me();
+    can.write = me.permissions.includes("tasks:write");
     $("q").placeholder = t("search");
     option($("status"), "active", t("open"));
     option($("status"), "all", t("all"));
@@ -139,30 +208,25 @@
     $("status").value = state.status;
     for (const k of ["", "todo", "reminder", "routine"]) option($("kind"), k, k ? t(k) : t("any"));
     $("kind").value = state.kind;
-    $("new-title").placeholder = t("newTitle");
-    $("add-button").textContent = t("add");
+    option($("place"), "", t("anywhere"));
+    option($("place"), "mine", t("mine"));
+    if (me.context.direct) option($("place"), "personal", t("personal"));
+    option($("place"), "room", t("room"));
+    option($("sort"), "next", t("next"));
+    option($("sort"), "created", t("created"));
+    option($("sort"), "", t("sorted"));
+    $("sort").value = state.sort;
     $("more").textContent = t("more");
-    me = await okbot.me();
-    can.write = me.permissions.includes("tasks:write");
     $("add").hidden = !can.write;
-    $("where").textContent = me.context.direct ? t("directNote") : t("roomNote", { room: me.context.label });
+    if (can.write) addForm();
+    $("where").textContent = me.context.direct
+      ? t("directNote", { tz: me.timezone })
+      : t("roomNote", { room: me.context.label, tz: me.timezone });
     let timer;
     $("q").oninput = () => { clearTimeout(timer); timer = setTimeout(() => { state.q = $("q").value.trim(); load(true); }, 250); };
-    $("status").onchange = () => { state.status = $("status").value; load(true); };
-    $("kind").onchange = () => { state.kind = $("kind").value; load(true); };
+    for (const k of ["status", "kind", "place", "sort"]) $(k).onchange = () => { state[k] = $(k).value; load(true); };
     $("filters").onsubmit = (e) => e.preventDefault();
     $("more").onclick = () => load(false);
-    $("add").onsubmit = (e) => {
-      e.preventDefault();
-      const title = $("new-title").value.trim();
-      if (!title) return;
-      const due = $("new-due").value;
-      act(async () => {
-        await okbot.call("tasks.add", { title, due: due || undefined });
-        $("new-title").value = "";
-        $("new-due").value = "";
-      });
-    };
     await load(true);
   }
   start().catch((e) => say(t("failed", { why: e.message })));

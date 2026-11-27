@@ -93,7 +93,7 @@ loading another page into the frame, even one of the app's own, makes the shell 
 | Method | Permission | Notes |
 | --- | --- | --- |
 | `me` | `me` | |
-| `tasks.list` `{status: active\|all\|done, kind, query, cursor, limit}` | `tasks:read` | paged: `{items, total, next}` |
+| `tasks.list` `{status: active\|all\|done, kind, query, scope: personal\|room, mine, sort: next\|created, cursor, limit}` | `tasks:read` | paged: `{items, total, next}`; each task has `mine` |
 | `tasks.get` `{id}` | `tasks:read` | |
 | `tasks.add` `{title, notes, due, remind_at, repeat, kind: todo\|reminder}` | `tasks:write` | routines are made in chat |
 | `tasks.update` `{id, title, notes, due, remind_at, repeat}` | `tasks:write` | `null` clears a time |
