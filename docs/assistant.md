@@ -45,6 +45,21 @@ A reminder reaches you only on a channel where you have written to the bot in a 
 least once. If the bot was stopped when a reminder was due, it is sent late within 6 hours
 (`[schedule] late_grace_minutes`), otherwise reported by `okbot doctor`.
 
+## Artifacts: pages and files the assistant made
+
+Ask for a page, a document, a table or a diagram worth keeping and the assistant saves it as an
+artifact, with an **Open** button under the answer. Asking for a change saves a new version.
+
+| Command | |
+|---|---|
+| `/artifacts` | the ten newest here, with Open buttons |
+| `/app artifacts [id]` | the app: search, view, versions, download, rename, delete |
+
+Terminal: `okbot artifact list [--json]`, `okbot artifact show <id>`,
+`okbot artifact export <id> [-v <n>] [-o <file>|-o -]`, `okbot artifact rm <id>`. `okbot doctor`
+reports their size against the quotas. Settings: `[artifacts]`, see
+[design-artifacts.md](design-artifacts.md).
+
 ## Routines: the agent at a set time
 
 Ask in chat: "every morning at 7, summarise my tasks for today". A routine runs the agent with your

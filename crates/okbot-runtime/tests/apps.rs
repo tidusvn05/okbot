@@ -1103,3 +1103,34 @@ async fn a_reply_that_saved_an_artifact_gets_an_open_button() {
     assert_eq!(bot.channel.prompts().len(), before);
     bot.finish().await;
 }
+
+#[tokio::test]
+async fn the_artifacts_command_lists_the_newest_with_open_buttons() {
+    use okbot_core::{ArtifactKind, ArtifactStore as _};
+    let bot = Bot::start(true, |_| {});
+    bot.say("team", "ana", "/artifacts", false).await;
+    assert!(
+        bot.channel
+            .sent_texts()
+            .iter()
+            .any(|t| t.starts_with("No artifacts here yet")),
+        "{:?}",
+        bot.channel.sent_texts()
+    );
+    let ana = requester("team", "ana", false);
+    for title in ["One", "Two", "Three", "Four", "Five", "Six"] {
+        let mut new = new_artifact(title, ArtifactKind::Markdown, "# hi");
+        new.scope = okbot_core::MemoryScope::Room;
+        bot.artifacts.save(&ana, new).await.unwrap();
+    }
+    bot.say("team", "ana", "/artifacts", false).await;
+    let texts = bot.channel.sent_texts().join("\n");
+    assert!(texts.contains("**Six** · markdown · v1"), "{texts}");
+    let prompts = bot.channel.prompts();
+    let prompt = prompts.last().expect("a row of buttons");
+    let labels: Vec<&str> = prompt.buttons.iter().map(|b| b.label.as_str()).collect();
+    assert_eq!(labels.len(), okbot_core::MAX_BUTTONS, "{labels:?}");
+    assert_eq!(labels.last(), Some(&"All artifacts"), "{labels:?}");
+    assert!(prompt.buttons.iter().all(|b| b.launch), "{labels:?}");
+    bot.finish().await;
+}

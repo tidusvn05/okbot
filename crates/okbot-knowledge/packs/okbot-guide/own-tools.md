@@ -79,7 +79,7 @@ Names use `a-z`, `0-9` and `_` (at most 32) and cannot reuse a built-in command.
 names are `help`, `reset`, `new`, `clear`, `whoami`, `stop`, `cancel`, `remember`, `forget`,
 `memories`, `memory`, `pair`, `tasks`, `todo`, `todos`, `done`, `snooze`, `later`, `resume`,
 `start`, `pause`, `note`, `approve`, `deny`, `answer`, `grant`, `revoke`, `roles`, `connect`,
-`disconnect` and `connections`. `okbot commands --builtin` prints them (`--json` for scripts), and
+`disconnect`, `connections`, `app`, `apps`, `artifacts` and `artifact`. `okbot commands --builtin` prints them (`--json` for scripts), and
 `okbot doctor` names every `[[command]]` that uses one in a single report.
 
 Test without a platform: `okbot chat --strict`, then `/logs …`.

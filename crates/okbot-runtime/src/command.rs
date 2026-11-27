@@ -56,6 +56,8 @@ pub(crate) enum Command {
     Connections,
     /// `/app [name [view] | sessions | logout]`: open an app (ADR 0019).
     App(String),
+    /// `/artifacts`: the newest pages and files made here, with Open buttons (ADR 0021).
+    Artifacts,
 }
 
 impl Command {
@@ -92,6 +94,7 @@ impl Command {
             "disconnect" => Some(Self::Disconnect(rest)),
             "connections" => Some(Self::Connections),
             "app" | "apps" => Some(Self::App(rest)),
+            "artifacts" | "artifact" => Some(Self::Artifacts),
             _ => None,
         }
     }
@@ -130,7 +133,7 @@ pub(crate) async fn execute(s: &Shared, command: Command, event: &InboundEvent) 
         },
         Command::Stop => "Nothing is running.".to_string(),
         // Sent by dispatch itself: its answer is a view.
-        Command::App(_) => String::new(),
+        Command::App(_) | Command::Artifacts => String::new(),
         Command::Remember(_) | Command::Forget(_) | Command::Memories => {
             memory(s, command, event).await
         }
@@ -554,6 +557,7 @@ pub(crate) fn help_text(bot_name: &str) -> String {
          - `/snooze [10m|2h|15:30]`: remind me again of the last reminder\n\
          - `/pause <number>`, `/resume <number>`: stop or start a task; new routines start paused\n\
          - `/note <text>`: add a line to today's notes\n\
+         - `/artifacts`: pages, tables and diagrams I made for you here\n\
          - `/app [name]`: open an app with everything at once (tasks, …); `/app logout` signs your browsers out\n\
          - `/pair <code>`: on a personal assistant, add this account to the owner's (`okbot pair`)\n\
          - `/roles`: your roles in this assistant\n\
@@ -603,6 +607,7 @@ mod tests {
         );
         assert_eq!(Command::parse("/memories"), Some(Command::Memories));
         assert_eq!(Command::parse("/tasks"), Some(Command::Tasks(false)));
+        assert_eq!(Command::parse("/artifacts"), Some(Command::Artifacts));
         assert_eq!(Command::parse("/todo ALL"), Some(Command::Tasks(true)));
         assert_eq!(Command::parse("/done 2"), Some(Command::Done("2".into())));
         assert_eq!(

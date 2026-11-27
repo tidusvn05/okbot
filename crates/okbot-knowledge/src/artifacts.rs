@@ -454,6 +454,50 @@ impl Artifacts {
         version: Option<u32>,
     ) -> Result<(Artifact, u32, String), ArtifactError> {
         let a = self.find(who, id)?;
+        self.content(a, version)
+    }
+
+    /// Any artifact by short or full id (operators).
+    pub(crate) fn find_any(&self, id: &str) -> Result<Artifact, ArtifactError> {
+        let id = id.trim().trim_end_matches(".md");
+        let mut found: Vec<Artifact> = self
+            .all()
+            .into_iter()
+            .filter(|a| a.id == id || (!id.contains('/') && a.short_id() == id))
+            .collect();
+        match found.len() {
+            0 => Err(ArtifactError::NotFound(id.to_string())),
+            1 => Ok(found.remove(0)),
+            _ => Err(ArtifactError::Invalid(format!(
+                "`{id}` names more than one artifact; give the full id"
+            ))),
+        }
+    }
+
+    /// Any artifact with the content of `version` (operators).
+    pub(crate) fn open_any(
+        &self,
+        id: &str,
+        version: Option<u32>,
+    ) -> Result<(Artifact, u32, String), ArtifactError> {
+        self.content(self.find_any(id)?, version)
+    }
+
+    /// Deletes any artifact (operators).
+    pub(crate) fn delete_any(&self, id: &str) -> Result<Artifact, ArtifactError> {
+        self.remove(self.find_any(id)?)
+    }
+
+    /// The limits stores check.
+    pub(crate) fn limits(&self) -> ArtifactLimits {
+        self.limits
+    }
+
+    fn content(
+        &self,
+        a: Artifact,
+        version: Option<u32>,
+    ) -> Result<(Artifact, u32, String), ArtifactError> {
         let n = version.unwrap_or(a.latest().n);
         let v = a
             .versions
@@ -487,7 +531,10 @@ impl Artifacts {
 
     /// Deletes a visible artifact with every version.
     pub(crate) fn delete(&self, who: &Requester, id: &str) -> Result<Artifact, ArtifactError> {
-        let a = self.find(who, id)?;
+        self.remove(self.find(who, id)?)
+    }
+
+    fn remove(&self, a: Artifact) -> Result<Artifact, ArtifactError> {
         if !a.id.starts_with("artifacts/") || a.id.split('/').any(|s| s.is_empty() || s == "..") {
             return Err(ArtifactError::NotFound(a.id));
         }
@@ -581,6 +628,42 @@ mod tests {
         s.delete(&ana, a.short_id()).unwrap();
         assert_eq!(s.list(&ana).len(), 0);
         assert!(!dir.path().join(&a.id).exists());
+    }
+
+    #[test]
+    fn operators_reach_every_artifact_by_short_or_full_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(dir.path(), ArtifactLimits::default());
+        let ana = who("ana", "dm-ana", true);
+        let bo = who("bo", "group", false);
+        let a = s
+            .save(
+                &ana,
+                &new("Mine", "<p>a</p>", MemoryScope::User),
+                Timestamp::now(),
+            )
+            .unwrap();
+        let b = s
+            .save(
+                &bo,
+                &new("Ours", "<p>b</p>", MemoryScope::Room),
+                Timestamp::now(),
+            )
+            .unwrap();
+        assert_eq!(s.all().len(), 2);
+        let (found, n, content) = s.open_any(a.short_id(), None).unwrap();
+        assert_eq!(
+            (found.id.as_str(), n, content.as_str()),
+            (a.id.as_str(), 1, "<p>a</p>")
+        );
+        assert_eq!(s.find_any(&b.id).unwrap().scope, MemoryScope::Room);
+        assert!(matches!(
+            s.find_any("a-nothere"),
+            Err(ArtifactError::NotFound(_))
+        ));
+        s.delete_any(b.short_id()).unwrap();
+        assert_eq!(s.all().len(), 1);
+        assert!(!dir.path().join(&b.id).exists());
     }
 
     #[test]

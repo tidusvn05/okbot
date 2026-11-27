@@ -200,6 +200,14 @@ the session, and a page that tries to open another page is closed. A banner says
 made by the assistant: never type a password into one. From the app people also switch between
 versions, download, rename and delete.
 
+In chat, `/artifacts` lists the ten newest artifacts here with Open buttons and one for the app.
+
+From the terminal the operator sees every artifact of the bot: `okbot artifact list [--json]`,
+`okbot artifact show <id>`, `okbot artifact export <id> [-v <n>] [-o <file>|-o -]` (the newest
+version by default, to `<id>.<ext>` here) and `okbot artifact rm <id>`; add `--bot <name>` outside
+the bot's folder. `okbot doctor` reports how much they take against `quota_bot` and the largest
+owner against `quota_person`, and warns past 90%.
+
 ```toml
 [artifacts]
 enabled = true          # false: the agent cannot save artifacts

@@ -3,6 +3,7 @@
 mod access;
 mod agent;
 mod app;
+mod artifact;
 mod automation;
 mod bot;
 mod channel;
@@ -91,6 +92,9 @@ enum Command {
     /// To-dos, reminders and routines.
     #[command(subcommand, alias = "tasks")]
     Task(task::TaskCommand),
+    /// Pages and files the assistant made: list, show, export and delete them.
+    #[command(subcommand, alias = "artifacts")]
+    Artifact(artifact::ArtifactCommand),
     /// Show or set who the bot serves: `personal` (only you) or `team`.
     Profile(owner::ProfileArgs),
     /// Personal assistants: get a code to pair one of your chat accounts (`/pair <code>`).
@@ -190,6 +194,7 @@ async fn main() -> ExitCode {
         Command::Agent(command) => command.json(),
         Command::History(command) => command.json(),
         Command::Task(command) => command.json(),
+        Command::Artifact(command) => command.json(),
         Command::People(command) => command.json(),
         _ => false,
     };
@@ -213,6 +218,7 @@ async fn main() -> ExitCode {
         Command::Kb(command) => kb::run(command).await,
         Command::Memory(command) => memory::run(command).await,
         Command::Task(command) => task::run(command).await,
+        Command::Artifact(command) => artifact::run(command).await,
         Command::Channel(command) => channel::run(command).await,
         Command::Profile(args) => owner::profile(&args),
         Command::Pair(args) => owner::pair(&args).await,

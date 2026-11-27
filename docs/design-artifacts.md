@@ -189,11 +189,15 @@ scripts = true
 ```
 
 `okbot artifact list|show|export|rm [--bot <name>]` lets the operator see and clean up from the
-terminal. `okbot doctor` reports use against the quotas.
+terminal; ids are short (`a-7k2m9q4x2c`) or full, and a short id two owners share must be given in
+full. `export` writes the newest version (or `-v <n>`) to `<id>.<ext>`, a file (`-o`, never over
+an existing one without `--force`) or stdout (`-o -`). `okbot doctor` reports the bot's total
+against `quota_bot` and the largest owner against `quota_person`, and warns past 90%.
 
 ## 7. Chat
 
-- `/artifacts`: the 10 newest here, with Open buttons (summary first, design-apps §4.1).
+- `/artifacts`: the 10 newest here as numbered lines (title, kind, version, time, id), then
+  Open buttons for the newest four and one for the app (at most five buttons on a message).
 - `/app artifacts <id>`: open one.
 - The `artifacts` app hint (design-app-hints §6): "pages, tables, documents or diagrams made for
   the person; to find, view or reopen one".
