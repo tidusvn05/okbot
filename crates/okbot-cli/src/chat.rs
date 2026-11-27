@@ -200,11 +200,19 @@ async fn peers(
     }
 }
 
+/// `[artifacts]` of the bot, or the defaults without one; `None` when they are off.
+fn artifact_limits(bot: Option<&okbot_config::Config>) -> Option<okbot_core::ArtifactLimits> {
+    bot.map_or_else(
+        || Some(okbot_core::ArtifactLimits::default()),
+        |b| b.artifacts.enabled.then(|| b.artifacts.limits()),
+    )
+}
+
 /// The knowledge bundle at `kb`, when there is one.
 async fn knowledge(
     kb: &Path,
     state_dir: &Path,
-    timezone: Option<&str>,
+    bot: Option<&okbot_config::Config>,
     stop: &CancellationToken,
 ) -> anyhow::Result<Option<Arc<Knowledge>>> {
     if !kb.is_dir() {
@@ -213,7 +221,8 @@ async fn knowledge(
     }
     let mut options = KnowledgeOptions::new(kb);
     options.index_dir = Some(state_dir.join("index"));
-    options.timezone = timezone.map(str::to_string);
+    options.timezone = bot.and_then(|b| b.bot.timezone.clone());
+    options.artifacts = artifact_limits(bot);
     let knowledge = Arc::new(
         tokio::task::spawn_blocking(move || Knowledge::open(options))
             .await?
@@ -340,7 +349,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
     let knowledge = knowledge(
         &kb_dir(&args, bot.as_ref()),
         &state_dir,
-        timezone.as_deref(),
+        bot.as_ref(),
         &stop,
     )
     .await?;

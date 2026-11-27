@@ -12,6 +12,8 @@
 //! `memory/global/`; a user additionally sees their own profile and notes, a room its own notes.
 
 mod areas;
+mod artifact_tools;
+mod artifacts;
 mod bot_mcp;
 mod inbox;
 mod journal;
@@ -32,9 +34,9 @@ use std::time::Duration;
 
 use okbase::{Bundle, CatalogOptions, GetRequest, GrepRequest, OpenOptions, StateDir};
 use okbot_core::{
-    CancellationToken, KnowledgeContext, KnowledgeError, KnowledgeProvider, McpServer, MemoryEntry,
-    MemoryError, MemoryNote, MemoryScope, MemoryStore, NewTask, Requester, RunGrant, Secret, Task,
-    TaskChange, TaskError, TaskStore, ToolPolicy, async_trait,
+    ArtifactError, CancellationToken, KnowledgeContext, KnowledgeError, KnowledgeProvider,
+    McpServer, MemoryEntry, MemoryError, MemoryNote, MemoryScope, MemoryStore, NewTask, Requester,
+    RunGrant, Secret, Task, TaskChange, TaskError, TaskStore, ToolPolicy, async_trait,
 };
 
 pub use inbox::{NewDocument, readable_extension};
@@ -58,6 +60,8 @@ pub struct KnowledgeOptions {
     /// IANA time zone for task times written without an offset (`Asia/Ho_Chi_Minh`); UTC if
     /// unset or unknown.
     pub timezone: Option<String>,
+    /// Bounds on artifacts (`[artifacts]`, ADR 0021); `None`: the agent has no artifact tools.
+    pub artifacts: Option<okbot_core::ArtifactLimits>,
 }
 
 impl KnowledgeOptions {
@@ -69,6 +73,7 @@ impl KnowledgeOptions {
             catalog_tokens: 3000,
             refresh_every: Duration::from_secs(5),
             timezone: None,
+            artifacts: Some(okbot_core::ArtifactLimits::default()),
         }
     }
 }
@@ -90,6 +95,7 @@ pub struct Knowledge {
     catalog: Mutex<Option<String>>,
     notes: memory::Notes,
     tasks: tasks::Tasks,
+    artifacts: artifacts::Artifacts,
     journal: journal::Journal,
     /// Serializes memory writes (one bot process owns its bundle).
     writes: tokio::sync::Mutex<()>,
@@ -138,6 +144,11 @@ impl Knowledge {
             bundle,
             notes: memory::Notes::new(&options.root),
             tasks: tasks::Tasks::new(&options.root, tz.clone()),
+            artifacts: artifacts::Artifacts::new(
+                &options.root,
+                tz.clone(),
+                options.artifacts.unwrap_or_default(),
+            ),
             journal: journal::Journal::new(&options.root, tz),
             options,
             tokens: Arc::new(tokens::RunTokens::default()),
@@ -728,6 +739,91 @@ impl TaskStore for Knowledge {
 
     async fn after_fire(&self, id: &str, change: TaskChange) -> Result<Task, TaskError> {
         self.change_task(id, change).await
+    }
+}
+
+impl Knowledge {
+    /// The agent may save and read artifacts.
+    pub(crate) fn artifacts_enabled(&self) -> bool {
+        self.options.artifacts.is_some()
+    }
+
+    async fn artifact_call<T: Send + 'static>(
+        &self,
+        write: Option<fn(&T) -> String>,
+        what: impl FnOnce(&artifacts::Artifacts) -> Result<T, ArtifactError> + Send + 'static,
+    ) -> Result<T, ArtifactError> {
+        let _guard = match write {
+            Some(_) => Some(self.writes.lock().await),
+            None => None,
+        };
+        let store = self.artifacts.clone();
+        let out = tokio::task::spawn_blocking(move || what(&store))
+            .await
+            .map_err(|e| ArtifactError::Backend(Box::new(e)))??;
+        if let Some(message) = write {
+            self.after_write(message(&out)).await;
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl okbot_core::ArtifactStore for Knowledge {
+    async fn save(
+        &self,
+        who: &Requester,
+        new: okbot_core::NewArtifact,
+    ) -> Result<okbot_core::Artifact, ArtifactError> {
+        let who = who.clone();
+        self.artifact_call(
+            Some(|a: &okbot_core::Artifact| format!("artifacts: save {} v{}", a.id, a.latest().n)),
+            move |s| s.save(&who, &new, jiff::Timestamp::now()),
+        )
+        .await
+    }
+
+    async fn list(&self, who: &Requester) -> Result<Vec<okbot_core::Artifact>, ArtifactError> {
+        let who = who.clone();
+        self.artifact_call(None, move |s| Ok(s.list(&who))).await
+    }
+
+    async fn open(
+        &self,
+        who: &Requester,
+        id: &str,
+        version: Option<u32>,
+    ) -> Result<(okbot_core::Artifact, u32, String), ArtifactError> {
+        let (who, id) = (who.clone(), id.to_string());
+        self.artifact_call(None, move |s| s.open(&who, &id, version))
+            .await
+    }
+
+    async fn rename(
+        &self,
+        who: &Requester,
+        id: &str,
+        title: &str,
+    ) -> Result<okbot_core::Artifact, ArtifactError> {
+        let (who, id, title) = (who.clone(), id.to_string(), title.to_string());
+        self.artifact_call(
+            Some(|a: &okbot_core::Artifact| format!("artifacts: rename {}", a.id)),
+            move |s| s.rename(&who, &id, &title),
+        )
+        .await
+    }
+
+    async fn delete(
+        &self,
+        who: &Requester,
+        id: &str,
+    ) -> Result<okbot_core::Artifact, ArtifactError> {
+        let (who, id) = (who.clone(), id.to_string());
+        self.artifact_call(
+            Some(|a: &okbot_core::Artifact| format!("artifacts: delete {}", a.id)),
+            move |s| s.delete(&who, &id),
+        )
+        .await
     }
 }
 

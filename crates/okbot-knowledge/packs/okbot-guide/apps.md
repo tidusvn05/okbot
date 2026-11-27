@@ -181,6 +181,25 @@ administrator can start one, from the app as from `/resume`.
 Every change an app makes (adding or finishing a task, a note, forgetting a memory, an `mcp.call`)
 is in `okbot audit`, with the app as the source (`app:tasks`).
 
+## Artifacts
+
+When an answer is a page, a document, a table or a diagram worth keeping, the agent saves it as an
+**artifact** instead of pasting it: HTML, Markdown, SVG, Mermaid, CSV, JSON or text. Asking for a
+change ("make the table wider") saves a new version of the same artifact. Artifacts are files in
+the knowledge bundle (`kb/artifacts/`), kept with the same rules as tasks: personal ones only from
+a direct chat, the others shared with the chat they were made in. Only their titles and summaries
+are searched, never their content.
+
+```toml
+[artifacts]
+enabled = true          # false: the agent cannot save artifacts
+max_bytes = "1MB"       # one version
+quota_person = "50MB"   # one person's, or one chat's
+quota_bot = "1GB"       # the whole bot
+keep_versions = 10      # older versions' files are removed
+scripts = true          # HTML artifacts may run their own scripts, with no network
+```
+
 ## Troubleshooting
 
 - **No Open button**: check `[http] public_url`, that `[apps] enabled` is not false, and

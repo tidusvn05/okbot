@@ -26,6 +26,15 @@ pub(crate) const TASKS: Area = Area {
     term_key: "\n  task:",
 };
 
+/// `artifacts/` (ADR 0021).
+pub(crate) const ARTIFACTS: Area = Area {
+    path: "artifacts",
+    link: "* [artifacts](/artifacts/index.md) - Pages, documents, tables and diagrams made in chat.",
+    term: "  artifact:\n    synonyms: [trang, tài liệu, bảng, sơ đồ, page, document, report]\n    facet: topic\n    \
+           description: Pages, documents, tables and diagrams made in chat.\n",
+    term_key: "\n  artifact:",
+};
+
 /// `notes/`.
 pub(crate) const NOTES: Area = Area {
     path: "notes",

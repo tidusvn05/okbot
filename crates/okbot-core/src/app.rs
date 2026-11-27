@@ -207,6 +207,8 @@ pub enum DataArea {
     Tasks,
     /// What the bot remembers (`memory_list`).
     Memory,
+    /// Pages and files the agent made (`artifact_list`, ADR 0021).
+    Artifacts,
 }
 
 /// The app and view a long listing of `area` should point the agent at.

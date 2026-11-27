@@ -20,6 +20,8 @@ pub(crate) struct File {
     #[serde(default)]
     pub(crate) apps: AppsSection,
     #[serde(default)]
+    pub(crate) artifacts: ArtifactsSection,
+    #[serde(default)]
     pub(crate) channels: ChannelsSection,
     #[serde(default)]
     pub(crate) people: BTreeMap<String, PersonSection>,
@@ -785,6 +787,138 @@ pub struct AppRuleSection {
     /// Grant only these of the permissions its manifest asks for; unset: all of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permissions: Option<Vec<String>>,
+}
+
+/// A size: a number of bytes, or text such as `"1MB"`, `"500KB"`, `"1GB"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteSize(pub u64);
+
+impl std::str::FromStr for ByteSize {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let t = s.trim().to_ascii_uppercase();
+        let digits = t.trim_end_matches(|c: char| c.is_ascii_alphabetic()).trim();
+        let unit = t[digits.len()..].trim();
+        let n: u64 = digits
+            .parse()
+            .map_err(|_| format!("`{s}` is not a size such as \"1MB\""))?;
+        let factor: u64 = match unit {
+            "" | "B" => 1,
+            "KB" | "K" | "KIB" => 1 << 10,
+            "MB" | "M" | "MIB" => 1 << 20,
+            "GB" | "G" | "GIB" => 1 << 30,
+            _ => return Err(format!("`{s}`: the unit is B, KB, MB or GB")),
+        };
+        n.checked_mul(factor)
+            .map(ByteSize)
+            .ok_or_else(|| format!("`{s}` is too large"))
+    }
+}
+
+impl std::fmt::Display for ByteSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.0;
+        if n >= 1 << 30 && n.is_multiple_of(1 << 30) {
+            write!(f, "{}GB", n >> 30)
+        } else if n >= 1 << 20 && n.is_multiple_of(1 << 20) {
+            write!(f, "{}MB", n >> 20)
+        } else if n >= 1 << 10 && n.is_multiple_of(1 << 10) {
+            write!(f, "{}KB", n >> 10)
+        } else {
+            write!(f, "{n}B")
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ByteSize {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bytes(u64),
+            Text(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Bytes(n) => Ok(ByteSize(n)),
+            Raw::Text(t) => t.parse().map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl Serialize for ByteSize {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+/// `[artifacts]` (ADR 0021): pages and files the agent saves, shown by the artifacts app.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactsSection {
+    /// The agent may save artifacts. Default: on.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Largest content of one version.
+    #[serde(default = "default_artifact_bytes")]
+    pub max_bytes: ByteSize,
+    /// All artifacts of one person, or of one chat.
+    #[serde(default = "default_artifact_quota_person")]
+    pub quota_person: ByteSize,
+    /// All artifacts of the bot.
+    #[serde(default = "default_artifact_quota_bot")]
+    pub quota_bot: ByteSize,
+    /// Versions kept per artifact; older files are removed.
+    #[serde(default = "default_keep_versions")]
+    pub keep_versions: u32,
+    /// HTML artifacts may run their inline scripts (in the sandboxed viewer, without network).
+    #[serde(default = "yes")]
+    pub scripts: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn default_artifact_bytes() -> ByteSize {
+    ByteSize(1 << 20)
+}
+
+fn default_artifact_quota_person() -> ByteSize {
+    ByteSize(50 << 20)
+}
+
+fn default_artifact_quota_bot() -> ByteSize {
+    ByteSize(1 << 30)
+}
+
+fn default_keep_versions() -> u32 {
+    10
+}
+
+impl Default for ArtifactsSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_bytes: default_artifact_bytes(),
+            quota_person: default_artifact_quota_person(),
+            quota_bot: default_artifact_quota_bot(),
+            keep_versions: default_keep_versions(),
+            scripts: true,
+        }
+    }
+}
+
+impl ArtifactsSection {
+    /// The limits the knowledge store enforces.
+    pub fn limits(&self) -> okbot_core::ArtifactLimits {
+        okbot_core::ArtifactLimits {
+            max_bytes: self.max_bytes.0,
+            quota_owner: self.quota_person.0,
+            quota_bot: self.quota_bot.0,
+            keep_versions: self.keep_versions,
+        }
+    }
 }
 
 /// `[charts]`: charts in interactive replies drawn as pictures (ADR 0016).

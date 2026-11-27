@@ -138,6 +138,7 @@ fn tools() -> Vec<Tool> {
         ),
     ];
     tools.extend(crate::task_tools::tools());
+    tools.extend(crate::artifact_tools::tools());
     tools.extend(crate::inbox::tools());
     tools
 }
@@ -258,7 +259,13 @@ async fn fetch_image(
 }
 
 /// The tools a read-only run may call.
-const READ_TOOLS: &[&str] = &["memory_list", "task_list", "attachment_view"];
+const READ_TOOLS: &[&str] = &[
+    "memory_list",
+    "task_list",
+    "artifact_list",
+    "artifact_get",
+    "attachment_view",
+];
 
 impl BotServer {
     /// Runs a tool; a long listing ends with the app to point the person at (design-app-hints §5).
@@ -272,6 +279,7 @@ impl BotServer {
         let area = match name {
             "task_list" => okbot_core::DataArea::Tasks,
             "memory_list" => okbot_core::DataArea::Memory,
+            "artifact_list" => okbot_core::DataArea::Artifacts,
             _ => return Ok(text),
         };
         let links = token
@@ -372,6 +380,9 @@ impl BotServer {
             "task_add" | "task_list" | "task_update" | "task_done" | "task_delete" => {
                 crate::task_tools::call(k, who, context.admin, name, args).await
             }
+            "artifact_save" | "artifact_list" | "artifact_get" if k.artifacts_enabled() => {
+                crate::artifact_tools::call(k, who, name, args).await
+            }
             other => Err(format!("unknown tool {other}")),
         }
     }
@@ -384,7 +395,10 @@ impl ServerHandler for BotServer {
                 "okbot-memory",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(INSTRUCTIONS.to_string())
+            .with_instructions(format!(
+                "{INSTRUCTIONS}\n{}",
+                crate::artifact_tools::INSTRUCTIONS
+            ))
     }
 
     fn list_tools(
@@ -401,6 +415,9 @@ impl ServerHandler for BotServer {
             .and_then(|t| self.tokens.context(t.trim()))
             .is_some_and(|c| c.read_only);
         let mut tools = tools();
+        if !self.knowledge.artifacts_enabled() {
+            tools.retain(|t| !t.name.starts_with("artifact_"));
+        }
         if read_only {
             tools.retain(|t| READ_TOOLS.contains(&t.name.as_ref()));
         }

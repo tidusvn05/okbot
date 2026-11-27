@@ -46,6 +46,7 @@ pub(crate) async fn open(name: Option<&str>) -> anyhow::Result<(Config, Arc<Know
     let mut options = KnowledgeOptions::new(config.kb_dir());
     options.index_dir = Some(config.state_dir().join("index"));
     options.timezone.clone_from(&config.bot.timezone);
+    options.artifacts = config.artifacts.enabled.then(|| config.artifacts.limits());
     let knowledge = tokio::task::spawn_blocking(move || Knowledge::open(options))
         .await?
         .with_context(|| format!("cannot open {}", config.kb_dir().display()))?;

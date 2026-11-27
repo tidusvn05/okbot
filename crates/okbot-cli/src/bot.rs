@@ -872,6 +872,7 @@ pub(crate) async fn knowledge(
     let mut options = KnowledgeOptions::new(&kb);
     options.index_dir = Some(config.state_dir().join("index"));
     options.timezone.clone_from(&config.bot.timezone);
+    options.artifacts = config.artifacts.enabled.then(|| config.artifacts.limits());
     let knowledge = Arc::new(
         tokio::task::spawn_blocking(move || Knowledge::open(options))
             .await?
