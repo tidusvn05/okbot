@@ -734,3 +734,106 @@ async fn the_agent_is_told_when_each_app_helps() {
     assert_eq!(found["apps"].as_array().unwrap().len(), 1);
     bot.finish().await;
 }
+
+#[tokio::test]
+async fn the_tasks_app_filters_by_place_and_author_and_sorts_by_what_comes_next() {
+    use okbot_core::MemoryScope::{Room, User};
+    let bot = Bot::start(false, |_| {});
+    let at = |hours: i64| jiff::Timestamp::now() + jiff::SignedDuration::from_hours(hours);
+    let task =
+        |id: &str, scope, author: &str, due: Option<jiff::Timestamp>, remind| okbot_core::Task {
+            id: format!("tasks/test/{id}"),
+            kind: okbot_core::TaskKind::Todo,
+            status: okbot_core::TaskStatus::Open,
+            title: id.into(),
+            notes: String::new(),
+            scope,
+            due,
+            remind_at: remind,
+            repeat: None,
+            deliver_to: None,
+            origin: None,
+            author: author.into(),
+            created: jiff::Timestamp::now(),
+        };
+    bot.tasks.insert(task(
+        "mine-later",
+        User,
+        "fake:test/ana",
+        Some(at(48)),
+        None,
+    ));
+    bot.tasks
+        .insert(task("room-soon", Room, "fake:test/bob", None, Some(at(2))));
+    bot.tasks
+        .insert(task("room-undated", Room, "fake:test/ana", None, None));
+    bot.tasks.insert(task(
+        "mine-soonest",
+        User,
+        "fake:test/ana",
+        Some(at(5)),
+        Some(at(1)),
+    ));
+    bot.say("dm", "ana", "/app tasks", true).await;
+    let url = bot
+        .channel
+        .prompts()
+        .into_iter()
+        .flat_map(|p| p.buttons)
+        .find_map(|b| b.url)
+        .expect("a link in the direct chat");
+    let (_, cookie, body) = bot.exchange(&url, None).await;
+    let session = session_of(&cookie.unwrap(), &body);
+    let titles = |body: &Value| -> Vec<String> {
+        body["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let list = |params: Value| bot.call(&session, "tasks", "tasks.list", params);
+
+    let (status, body) = list(json!({"sort": "next"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        titles(&body),
+        ["mine-soonest", "room-soon", "mine-later", "room-undated"]
+    );
+    let (_, body) = list(json!({"scope": "room", "sort": "next"})).await;
+    assert_eq!(titles(&body), ["room-soon", "room-undated"]);
+    let (_, body) = list(json!({"mine": true, "scope": "room"})).await;
+    assert_eq!(titles(&body), ["room-undated"]);
+    let (_, body) = list(json!({"scope": "personal"})).await;
+    assert_eq!(body["result"]["total"], 2);
+    assert!(
+        body["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["mine"] == true)
+    );
+    let (status, body) = list(json!({"sort": "random"})).await;
+    assert_eq!(status, 400, "{body}");
+
+    // Editing from the app: rename and move the time.
+    let (status, body) = bot
+        .call(
+            &session,
+            "tasks",
+            "tasks.update",
+            json!({"id": "tasks/test/room-soon", "title": "Renamed", "remind_at": "2030-01-02 09:30"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["result"]["title"], "Renamed");
+    assert!(
+        body["result"]["remind_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2030-01-02T09:30"),
+        "{body}"
+    );
+    assert_eq!(body["result"]["mine"], false, "bob wrote it");
+    bot.finish().await;
+}

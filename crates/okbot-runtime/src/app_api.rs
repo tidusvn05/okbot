@@ -758,7 +758,16 @@ impl Call<'_> {
             "repeat": t.repeat.as_ref().map(ToString::to_string),
             "overdue": t.status.is_active() && t.due.is_some_and(|d| d < now),
             "created": okbot_core::format_time(t.created, &tz),
+            "mine": t.author == self.account(),
         })
+    }
+
+    /// The signed-in account as tasks record their author (`channel/user`).
+    fn account(&self) -> String {
+        format!(
+            "{}/{}",
+            self.admitted.event.conversation.channel, self.session.user.id
+        )
     }
 
     async fn find(&self, id: &str) -> Result<Task, ApiError> {
@@ -796,6 +805,29 @@ impl Call<'_> {
             tasks.retain(|t| {
                 t.title.to_lowercase().contains(&q) || t.notes.to_lowercase().contains(&q)
             });
+        }
+        match self.str("scope") {
+            None | Some("") => {}
+            Some("personal") => tasks.retain(|t| t.scope != okbot_core::MemoryScope::Room),
+            Some("room") => tasks.retain(|t| t.scope == okbot_core::MemoryScope::Room),
+            Some(_) => return Err(ApiError::invalid("scope: personal or room")),
+        }
+        if self.params.get("mine").and_then(Value::as_bool) == Some(true) {
+            let me = self.account();
+            tasks.retain(|t| t.author == me);
+        }
+        match self.str("sort") {
+            None | Some("") => {}
+            // The next time something happens first; tasks without one last.
+            Some("next") => tasks.sort_by_key(|t| {
+                let next = match (t.due, t.remind_at) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                (next.is_none(), next)
+            }),
+            Some("created") => tasks.sort_by_key(|t| std::cmp::Reverse(t.created)),
+            Some(_) => return Err(ApiError::invalid("sort: next or created")),
         }
         let total = tasks.len();
         let start = match self.str("cursor") {

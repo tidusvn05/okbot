@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -162,6 +163,13 @@ def main() -> int:
                 expect(dialog).to_be_hidden()
                 expect(item).to_be_visible()
 
+                # Editing in place: the new title is saved through tasks.update.
+                item.get_by_role("button", name="Edit").click()
+                frame.locator("form.edit input").first.fill("Browser check edited")
+                frame.locator("form.edit").get_by_role("button", name="Save").click()
+                expect(frame.locator("#list li", has_text="Browser check edited")).to_be_visible()
+                print("  edited a task in place")
+
                 # Done goes through, and the list updates.
                 item.get_by_role("button", name="Done").click()
                 expect(frame.locator("#list li", has_text="Browser check")).to_have_count(0)
@@ -175,6 +183,23 @@ def main() -> int:
                     expect(page.frame_locator("iframe").locator("h1")).not_to_be_empty()
                     page.wait_for_load_state("networkidle")
                     print(f"  opened {name}")
+
+                # The schedule adds a repeating reminder and shows it on its calendar.
+                page.locator("#apps a", has_text="Schedule").click()
+                schedule = page.frame_locator("iframe")
+                schedule.locator("input[placeholder]").fill("Stand-up")
+                # Tomorrow, so it falls in the first 7 days (the test bot's zone is UTC).
+                tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+                schedule.locator("input[type=datetime-local]").fill(f"{tomorrow}T09:30")
+                schedule.locator("select").select_option("daily")
+                schedule.get_by_role("button", name="Add").click()
+                expect(schedule.locator(".list li", has_text="Stand-up").first).to_be_visible()
+                schedule.get_by_role("button", name="30 days").click()
+                schedule.get_by_role("button", name="Calendar").click()
+                expect(schedule.locator(".cal")).to_be_visible()
+                if SHOTS:
+                    page.screenshot(path=f"{SHOTS}/schedule-{BROWSER}-desktop.png")
+                print("  added a reminder and opened the calendar")
 
                 # An app that navigates its frame away is closed, and its new page hears nothing.
                 page.locator("#apps a", has_text="Leaver").click()
