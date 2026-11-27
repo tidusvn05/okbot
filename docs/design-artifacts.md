@@ -59,7 +59,8 @@ kb/artifacts/<owner folder>/a-7k2m9q4x2c/v2.html
   in place of `memory/`. The metadata file sits beside the version folder rather than inside it,
   because `index.md` names are the folder indexes OKF keeps.
 - `kb/.okbaseignore` gains `artifacts/**/a-*/`. Only the metadata file is indexed, so `kb_query
-  type=Artifact` finds artifacts by title and summary. Raw HTML never feeds back into answers as
+  type=Artifact` finds artifacts by title and summary, within the same scope as tasks (the
+  asker's own folders and this room's). Raw HTML never feeds back into answers as
   knowledge, so a page cannot inject text into later prompts that way.
 - An edit by hand (an editor, git) works like for tasks: the store re-reads the files.
 
