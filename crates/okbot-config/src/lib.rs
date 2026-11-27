@@ -63,6 +63,10 @@ pub const BUILTIN_COMMANDS: &[&str] = &[
     "connect",
     "disconnect",
     "connections",
+    "app",
+    "apps",
+    "artifacts",
+    "artifact",
 ];
 
 /// Roles every bot has: `[bot] admins` (and the owner of a personal bot), and everyone it answers.

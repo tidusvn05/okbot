@@ -295,6 +295,10 @@ async fn worker(
                 crate::apps::command(&shared, rest, &first.0).await;
                 continue;
             }
+            if command == Command::Artifacts {
+                crate::app_artifacts::command(&shared, &first.0).await;
+                continue;
+            }
             let offer_tasks = matches!(command, Command::Tasks(_)) && shared.tasks.is_some();
             let text = command::execute(&shared, command, &first.0).await;
             turn::reply(&shared, &first.0, &text).await;

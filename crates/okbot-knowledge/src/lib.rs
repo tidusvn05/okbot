@@ -748,6 +748,42 @@ impl Knowledge {
         self.options.artifacts.is_some()
     }
 
+    /// The bounds artifacts are held to, `None` when artifacts are off.
+    pub fn artifact_limits(&self) -> Option<okbot_core::ArtifactLimits> {
+        self.options.artifacts.map(|_| self.artifacts.limits())
+    }
+
+    /// Every artifact in the bundle (for operators and quota reports), newest change first.
+    pub async fn all_artifacts(&self) -> Vec<okbot_core::Artifact> {
+        let mut all = self
+            .artifact_call(None, |s| Ok(s.all()))
+            .await
+            .unwrap_or_default();
+        all.sort_by_key(|a| std::cmp::Reverse(a.updated()));
+        all
+    }
+
+    /// Any artifact by short or full id, with the content of `version` (for operators).
+    pub async fn open_artifact(
+        &self,
+        id: &str,
+        version: Option<u32>,
+    ) -> Result<(okbot_core::Artifact, u32, String), ArtifactError> {
+        let id = id.to_string();
+        self.artifact_call(None, move |s| s.open_any(&id, version))
+            .await
+    }
+
+    /// Deletes any artifact by short or full id, with every version (for operators).
+    pub async fn remove_artifact(&self, id: &str) -> Result<okbot_core::Artifact, ArtifactError> {
+        let id = id.to_string();
+        self.artifact_call(
+            Some(|a: &okbot_core::Artifact| format!("artifacts: delete {} (operator)", a.id)),
+            move |s| s.delete_any(&id),
+        )
+        .await
+    }
+
     async fn artifact_call<T: Send + 'static>(
         &self,
         write: Option<fn(&T) -> String>,

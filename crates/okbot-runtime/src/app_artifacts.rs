@@ -28,6 +28,10 @@ const MAX_GRANTS: usize = 2000;
 const MAX_BUTTONS: usize = 2;
 /// The built-in app that shows artifacts.
 pub(crate) const APP: &str = "artifacts";
+/// Artifacts `/artifacts` lists.
+const LISTED: usize = 10;
+/// Open buttons under that list; one more button opens the app.
+const LIST_BUTTONS: usize = okbot_core::MAX_BUTTONS - 1;
 
 /// What a viewer link shows: one version of one artifact, as the person who asked sees it.
 #[derive(Debug, Clone)]
@@ -493,6 +497,79 @@ pub(crate) async fn offer_saved(shared: &Shared, event: &InboundEvent, since: Ti
     .await;
 }
 
+/// The lines `/artifacts` answers with: the newest `LISTED`, then where the rest is.
+fn list_text(list: &[Artifact], tz: &jiff::tz::TimeZone) -> String {
+    if list.is_empty() {
+        return "No artifacts here yet. Ask me for a page, a table, a document or a diagram and \
+                I will keep it here."
+            .into();
+    }
+    let mut text = String::new();
+    for (i, a) in list.iter().take(LISTED).enumerate() {
+        let _ = writeln!(
+            text,
+            "{}. **{}** · {} · v{} · {} · `{}`",
+            i + 1,
+            a.title,
+            a.kind.as_str(),
+            a.latest().n,
+            a.updated().to_zoned(tz.clone()).strftime("%d/%m %H:%M"),
+            a.short_id()
+        );
+    }
+    if list.len() > LISTED {
+        let _ = writeln!(text, "-# {} more in the app.", list.len() - LISTED);
+    }
+    text.trim_end().to_string()
+}
+
+/// `/artifacts`: the newest artifacts the asker sees here, then Open buttons.
+pub(crate) async fn command(shared: &Shared, event: &InboundEvent) {
+    let Some(store) = &shared.artifacts else {
+        crate::turn::reply(shared, event, "Artifacts are not enabled for this bot.").await;
+        return;
+    };
+    let who = crate::command::requester(shared, event).await;
+    let list = match store.list(&who).await {
+        Ok(list) => list,
+        Err(error) => {
+            tracing::warn!(%error, "cannot list artifacts");
+            crate::turn::reply(shared, event, &shared.config.replies.error).await;
+            return;
+        }
+    };
+    let tz = shared.config.time_zone();
+    crate::turn::reply(shared, event, &list_text(&list, &tz)).await;
+    if list.is_empty() || shared.apps.is_none() {
+        return;
+    }
+    let mut buttons: Vec<crate::ui::AppButton> = list
+        .iter()
+        .take(LIST_BUTTONS)
+        .map(|a| crate::ui::AppButton {
+            label: format!("Open {}", a.title.chars().take(40).collect::<String>()),
+            app: APP.to_string(),
+            view: "/a".to_string(),
+            params: BTreeMap::from([("id".to_string(), a.short_id().to_string())]),
+        })
+        .collect();
+    buttons.push(crate::ui::AppButton {
+        label: "All artifacts".to_string(),
+        app: APP.to_string(),
+        view: "/".to_string(),
+        params: BTreeMap::new(),
+    });
+    crate::apps::offer_buttons(
+        shared,
+        event,
+        APP,
+        "-# Open one, or see them all with search and filters.".to_string(),
+        buttons,
+        &format!("-# Open one from a direct chat with me: `/app {APP} <id>`."),
+    )
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,6 +594,25 @@ mod tests {
                 pruned: false,
             }],
         }
+    }
+
+    #[test]
+    fn the_list_shows_the_newest_ten_and_counts_the_rest() {
+        let tz = jiff::tz::TimeZone::UTC;
+        assert!(list_text(&[], &tz).starts_with("No artifacts here yet"));
+        let list: Vec<Artifact> = (1..=12)
+            .map(|i| artifact(&format!("Page {i}"), ArtifactKind::Markdown))
+            .collect();
+        let text = list_text(&list, &tz);
+        assert!(
+            text.starts_with("1. **Page 1** · markdown · v1 · 01/01 00:00 · `a-1234567890`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("10. **Page 10**") && !text.contains("Page 11"),
+            "{text}"
+        );
+        assert!(text.ends_with("-# 2 more in the app."), "{text}");
     }
 
     #[test]

@@ -188,6 +188,14 @@ async fn check_knowledge(config: &Config, r: &mut Report) {
         ),
         None => r.add("knowledge lint", Status::Warn, "lint failed"),
     }
+    if let Some(limits) = knowledge.artifact_limits() {
+        let all = knowledge.all_artifacts().await;
+        match crate::artifact::quota_report(&all, limits) {
+            Some((true, text)) => r.add("artifacts", Status::Ok, text),
+            Some((false, text)) => r.add("artifacts", Status::Warn, text),
+            None => r.add("artifacts", Status::Ok, "none saved yet"),
+        }
+    }
     // A real MCP round trip with a run token, as an agent would make it.
     let who = Requester {
         conversation: ConversationKey::room("console:local".parse().expect("valid id"), "doctor"),

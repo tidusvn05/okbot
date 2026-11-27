@@ -570,6 +570,134 @@ fn tasks_from_the_terminal() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "one walk through every subcommand")]
+fn artifacts_from_the_terminal() {
+    let env = Env::new();
+    let (code, json) = env.json(&[
+        "new",
+        "me",
+        "--agent",
+        "claude",
+        "--platform",
+        "none",
+        "--profile",
+        "personal",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{json}");
+    let folder = env.root().join("me/kb/artifacts/people/owner");
+    std::fs::create_dir_all(folder.join("a-23456789ab")).unwrap();
+    let page = "<!doctype html><h1>Plan</h1>";
+    std::fs::write(folder.join("a-23456789ab/v2.html"), page).unwrap();
+    std::fs::write(
+        folder.join("a-23456789ab.md"),
+        format!(
+            "---\ntype: Artifact\ntitle: \"Sales plan\"\nid: a-23456789ab\nkind: html\n\
+             scope: user\nauthor: \"console/you\"\ncreated: \"2026-11-01T08:00:00Z\"\n\
+             versions: [{{\"n\": 1, \"at\": \"2026-11-01T08:00:00Z\", \"by\": \"console/you\", \
+             \"bytes\": 10, \"sha256\": \"\", \"pruned\": true}}, {{\"n\": 2, \
+             \"at\": \"2026-11-02T08:00:00Z\", \"by\": \"console/you\", \"bytes\": {}, \
+             \"sha256\": \"\", \"note\": \"wider\"}}]\n---\n\n# Sales plan\n\nThe Q3 plan.\n",
+            page.len()
+        ),
+    )
+    .unwrap();
+
+    let (code, out, err) = env.run(&["artifact", "list", "me"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("a-23456789ab  [html, v2, 1 KB] Sales plan"),
+        "{out}"
+    );
+    assert!(out.contains("people/owner"), "{out}");
+    let (code, json) = env.json(&["artifact", "list", "me", "--json"]);
+    assert_eq!(code, 0, "{json}");
+    assert_eq!(json[0]["short_id"], "a-23456789ab", "{json}");
+    assert_eq!(json[0]["versions"][0]["pruned"], true, "{json}");
+    let (code, out, err) = env.run(&["artifact", "show", "a-23456789ab", "--bot", "me"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("v1") && out.contains("(pruned)"), "{out}");
+    assert!(
+        out.contains("wider") && out.contains("The Q3 plan."),
+        "{out}"
+    );
+
+    let (code, out, err) = env.run(&[
+        "artifact",
+        "export",
+        "a-23456789ab",
+        "--bot",
+        "me",
+        "-o",
+        "-",
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, page);
+    let (_, _, err) = env.run(&[
+        "artifact",
+        "export",
+        "a-23456789ab",
+        "--bot",
+        "me",
+        "-v",
+        "1",
+    ]);
+    assert!(err.contains("removed to keep the newest versions"), "{err}");
+    let file = env.root().join("plan.html");
+    let path = file.to_str().unwrap();
+    let (code, _, err) = env.run(&[
+        "artifact",
+        "export",
+        "a-23456789ab",
+        "--bot",
+        "me",
+        "-o",
+        path,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), page);
+    let (code, _, err) = env.run(&[
+        "artifact",
+        "export",
+        "a-23456789ab",
+        "--bot",
+        "me",
+        "-o",
+        path,
+    ]);
+    assert_ne!(code, 0);
+    assert!(err.contains("--force"), "{err}");
+
+    let (code, json) = env.json(&["doctor", "me", "--json"]);
+    let checks = json["bots"][0]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let quota = checks
+        .iter()
+        .find(|c| c["check"] == "artifacts")
+        .unwrap_or_else(|| panic!("an artifacts check ({code}): {json}"));
+    assert_eq!(quota["status"], "ok", "{quota}");
+    assert!(
+        quota["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("1 artifact, 1 KB of 1.0 GB; largest people/owner: 1 KB of 50.0 MB"),
+        "{quota}"
+    );
+
+    let (code, json) = env.json(&["artifact", "rm", "a-23456789ab", "--bot", "me", "--json"]);
+    assert_eq!(code, 0, "{json}");
+    assert_eq!(
+        json["removed"], "artifacts/people/owner/a-23456789ab",
+        "{json}"
+    );
+    assert!(!folder.join("a-23456789ab").exists());
+    let (_, out, _) = env.run(&["artifact", "list", "me"]);
+    assert_eq!(out.trim(), "no artifacts");
+}
+
+#[test]
 fn routines_from_the_terminal() {
     let env = Env::new();
     let (code, json) = env.json(&[
