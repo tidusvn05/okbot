@@ -18,11 +18,12 @@ use okbot_core::Secret;
 pub use edit::ConfigEditor;
 pub use schema::{
     A2aAgentSection, A2aClientSection, A2aSection, AgentSection, AppRuleSection, AppsSection,
-    AutomationSection, BotProfile, BotSection, BridgeSection, ChannelAccess, ChannelsSection,
-    ChartsSection, CommandSection, Confirm, ConfirmBy, Delivery, DiscordSection, GChatDelivery,
-    GChatSection, HttpSection, LimitsSection, McpAuth, McpCredentials, McpSection, NotifySection,
-    OAuthSection, PersonSection, ProviderSection, ReplyOn, RestrictSection, RoomSection,
-    ScheduleSection, SlackSection, SourceSection, TeamSection, TelegramSection, ZaloSection,
+    ArtifactsSection, AutomationSection, BotProfile, BotSection, BridgeSection, ByteSize,
+    ChannelAccess, ChannelsSection, ChartsSection, CommandSection, Confirm, ConfirmBy, Delivery,
+    DiscordSection, GChatDelivery, GChatSection, HttpSection, LimitsSection, McpAuth,
+    McpCredentials, McpSection, NotifySection, OAuthSection, PersonSection, ProviderSection,
+    ReplyOn, RestrictSection, RoomSection, ScheduleSection, SlackSection, SourceSection,
+    TeamSection, TelegramSection, ZaloSection,
 };
 pub use write::{
     GChatInit, InitOptions, ZaloInit, remove_env, render_channels, render_http, render_initial,
@@ -240,6 +241,8 @@ pub struct Config {
     pub charts: ChartsSection,
     /// `[apps]` (ADR 0019).
     pub apps: AppsSection,
+    /// `[artifacts]` (ADR 0021).
+    pub artifacts: ArtifactsSection,
     /// `[channels.*]`.
     pub channels: ChannelsSection,
     /// `[people.*]`: linked accounts by person id.
@@ -311,6 +314,7 @@ impl Config {
             http: file.http,
             charts: file.charts,
             apps: file.apps,
+            artifacts: file.artifacts,
             channels: file.channels,
             people: file.people,
             schedule: file.schedule,
@@ -449,7 +453,29 @@ impl Config {
         self.validate_automations()?;
         self.validate_peers()?;
         self.validate_http()?;
-        self.validate_apps()
+        self.validate_apps()?;
+        self.validate_artifacts()
+    }
+
+    /// `[artifacts]` (ADR 0021): sizes that fit together.
+    fn validate_artifacts(&self) -> Result<(), ConfigError> {
+        let a = &self.artifacts;
+        if a.max_bytes.0 == 0 || a.max_bytes.0 > 16 << 20 {
+            return Err(ConfigError::Invalid(
+                "[artifacts] max_bytes: from 1B to 16MB".into(),
+            ));
+        }
+        if a.quota_person.0 < a.max_bytes.0 || a.quota_bot.0 < a.quota_person.0 {
+            return Err(ConfigError::Invalid(
+                "[artifacts] needs max_bytes <= quota_person <= quota_bot".into(),
+            ));
+        }
+        if !(1..=100).contains(&a.keep_versions) {
+            return Err(ConfigError::Invalid(
+                "[artifacts] keep_versions: from 1 to 100".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// `[apps]` (ADR 0019): names, roles, rooms and permissions; durations are checked where

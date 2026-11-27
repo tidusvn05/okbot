@@ -48,16 +48,17 @@ Artifact
 ### 2.1 On disk
 
 ```
-kb/artifacts/<owner folder>/<id>/
-  index.md        OKF frontmatter (type: Artifact, title, kind, versions, …) + summary as body
-  v1.html
-  v2.html
+kb/artifacts/<owner folder>/a-7k2m9q4x2c.md   OKF frontmatter (type: Artifact, title, kind,
+                                              versions, …) + summary as body
+kb/artifacts/<owner folder>/a-7k2m9q4x2c/v1.html
+kb/artifacts/<owner folder>/a-7k2m9q4x2c/v2.html
 ```
 
 - `<owner folder>` is the same path as for tasks and memory: `people/<person>`,
   `users/<channel>/<user>` or `rooms/<channel>/<room>`. It comes from `paths.rs`, with `artifacts/`
-  in place of `memory/`.
-- `kb/.okbaseignore` gains `artifacts/**/v*.*`. Only `index.md` is indexed, so `kb_query
+  in place of `memory/`. The metadata file sits beside the version folder rather than inside it,
+  because `index.md` names are the folder indexes OKF keeps.
+- `kb/.okbaseignore` gains `artifacts/**/a-*/`. Only the metadata file is indexed, so `kb_query
   type=Artifact` finds artifacts by title and summary. Raw HTML never feeds back into answers as
   knowledge, so a page cannot inject text into later prompts that way.
 - An edit by hand (an editor, git) works like for tasks: the store re-reads the files.

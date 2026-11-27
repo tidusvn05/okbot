@@ -214,11 +214,24 @@ async fn read_only_runs_cannot_change_memory_or_tasks() {
         .iter()
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert_eq!(names, ["memory_list", "attachment_view", "task_list"]);
+    assert_eq!(
+        names,
+        [
+            "memory_list",
+            "attachment_view",
+            "task_list",
+            "artifact_list",
+            "artifact_get"
+        ]
+    );
     for (tool, args) in [
         ("memory_save", json!({"text": "evil", "scope": "global"})),
         ("task_delete", json!({"id": "t-1"})),
         ("knowledge_add", json!({"title": "x", "text": "y"})),
+        (
+            "artifact_save",
+            json!({"title": "x", "kind": "html", "content": "<p>x</p>"}),
+        ),
     ] {
         let (_, reply) = bot
             .post(json!({"jsonrpc":"2.0","id":4,"method":"tools/call",
@@ -283,4 +296,87 @@ async fn mcp_tools_respect_the_requester_scope() {
         "token revoked when the grant is dropped"
     );
     stop.cancel();
+}
+
+#[tokio::test]
+async fn the_agent_saves_artifacts_as_files_and_finds_them_by_their_summary() {
+    let (dir, k) = bundle();
+    let stop = CancellationToken::new();
+    k.start_mcp(stop.clone()).await.unwrap();
+    let see_also = [okbot_core::AppLink {
+        area: okbot_core::DataArea::Artifacts,
+        app: "artifacts".into(),
+        view: "/".into(),
+    }];
+    let grant = k
+        .grant(
+            &who("u1", "r1"),
+            &okbot_core::RunInfo {
+                tools: okbot_core::ToolPolicy::Web,
+                ttl: Duration::from_secs(60),
+                attachments: &[],
+                admin: false,
+                read_only: false,
+                see_also: &see_also,
+            },
+        )
+        .await
+        .unwrap();
+    let mut bot = Mcp::new(&grant);
+    bot.url.clone_from(&grant.mcp[1].url);
+    assert_eq!(bot.initialize().await, 200);
+    let call = |name: &'static str, args: Value| json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name": name, "arguments": args}});
+    let (_, reply) = bot
+        .post(call(
+            "artifact_save",
+            json!({"title": "Supplier comparison", "kind": "html", "summary": "Three suppliers by price and delivery.",
+                   "content": "<table><tr><td>A</td></tr></table>"}),
+        ))
+        .await;
+    let text = reply["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(text.starts_with("Saved a-"), "{reply}");
+    let id = text.split_whitespace().nth(1).unwrap().to_string();
+    let (_, reply) = bot
+        .post(call(
+            "artifact_save",
+            json!({"id": id, "content": "<table><tr><td>B</td></tr></table>", "note": "B is cheaper"}),
+        ))
+        .await;
+    assert!(reply.to_string().contains("v2"), "{reply}");
+    let (_, reply) = bot
+        .post(call("artifact_get", json!({"id": id, "version": 1})))
+        .await;
+    assert!(reply.to_string().contains("<td>A</td>"), "{reply}");
+    let (_, reply) = bot
+        .post(call("artifact_list", json!({"query": "supplier"})))
+        .await;
+    assert!(reply.to_string().contains("Supplier comparison"), "{reply}");
+    assert!(!reply.to_string().contains("see_also"), "one item is short");
+
+    let root = dir.path().join("kb");
+    let files: Vec<String> = walk(&root, "artifacts");
+    assert!(files.iter().any(|f| f.ends_with("/v2.html")), "{files:?}");
+    let ignore = std::fs::read_to_string(root.join(".okbaseignore")).unwrap();
+    assert!(ignore.contains("artifacts/**/a-*/"), "{ignore}");
+    stop.cancel();
+}
+
+fn walk(root: &Path, rel: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(root.join(rel))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let name = format!("{rel}/{}", entry.file_name().to_string_lossy());
+        if entry.path().is_dir() {
+            out.extend(walk(root, &name));
+        } else {
+            out.push(name);
+        }
+    }
+    out
 }

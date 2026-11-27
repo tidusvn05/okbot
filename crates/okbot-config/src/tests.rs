@@ -945,3 +945,42 @@ fn apps_section() {
         assert!(error.contains(says), "{bad}: {error}");
     }
 }
+
+#[test]
+fn artifacts_have_sizes_that_fit_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = "config_version = 1\n[bot]\nname = \"b\"\n[agent]\nchain = [\"claude\"]\n";
+    let load = |extra: &str| Config::from_text(dir.path(), &format!("{base}{extra}"));
+    let config = load("").unwrap();
+    assert!(config.artifacts.enabled && config.artifacts.scripts);
+    assert_eq!(
+        config.artifacts.limits(),
+        okbot_core::ArtifactLimits::default()
+    );
+    let config = load(
+        "[artifacts]\nmax_bytes = \"512KB\"\nquota_person = 10485760\nquota_bot = \"2GB\"\n\
+         keep_versions = 3\nscripts = false\n",
+    )
+    .unwrap();
+    let limits = config.artifacts.limits();
+    assert_eq!(limits.max_bytes, 512 << 10);
+    assert_eq!(limits.quota_owner, 10 << 20);
+    assert_eq!(limits.quota_bot, 2 << 30);
+    assert_eq!(limits.keep_versions, 3);
+    assert!(!config.artifacts.scripts);
+    assert_eq!(config.artifacts.max_bytes.to_string(), "512KB");
+    for (bad, says) in [
+        ("[artifacts]\nmax_bytes = \"1TB\"\n", "unit"),
+        ("[artifacts]\nmax_bytes = \"lots\"\n", "not a size"),
+        ("[artifacts]\nmax_bytes = \"32MB\"\n", "16MB"),
+        (
+            "[artifacts]\nquota_person = \"100KB\"\n",
+            "max_bytes <= quota_person",
+        ),
+        ("[artifacts]\nkeep_versions = 0\n", "keep_versions"),
+        ("[artifacts]\nscript = true\n", "unknown field"),
+    ] {
+        let error = load(bad).unwrap_err().to_string();
+        assert!(error.contains(says), "{bad}: {error}");
+    }
+}
