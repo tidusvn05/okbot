@@ -1,6 +1,6 @@
 # Design — artifacts: pages and files the agent makes in chat
 
-Status: Proposed (2026-11-27). Decision record: [ADR 0021](adr/0021-artifacts.md). Builds on apps
+Status: Accepted (2026-11-27). Decision record: [ADR 0021](adr/0021-artifacts.md). Builds on apps
 (ADR 0019, [`design-apps.md`](design-apps.md)) and the app hints of
 [`design-app-hints.md`](design-app-hints.md).
 
@@ -8,8 +8,8 @@ Status: Proposed (2026-11-27). Decision record: [ADR 0021](adr/0021-artifacts.md
 
 People ask the bot for things that do not fit a chat message: a report page, a comparison table,
 a checklist, a small calculator, a diagram. Today the agent pastes them as text, and they scroll
-away. With **artifacts** the agent saves the result as a file (HTML, Markdown, SVG, CSV, JSON or
-plain text). Chat shows a short summary and an **Open** button. The built-in **artifacts** app lists
+away. With **artifacts** the agent saves the result as a file (HTML, Markdown, SVG, Mermaid, CSV,
+JSON or plain text). Chat shows a short summary and an **Open** button. The built-in **artifacts** app lists
 them, shows them, keeps their versions and lets people rename and delete them. Asking again ("make
 the table wider") saves a new version of the same artifact.
 
@@ -37,7 +37,7 @@ the table wider") saves a new version of the same artifact.
 Artifact
   id          a-<10 base32 chars>        stable across versions
   title       ≤ 80 chars, in the user's language
-  kind        html | markdown | svg | csv | json | text
+  kind        html | markdown | svg | mermaid | csv | json | text
   summary     ≤ 500 chars: what it is; this is what knowledge search finds
   scope       user | room                 like tasks: personal ones need a direct chat
   created_by  person or account
@@ -130,7 +130,7 @@ Rendering by kind:
 | csv | a table (first 5,000 rows) with sort and filter |
 | json | a collapsible tree |
 | text | preformatted |
-| svg, html | in the viewer frame (§5) |
+| svg, html, mermaid | in the viewer frame (§5) |
 
 ## 5. The viewer: running untrusted HTML
 
@@ -214,10 +214,11 @@ terminal. `okbot doctor` reports use against the quotas.
 | Raw HTML indexed and fed back to the agent | `.okbaseignore` keeps version files out of the index |
 | A personal artifact shown in a group | the same owner folders and `NOT_HERE` rule as tasks |
 
-## 10. Open questions
+## 10. Resolved questions (2026-11-27)
 
-1. Scripts on by default (proposed), or off until an operator turns them on?
-2. `kb/artifacts/` in the bundle (proposed, files as source of truth and searchable), or a
-   separate `artifacts/` beside `apps/`?
-3. Mermaid diagrams in v1? They need a renderer bundled with the app (about 1 MB). Proposed:
-   later; SVG covers diagrams for now.
+1. Scripts in HTML artifacts are **on by default**; `[artifacts] scripts = false` turns them off.
+2. Artifacts live in the bundle, at `kb/artifacts/`.
+3. **Mermaid is in v1** as a seventh kind, `mermaid`. The viewer serves the diagram source in a
+   page that loads okbot's bundled Mermaid build (`/apps/sdk/mermaid.min.js`, MIT, vendored with its
+   license and version). `script-src` of that page adds `'self'` for that one file. Mermaid runs
+   with `securityLevel: "strict"`, so labels cannot carry HTML or click handlers.

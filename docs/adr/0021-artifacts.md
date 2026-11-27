@@ -1,6 +1,6 @@
 # 0021 — Artifacts: files the agent makes, kept in the bundle, shown in a sandbox
 
-Status: Proposed (2026-11-27)
+Status: Accepted (2026-11-27)
 
 ## Context
 Answers that are pages, tables, documents or diagrams do not fit a chat message, and pasted text
@@ -22,7 +22,8 @@ injection. Full design: [`docs/design-artifacts.md`](../design-artifacts.md).
 - **HTML and SVG run in a viewer of their own** at `/apps/view/<token>`. The token comes from the
   App API, lasts 10 minutes and is bound to one version. The viewer has an opaque origin, no
   network, no cookies and no App API port, and it allows inline scripts unless
-  `[artifacts] scripts = false`. Only the built-in artifacts app may frame it, and it closes the
+  `[artifacts] scripts = false`. Mermaid diagrams are rendered there by a bundled Mermaid build in
+  strict mode. Only the built-in artifacts app may frame it, and it closes the
   frame when the page navigates.
 - **Bounded:** size per file, per person and per bot, and a number of kept versions. Every write
   is audited.

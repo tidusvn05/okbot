@@ -1,6 +1,6 @@
 # Design — telling the agent when an app helps
 
-Status: Proposed (2026-11-27). Follows [`design-apps.md`](design-apps.md) §4.3 and ADR 0019.
+Status: Accepted (2026-11-27). Follows [`design-apps.md`](design-apps.md) §4.3 and ADR 0019.
 
 ## 0. Problem
 
