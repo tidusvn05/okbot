@@ -4,6 +4,34 @@ All notable changes to okbot are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and okbot uses
 [Semantic Versioning](https://semver.org/) (see docs/releasing.md). This file is generated from commit messages by git-cliff.
 
+## [0.15.0] - 2026-11-27
+
+### Features
+
+- **apps:** tell the agent when each app helps (#93) (397e585)
+- **apps:** edit tasks in place and add a calendar to the schedule (#94) (df933fd)
+- **artifacts:** the agent saves pages and files as versioned artifacts (A1) (#95) (6b3630d)
+- **artifacts:** the artifacts app, a sandboxed viewer and Open buttons (A2) (#96) (ea5af61)
+- **artifacts:** /artifacts, okbot artifact and the doctor quota report (A3) (#97) (d30e4e3)
+
+### Bug fixes
+
+- **knowledge:** kb search finds artifacts the asker can see (#99) (1696f5a)
+
+### Documentation
+
+- mark the v0.14.0 release steps done (#91) (8f86cb9)
+- designs for app hints and artifacts (ADR 0021) (#92) (bdf655c)
+- the v0.15.0 release checklist (#98) (6491c2d)
+
+### Dependencies
+
+- **deps:** patch updates (anyhow, clap, inquire, rand, toml, toml_edit) (#100) (ceb3fcb)
+
+### Other
+
+- reopen main as 0.15.0-dev (#90) (bfd090e)
+
 ## [0.14.0] - 2026-11-26
 
 ### Features
