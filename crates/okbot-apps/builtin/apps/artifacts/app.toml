@@ -1,0 +1,20 @@
+name = "artifacts"
+title = { en = "Artifacts", vi = "Tài liệu đã tạo" }
+version = "0.15.0"
+api = 1
+description = { en = "Pages, documents, tables and diagrams the assistant made: view, download, rename and delete them.", vi = "Trang, tài liệu, bảng và sơ đồ trợ lý đã tạo: xem, tải về, đổi tên và xoá." }
+license = "MIT OR Apache-2.0"
+permissions = ["me", "artifacts:read", "artifacts:write"]
+
+[agent]
+use_when = { en = "pages, tables, documents or diagrams made for the person; to find, view or reopen one", vi = "trang, bảng, tài liệu hay sơ đồ đã tạo cho người dùng; để tìm, xem hoặc mở lại" }
+
+[[view]]
+path = "/"
+title = { en = "All artifacts", vi = "Tất cả" }
+
+[[view]]
+path = "/a"
+title = { en = "One artifact", vi = "Một tài liệu" }
+use_when = { en = "one artifact by its id (a-…), at version v", vi = "một tài liệu theo id (a-…), ở phiên bản v" }
+params = ["id", "v"]

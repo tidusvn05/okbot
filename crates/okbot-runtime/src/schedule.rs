@@ -449,6 +449,7 @@ mod tests {
             knowledge: None,
             memory: None,
             tasks: Some(tasks.clone()),
+            artifacts: None,
             renderer: Arc::new(PlainRenderer),
             charts: None,
             clock: clock.clone(),

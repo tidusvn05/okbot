@@ -15,7 +15,7 @@
       asks: "{app} asks:", okbot: "okbot asks:", busy: "Another question is open.",
       left: "{app} tried to open another page and was closed.", reopen: "Open it again from the bar above.",
       signInAs: "Sign in as {name} ({platform})? You are signed in as {current} now.",
-      signIn: "Sign in", stay: "Stay",
+      signIn: "Sign in", stay: "Stay", download: "Download {file}?", save: "Download",
     },
     vi: {
       signing: "Đang đăng nhập…", expired: "Liên kết đã hết hạn hoặc đã được dùng.",
@@ -28,7 +28,7 @@
       asks: "{app} hỏi:", okbot: "okbot hỏi:", busy: "Đang có một câu hỏi khác.",
       left: "{app} đã cố mở một trang khác nên đã bị đóng.", reopen: "Mở lại từ thanh ở trên.",
       signInAs: "Đăng nhập là {name} ({platform})? Bạn đang đăng nhập là {current}.",
-      signIn: "Đăng nhập", stay: "Giữ nguyên",
+      signIn: "Đăng nhập", stay: "Giữ nguyên", download: "Tải về {file}?", save: "Tải về",
     },
   };
   const lang = (navigator.language || "en").slice(0, 2) === "vi" ? "vi" : "en";
@@ -235,6 +235,23 @@
         const text = String(m.params?.text ?? "").slice(0, 500);
         const yes = await dialog(text, [[t("cancel"), false], [t("confirm"), true, true]],
           { from: t("asks", { app: info.title }) });
+        reply({ result: yes });
+        return;
+      }
+      if (m.method === "shell.download") {
+        // The sandboxed app cannot download: the shell asks, then saves the file itself.
+        const r = await api("artifacts.open", { id: m.params?.id, v: m.params?.v, download: true }, app);
+        const yes = await dialog(t("download", { file: r.file }), [[t("cancel"), false], [t("save"), true, true]],
+          { from: t("okbot"), trusted: true });
+        if (yes) {
+          const a = document.createElement("a");
+          a.href = r.url;
+          a.download = r.file;
+          a.rel = "noopener";
+          document.body.append(a);
+          a.click();
+          a.remove();
+        }
         reply({ result: yes });
         return;
       }

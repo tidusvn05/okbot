@@ -107,7 +107,7 @@ fn cookie(headers: &HeaderMap) -> Option<String> {
 }
 
 /// The public origin (`https://bot.example.com`) of a base URL.
-fn origin_of(base: &str) -> String {
+pub(crate) fn origin_of(base: &str) -> String {
     let rest = base.split_once("://").map_or(base, |(_, r)| r);
     let host = rest.split('/').next().unwrap_or(rest);
     let scheme = base.split_once("://").map_or("https", |(s, _)| s);
@@ -115,7 +115,7 @@ fn origin_of(base: &str) -> String {
 }
 
 /// The path apps live under at the public URL (`/apps`, or `/bot/apps` behind a prefix).
-fn cookie_path(shared: &Shared) -> String {
+pub(crate) fn cookie_path(shared: &Shared) -> String {
     let path = shared
         .config
         .apps
@@ -616,13 +616,17 @@ fn permission_of(method: &str) -> Option<AppPermission> {
         "tasks.list" | "tasks.get" => AppPermission::TasksRead,
         "tasks.add" | "tasks.update" | "tasks.done" | "tasks.pause" | "tasks.resume"
         | "tasks.snooze" | "tasks.cancel" => AppPermission::TasksWrite,
-        _ => return crate::app_data::permission_of(method),
+        _ => {
+            return crate::app_data::permission_of(method)
+                .or_else(|| crate::app_artifacts::permission_of(method));
+        }
     })
 }
 
 fn method_writes(method: &str) -> bool {
     method.starts_with("tasks.") && !matches!(method, "tasks.list" | "tasks.get")
         || crate::app_data::writes(method)
+        || crate::app_artifacts::writes(method)
 }
 
 /// A field of a change: left alone, cleared or set.
@@ -690,6 +694,7 @@ impl Call<'_> {
             "tasks.pause" => self.set_status(TaskStatus::Paused).await,
             "tasks.resume" => self.set_status(TaskStatus::Open).await,
             "tasks.snooze" => self.snooze().await,
+            m if m.starts_with("artifacts.") => crate::app_artifacts::run(self, method).await,
             _ => crate::app_data::run(self, method).await,
         }
     }
@@ -763,7 +768,7 @@ impl Call<'_> {
     }
 
     /// The signed-in account as tasks record their author (`channel/user`).
-    fn account(&self) -> String {
+    pub(crate) fn account(&self) -> String {
         format!(
             "{}/{}",
             self.admitted.event.conversation.channel, self.session.user.id
@@ -1028,6 +1033,7 @@ pub(crate) fn routes(router: Router, shared: &Arc<Shared>) -> Router {
     let s1 = shared.clone();
     let s2 = shared.clone();
     let s3 = shared.clone();
+    let s4 = shared.clone();
     router
         .route(
             "/apps/api/session",
@@ -1043,6 +1049,15 @@ pub(crate) fn routes(router: Router, shared: &Arc<Shared>) -> Router {
                 let s = s2.clone();
                 async move { logout(&s, &headers).await }
             }),
+        )
+        .route(
+            "/apps/view/{token}",
+            axum::routing::get(
+                move |axum::extract::Path(token): axum::extract::Path<String>| {
+                    let s = s4.clone();
+                    async move { crate::app_artifacts::view(&s, &token).await }
+                },
+            ),
         )
         .route(
             "/apps/api/v1/{method}",

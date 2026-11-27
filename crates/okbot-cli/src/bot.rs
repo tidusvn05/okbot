@@ -269,6 +269,7 @@ pub(crate) fn apps_config(config: &Config) -> anyhow::Result<okbot_runtime::Apps
         session_idle,
         session_max,
         rules,
+        artifact_scripts: config.artifacts.scripts,
     })
 }
 
@@ -287,6 +288,22 @@ pub(crate) fn apps(config: &Config) -> Option<(okbot_apps::Catalog, Option<Strin
         format!("{scheme}://{host}")
     });
     Some((catalog, origin))
+}
+
+/// Gives `builder` the bundle as knowledge, memory, tasks and (when on) artifacts.
+pub(crate) fn with_knowledge(
+    builder: okbot_runtime::RuntimeBuilder,
+    knowledge: Arc<okbot_knowledge::Knowledge>,
+) -> okbot_runtime::RuntimeBuilder {
+    let builder = builder
+        .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
+        .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
+        .tasks(knowledge.clone() as Arc<dyn okbot_core::TaskStore>);
+    if knowledge.artifacts_enabled() {
+        builder.artifacts(knowledge as Arc<dyn okbot_core::ArtifactStore>)
+    } else {
+        builder
+    }
 }
 
 /// Adds the apps of `config` to `builder`.
@@ -916,10 +933,8 @@ pub(crate) async fn build(config: &Config, stop: CancellationToken) -> anyhow::R
     let mut builder = Runtime::builder(runtime_config(config)?)
         .store(store.clone())
         .agent(Arc::new(chain))
-        .renderer(Arc::new(MarkdownRenderer))
-        .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
-        .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
-        .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
+        .renderer(Arc::new(MarkdownRenderer));
+    builder = with_knowledge(builder, knowledge);
     if let Some(charts) = charts(config)? {
         builder = builder.charts(charts);
     }

@@ -58,6 +58,9 @@
     confirm: (text) => call("shell.confirm", { text }),
     /** Opens an https link after the person agrees to leave. */
     openLink: (url) => call("shell.openLink", { url }),
+    /** Offers an artifact's file for download, after the person agrees in okbot's dialog
+     *  (needs `artifacts:read`); resolves to true when it was saved. */
+    download: ({ id, v } = {}) => call("shell.download", { id, v }),
     /** Sets the page title. */
     setTitle: (title) => call("shell.title", { title }),
     /** The view chat opened ("/open") and its parameters. */

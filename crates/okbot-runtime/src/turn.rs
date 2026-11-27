@@ -651,6 +651,7 @@ async fn finish(
             crate::team::report_usage(shared, event, tokens).await;
             if reply_over(shared, event, &answer.text, placeholder).await {
                 crate::ui::send(shared, event, views).await;
+                crate::app_artifacts::offer_saved(shared, event, record.started_at).await;
                 // The history keeps what was shown as text, so later turns know the choices.
                 let mut text = answer.text;
                 for view in views {

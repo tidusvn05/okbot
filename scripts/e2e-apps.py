@@ -54,6 +54,48 @@ LEAVER = {
 }
 
 
+# Artifacts of the console's owner (the personal profile links it to person `owner`), written
+# as the store writes them (ADR 0021). The page checks that its scripts run, that it cannot
+# reach the network, and offers a way to navigate its frame.
+PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>h1{color:#4f46e5}</style></head>
+<body><h1>E2E page</h1><p id="ok">scripts off</p><p id="net">trying</p>
+<button id="leave" type="button" onclick="location.search='?again'">Leave</button>
+<script>
+document.getElementById("ok").textContent = "scripts ran";
+fetch("/apps/api/session", {method: "POST"}).then(
+  () => { document.getElementById("net").textContent = "reached"; },
+  () => { document.getElementById("net").textContent = "blocked"; });
+</script></body></html>
+"""
+ARTIFACTS = [
+    ("a-e2epage01", "E2E page", "html", PAGE),
+    ("a-e2enotes1", "E2E notes", "markdown", "# Notes\n\n- a **bold** item\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"),
+    ("a-e2eflow01", "E2E flow", "mermaid", "graph TD\n  Start --> Done\n"),
+]
+EXTENSIONS = {"html": "html", "markdown": "md", "mermaid": "mmd"}
+
+
+def seed_artifacts(bot: Path):
+    import hashlib
+    import json
+
+    folder = bot / "kb" / "artifacts" / "people" / "owner"
+    folder.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for short, title, kind, content in ARTIFACTS:
+        data = content.encode()
+        version = {"n": 1, "at": now, "by": "console/you", "bytes": len(data),
+                   "sha256": hashlib.sha256(data).hexdigest(), "note": "", "pruned": False}
+        (folder / f"{short}.md").write_text(
+            "---\ntype: Artifact\n"
+            f"title: {json.dumps(title)}\nid: {short}\nkind: {kind}\nscope: user\n"
+            f"author: \"console/you\"\ncreated: \"{now}\"\nversions: {json.dumps([version])}\n"
+            f"---\n\n# {title}\n\nMade by the browser check.\n"
+        )
+        (folder / short).mkdir(exist_ok=True)
+        (folder / short / f"v1.{EXTENSIONS[kind]}").write_bytes(data)
+
+
 class Chat:
     """`okbot chat` with the echo agent, driven through stdin."""
 
@@ -79,6 +121,7 @@ class Chat:
             check=True,
             capture_output=True,
         )
+        seed_artifacts(bot)
         self.port = port
         self.proc = subprocess.Popen(
             [OKBOT, "chat", "--agent", "echo", "--http", f"127.0.0.1:{port}"],
@@ -201,6 +244,41 @@ def main() -> int:
                     page.screenshot(path=f"{SHOTS}/schedule-{BROWSER}-desktop.png")
                 print("  added a reminder and opened the calendar")
 
+                # Artifacts: a page runs its scripts in the viewer without network, Markdown is
+                # rendered by the app, Mermaid draws, a download asks first, and a viewer that
+                # navigates itself is closed.
+                page.locator("#apps a", has_text="Artifacts").click()
+                arts = page.frame_locator("iframe")
+                expect(arts.locator(".list li")).to_have_count(len(ARTIFACTS))
+                arts.locator(".list li", has_text="E2E page").click()
+                viewer = arts.frame_locator("iframe.viewer")
+                expect(viewer.locator("#ok")).to_have_text("scripts ran")
+                expect(viewer.locator("#net")).to_have_text("blocked")
+                expect(arts.locator(".banner")).to_contain_text("Never enter passwords")
+                expect(arts.locator("#app")).not_to_contain_text("null")
+                if SHOTS:
+                    page.screenshot(path=f"{SHOTS}/artifact-{BROWSER}-page.png")
+                arts.get_by_role("button", name="Download").click()
+                with page.expect_download() as download:
+                    page.locator(".dialog button.primary").click()
+                if download.value.suggested_filename != "E2E page.html":
+                    problems.append(f"download named {download.value.suggested_filename!r}")
+                viewer.locator("#leave").click()
+                expect(arts.locator("iframe.viewer")).to_have_count(0)
+                expect(arts.locator(".banner")).to_contain_text("another page")
+                arts.locator("a.back").click()
+                arts.locator(".list li", has_text="E2E notes").click()
+                expect(arts.locator(".md table td").first).to_have_text("1")
+                expect(arts.locator(".md strong")).to_have_text("bold")
+                arts.locator("a.back").click()
+                arts.locator(".list li", has_text="E2E flow").click()
+                flow = arts.frame_locator("iframe.viewer")
+                expect(flow.locator("body[data-ready='1'] #out svg")).to_be_visible()
+                expect(flow.locator("#out")).to_contain_text("Done")
+                if SHOTS:
+                    page.screenshot(path=f"{SHOTS}/artifact-{BROWSER}-mermaid.png")
+                print("  artifacts: page, download, navigation, markdown and mermaid")
+
                 # An app that navigates its frame away is closed, and its new page hears nothing.
                 page.locator("#apps a", has_text="Leaver").click()
                 leaver = page.frame_locator("iframe")
@@ -222,6 +300,8 @@ def main() -> int:
             chat.close()
     # The second page's refused sign-in is expected to log a failed request.
     problems = [p for p in problems if "401" not in p and "403" not in p]
+    # The artifact page's fetch is meant to be refused (connect-src 'none').
+    problems = [p for p in problems if not ("/apps/view/" in p and "connect" in p.lower())]
     # WebKit (WPE) styles `<select>` with an internal stylesheet and reports the page's CSP as
     # refusing it; pages render correctly. Chromium and Firefox still catch real inline styles.
     if BROWSER == "webkit":

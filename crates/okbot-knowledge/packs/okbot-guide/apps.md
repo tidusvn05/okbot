@@ -28,6 +28,7 @@ Built-in apps:
 | `knowledge` | the documents the bot answers from, as far as you may see them | `/app knowledge` |
 | `automations` | each `[[automation]]`, its trigger and latest runs and errors (administrators only) | `/app automations` |
 | `connections` | your connected accounts (`/connect`), never their tokens; from a direct chat only | `/app connections` |
+| `artifacts` | pages, documents, tables and diagrams the assistant made (see Artifacts below): view, versions, download, rename, delete | the Open button under an answer, `/app artifacts [id]` |
 
 An app built on something the bot does not keep (no knowledge base, no tasks) is not offered.
 
@@ -145,6 +146,7 @@ okbot, which checks the app's permissions and the person's rights on every call:
 | `knowledge:read` | searching and reading the knowledge base |
 | `automations:read` | automations and their runs (administrators) |
 | `connections:read` | which accounts are connected (never tokens) |
+| `artifacts:read`, `artifacts:write` | listing, opening and downloading artifacts; renaming and deleting them |
 | `mcp:<server>/<tool>` | calling that `[[mcp]]` tool as the person, under the server's rules; `confirm` asks the person in okbot's own dialog |
 
 ## More apps
@@ -189,6 +191,14 @@ change ("make the table wider") saves a new version of the same artifact. Artifa
 the knowledge bundle (`kb/artifacts/`), kept with the same rules as tasks: personal ones only from
 a direct chat, the others shared with the chat they were made in. Only their titles and summaries
 are searched, never their content.
+
+The answer that saved one gets an **Open** button for it. It opens the built-in **Artifacts** app
+(`/app artifacts`, or `/app artifacts a-7k2m9q4x2c` for one), which lists them with search and
+filters and shows each one: Markdown, tables (CSV, sortable) and JSON in the app; HTML pages, SVG and
+Mermaid diagrams in a viewer of their own. The viewer has no network and no access to the app or
+the session, and a page that tries to open another page is closed. A banner says the page was
+made by the assistant: never type a password into one. From the app people also switch between
+versions, download, rename and delete.
 
 ```toml
 [artifacts]

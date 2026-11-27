@@ -261,6 +261,7 @@ that already exist behind chat commands and the bot's MCP tools; the API adds no
 | `schedule:read` | `schedule.list(from, to)` | reminders, routines, automation schedules |
 | `automations:read` | `automations.list`, `automations.runs` | `automation_runs`; admins only |
 | `connections:read` | `connections.list` | sealed credential metadata, never tokens |
+| `artifacts:read` / `artifacts:write` | `artifacts.list`, `artifacts.get`, `artifacts.open` / `artifacts.rename`, `artifacts.delete` | `ArtifactStore` with the requester's scope; the viewer (design-artifacts §5) |
 | `mcp:<server>/<tool>` | `mcp.call` | the gateway (ADR 0011): same `roles`, `rooms`, `deny_tools`, person credentials; `confirm` becomes a shell dialog that the person clicks, which is a real approval |
 
 Errors are typed (`forbidden`, `not_found`, `invalid`, `conflict`, `rate_limited`) and never echo

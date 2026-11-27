@@ -9,6 +9,7 @@
 //! The runtime depends only on ports from `okbot-core`; `okbot` provides the adapters.
 
 mod app_api;
+mod app_artifacts;
 mod app_data;
 mod apps;
 mod automation;
@@ -128,6 +129,8 @@ pub(crate) struct Shared {
     pub(crate) knowledge: Option<Arc<dyn KnowledgeProvider>>,
     pub(crate) memory: Option<Arc<dyn MemoryStore>>,
     pub(crate) tasks: Option<Arc<dyn TaskStore>>,
+    /// Pages and files the agent made (ADR 0021).
+    pub(crate) artifacts: Option<Arc<dyn okbot_core::ArtifactStore>>,
     pub(crate) renderer: Arc<dyn Renderer>,
     /// Draws the charts of interactive views as pictures (ADR 0016); none keeps them text.
     pub(crate) charts: Option<Arc<dyn okbot_core::ChartRenderer>>,
@@ -280,6 +283,7 @@ pub struct RuntimeBuilder {
     knowledge: Option<Arc<dyn KnowledgeProvider>>,
     memory: Option<Arc<dyn MemoryStore>>,
     tasks: Option<Arc<dyn TaskStore>>,
+    artifacts: Option<Arc<dyn okbot_core::ArtifactStore>>,
     renderer: Option<Arc<dyn Renderer>>,
     charts: Option<Arc<dyn okbot_core::ChartRenderer>>,
     clock: Arc<dyn Clock>,
@@ -344,6 +348,12 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Sets the artifact store (optional; enables the artifacts app and its Open buttons).
+    pub fn artifacts(mut self, artifacts: Arc<dyn okbot_core::ArtifactStore>) -> Self {
+        self.artifacts = Some(artifacts);
+        self
+    }
+
     /// Sets the renderer (required).
     pub fn renderer(mut self, renderer: Arc<dyn Renderer>) -> Self {
         self.renderer = Some(renderer);
@@ -395,6 +405,7 @@ impl RuntimeBuilder {
             knowledge: self.knowledge,
             memory: self.memory,
             tasks: self.tasks,
+            artifacts: self.artifacts,
             renderer: self.renderer.ok_or(BuildError::Missing("renderer"))?,
             charts: self.charts,
             clock: self.clock,
@@ -513,6 +524,7 @@ impl Runtime {
             knowledge: None,
             memory: None,
             tasks: None,
+            artifacts: None,
             renderer: None,
             charts: None,
             clock: Arc::new(SystemClock),

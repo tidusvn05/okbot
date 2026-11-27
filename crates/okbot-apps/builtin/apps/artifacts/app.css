@@ -1,0 +1,21 @@
+/* The artifacts app: the viewer frame, rendered documents, tables and trees. */
+.banner { background: var(--card); border: 1px solid var(--warn); color: var(--warn); border-radius: .5rem; padding: .35rem .6rem; font-size: .85rem; margin: .5rem 0; }
+.viewer { width: 100%; height: 70vh; min-height: 18rem; border: 1px solid var(--line); border-radius: .7rem; background: #fff; display: block; resize: vertical; }
+.md { background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: .4rem 1.1rem; line-height: 1.55; overflow-wrap: anywhere; }
+.md pre, pre.text { background: var(--bg); border: 1px solid var(--line); border-radius: .45rem; padding: .6rem .8rem; overflow-x: auto; white-space: pre; }
+pre.text { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+.md :not(pre) > code { background: var(--bg); padding: 0 .25rem; border-radius: .25rem; }
+.md blockquote { margin: .6rem 0; padding: .1rem .9rem; border-left: 3px solid var(--line); color: var(--muted); }
+.md a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.md hr { border: 0; border-top: 1px solid var(--line); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: .5rem; background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { border-bottom: 1px solid var(--line); padding: .35rem .55rem; text-align: left; vertical-align: top; }
+th { position: sticky; top: 0; background: var(--card); cursor: pointer; white-space: nowrap; }
+th[aria-sort="ascending"]::after { content: " ▲"; } th[aria-sort="descending"]::after { content: " ▼"; }
+.tree { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; background: var(--card); border: 1px solid var(--line); border-radius: .7rem; padding: .6rem .8rem; overflow-x: auto; }
+.tree details { margin-left: 1rem; } .tree summary { cursor: pointer; margin-left: -1rem; }
+.tree .leaf { margin-left: 0; } .tree .k { color: var(--accent); } .tree .s { color: var(--ok); } .tree .n { color: var(--warn); }
+.versions { list-style: none; padding: 0; margin: .4rem 0; display: flex; gap: .3rem; flex-wrap: wrap; }
+.versions button[aria-current] { border-color: var(--accent); color: var(--accent); font-weight: 700; }

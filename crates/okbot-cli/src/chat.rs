@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use okbot_agent::{AgentChain, CliBackend, CliBackendConfig, EnvScrub, ScriptedBackend, detect};
 use okbot_channel_console::{ConsoleChannel, ConsoleOptions, Preset};
-use okbot_core::{AgentBackend, CancellationToken, KnowledgeProvider};
+use okbot_core::{AgentBackend, CancellationToken};
 use okbot_knowledge::{Knowledge, KnowledgeOptions};
 use okbot_render::MarkdownRenderer;
 use okbot_runtime::{HttpOptions, Runtime, RuntimeConfig};
@@ -381,10 +381,7 @@ pub(crate) async fn run(args: ChatArgs) -> anyhow::Result<()> {
         builder = builder.charts(charts);
     }
     if let Some(knowledge) = knowledge {
-        builder = builder
-            .knowledge(knowledge.clone() as Arc<dyn KnowledgeProvider>)
-            .memory(knowledge.clone() as Arc<dyn okbot_core::MemoryStore>)
-            .tasks(knowledge as Arc<dyn okbot_core::TaskStore>);
+        builder = crate::bot::with_knowledge(builder, knowledge);
     }
     if let Some(addr) = http {
         builder = with_loopback_apps(builder, apps).http(HttpOptions::new(addr));

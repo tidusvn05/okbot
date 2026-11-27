@@ -39,6 +39,8 @@ pub(crate) struct Apps {
     /// The shell and app files (`okbot-apps`), until the HTTP server takes them.
     pub(crate) routes: Mutex<Option<axum::Router>>,
     calls: Mutex<HashMap<String, VecDeque<Timestamp>>>,
+    /// Viewer links handed out by `artifacts.open` (ADR 0021).
+    pub(crate) views: crate::app_artifacts::Grants,
 }
 
 impl Apps {
@@ -48,6 +50,7 @@ impl Apps {
             loopback: OnceLock::new(),
             routes: Mutex::new(Some(routes)),
             calls: Mutex::new(HashMap::new()),
+            views: crate::app_artifacts::Grants::default(),
         }
     }
 
@@ -409,9 +412,10 @@ const PROMPT_CHARS: usize = 1500;
 
 /// The built-in app a long listing of each area points at (design-app-hints §5); an empty view
 /// is the app's first.
-const SEE_ALSO: [(okbot_core::DataArea, &str, &str); 2] = [
+const SEE_ALSO: [(okbot_core::DataArea, &str, &str); 3] = [
     (okbot_core::DataArea::Tasks, "tasks", "/open"),
     (okbot_core::DataArea::Memory, "memory", ""),
+    (okbot_core::DataArea::Artifacts, "artifacts", "/"),
 ];
 
 /// The apps the author of `event` may open in its conversation, when the agent can link them
@@ -707,11 +711,9 @@ pub(crate) async fn offer(
     event: &InboundEvent,
     app: &str,
     view: Option<&str>,
+    params: BTreeMap<String, String>,
     quiet: bool,
 ) {
-    let Some(channel) = shared.channels.get(&event.conversation.channel) else {
-        return;
-    };
     if base(shared, &event.conversation.channel).is_none() {
         if !quiet {
             crate::turn::reply(
@@ -745,58 +747,94 @@ pub(crate) async fn offer(
         .filter(|v| admitted.info.view(v).is_some())
         .unwrap_or(admitted.info.default_view())
         .to_string();
+    let line = if params.is_empty() {
+        format!("-# {title}: everything, with filters and actions.")
+    } else {
+        format!("-# {title}")
+    };
+    let button = AppButton {
+        label: format!("Open {title}"),
+        app: app.to_string(),
+        view,
+        params,
+    };
+    let fallback = if quiet {
+        String::new()
+    } else {
+        format!("-# {title} opens from a direct chat with me: send `/app {app}` there.")
+    };
+    offer_buttons(shared, event, app, line, vec![button], &fallback).await;
+}
+
+/// Shows `text` with app `buttons` (of one `app`) under a reply: buttons that answer each presser
+/// privately where the platform can, else links in a direct chat, else `fallback` (nothing when
+/// it is empty). Says nothing when apps cannot open here.
+pub(crate) async fn offer_buttons(
+    shared: &Shared,
+    event: &InboundEvent,
+    app: &str,
+    text: String,
+    buttons: Vec<AppButton>,
+    fallback: &str,
+) {
+    let Some(channel) = shared.channels.get(&event.conversation.channel) else {
+        return;
+    };
+    if base(shared, &event.conversation.channel).is_none()
+        || admit(
+            shared,
+            &event.author,
+            &event.conversation,
+            event.is_direct,
+            app,
+        )
+        .await
+        .is_err()
+    {
+        return;
+    }
     let to = crate::dispatch::target(event);
     let caps = channel.caps();
     let shown = if caps.ui.buttons && caps.ui.private_reply {
-        View::app(
-            format!("-# {title}: everything, with filters and actions."),
-            AppButton {
-                label: format!("Open {title}"),
-                app: app.to_string(),
-                view,
-                params: BTreeMap::new(),
-            },
-        )
+        View::app_buttons(text, buttons)
     } else if event.is_direct {
-        let ticket = Ticket {
-            user: event.author.clone(),
-            conversation: event.conversation.clone(),
-            direct: true,
-            app: app.to_string(),
-            view,
-            params: BTreeMap::new(),
-            locale: event.locale.clone(),
-            expires: None,
-        };
-        match mint(shared, ticket).await {
-            Ok(url) if caps.ui.buttons && url.starts_with("https://") => View::links(
-                format!(
-                    "-# {title}: your own link; it works once, within {} minutes.",
-                    TICKET_TTL.as_secs() / 60
-                ),
-                vec![(format!("Open {title} ↗"), url)],
-            ),
-            Ok(url) => View::links(
-                format!(
-                    "Open {title} (your own link; it works once, within {} minutes):\n{url}",
-                    TICKET_TTL.as_secs() / 60
-                ),
-                Vec::new(),
-            ),
-            Err(reason) => {
-                if !quiet {
-                    crate::turn::reply(shared, event, &reason).await;
+        let mut links = Vec::new();
+        for button in buttons {
+            let ticket = Ticket {
+                user: event.author.clone(),
+                conversation: event.conversation.clone(),
+                direct: true,
+                app: button.app,
+                view: button.view,
+                params: button.params,
+                locale: event.locale.clone(),
+                expires: None,
+            };
+            match mint(shared, ticket).await {
+                Ok(url) => links.push((format!("{} ↗", button.label), url)),
+                Err(reason) => {
+                    tracing::warn!(%reason, "cannot offer an app");
+                    return;
                 }
-                return;
             }
         }
-    } else if quiet {
+        let note = format!(
+            "your own link; it works once, within {} minutes",
+            TICKET_TTL.as_secs() / 60
+        );
+        if caps.ui.buttons && links.iter().all(|(_, url)| url.starts_with("https://")) {
+            View::links(format!("{text}\n-# ({note})"), links)
+        } else {
+            let mut text = format!("{text}\n({note}):");
+            for (label, url) in &links {
+                let _ = write!(text, "\n{label} {url}");
+            }
+            View::links(text, Vec::new())
+        }
+    } else if fallback.is_empty() {
         return;
     } else {
-        View::links(
-            format!("-# {title} opens from a direct chat with me: send `/app {app}` there."),
-            Vec::new(),
-        )
+        View::links(fallback.to_string(), Vec::new())
     };
     if let Err(error) = crate::ui::deliver(shared, &to, event.is_direct, &shown).await {
         tracing::warn!(%error, "cannot offer an app");
@@ -857,16 +895,42 @@ pub(crate) async fn command(shared: &Shared, rest: &str, event: &InboundEvent) {
             crate::turn::reply(shared, event, &text).await;
         }
         name => {
-            let view = words.next().map(|v| {
-                if v.starts_with('/') {
-                    v.to_string()
-                } else {
-                    format!("/{v}")
-                }
-            });
-            offer(shared, event, name, view.as_deref(), false).await;
+            let (view, params) = view_or_item(shared, name, words.next());
+            offer(shared, event, name, view.as_deref(), params, false).await;
         }
     }
+}
+
+/// What `/app <name> <word>` opens: the view `/<word>`, or else the app's view that takes an
+/// `id`, with `id = <word>` (`/app artifacts a-7k2m9q4x2c`).
+fn view_or_item(
+    shared: &Shared,
+    app: &str,
+    word: Option<&str>,
+) -> (Option<String>, BTreeMap<String, String>) {
+    let Some(word) = word else {
+        return (None, BTreeMap::new());
+    };
+    let path = if word.starts_with('/') {
+        word.to_string()
+    } else {
+        format!("/{word}")
+    };
+    let info = shared.apps.as_ref().and_then(|a| a.directory.app(app));
+    if let Some(info) = info
+        && info.view(&path).is_none()
+        && !word.starts_with('/')
+        && let Some(item) = info
+            .views
+            .iter()
+            .find(|v| v.params.iter().any(|p| p == "id"))
+    {
+        return (
+            Some(item.path.clone()),
+            BTreeMap::from([("id".to_string(), word.to_string())]),
+        );
+    }
+    (Some(path), BTreeMap::new())
 }
 
 /// The apps this person may open here.
